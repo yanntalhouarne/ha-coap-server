@@ -1,0 +1,14 @@
+manifest:
+  self:
+    path: application
+  remotes:
+    - name: yanntalhouarne
+      url-base: https://github.com/yanntalhouarne
+  projects:
+    - name: sdk-nrf
+      remote: yanntalhouarne
+      path: nrf
+      revision: v2.4-branch
+      import:
+        path-prefix: external
+      clone-depth: 1

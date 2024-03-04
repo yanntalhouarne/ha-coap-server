@@ -1,0 +1,24 @@
+{
+    "version": 2,
+    "cmakeMinimumRequired": {
+        "major": 3,
+        "minor": 20
+    },
+    "configurePresets": [
+        {
+            "name": "build",
+            "displayName": "Build for hacoap",
+            "generator": "Ninja",
+            "binaryDir": "${sourceDir}/build",
+            "cacheVariables": {
+                "NCS_TOOLCHAIN_VERSION": "NONE",
+                "BOARD": "hacoap",
+                "BOARD_ROOT": "${sourceDir}/",
+                "CONFIG_DEBUG_OPTIMIZATIONS": "y",
+                "CONFIG_DEBUG_THREAD_INFO": "y",
+                "CACHED_CONF_FILE": "${sourceDir}/prj.conf",
+                "DTC_OVERLAY_FILE": "${sourceDir}/boards/hacoap.overlay"
+            }
+        }
+    ]
+}
