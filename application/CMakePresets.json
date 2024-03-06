@@ -13,11 +13,12 @@
             "cacheVariables": {
                 "NCS_TOOLCHAIN_VERSION": "NONE",
                 "BOARD": "hacoap",
-                "BOARD_ROOT": "${sourceDir}/",
+                "BOARD_ROOT": "/home/yann/openthread_coap_server/application;${sourceDir}/",
                 "CONFIG_DEBUG_OPTIMIZATIONS": "y",
                 "CONFIG_DEBUG_THREAD_INFO": "y",
                 "CACHED_CONF_FILE": "${sourceDir}/prj.conf",
-                "DTC_OVERLAY_FILE": "${sourceDir}/boards/hacoap.overlay"
+                "OVERLAY_CONFIG": "${sourceDir}/overlay-logging.conf;${sourceDir}/overlay-usb.conf",
+                "DTC_OVERLAY_FILE": "${sourceDir}/boards/usb.overlay"
             }
         }
     ]

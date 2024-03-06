@@ -536,6 +536,7 @@ int main(void)
 		LOG_ERR("Failed to enable USB");
 		goto end;
 	}
+	k_sleep(K_MSEC(5000));
 
 	ret = dk_leds_init();
 	if (ret) {
@@ -551,7 +552,7 @@ int main(void)
 	k_sleep(K_MSEC(INIT_BUZZER_PERIOD));
 	pwm_set_dt(&pwm_buzzer, PWM_KHZ(6), 0);
 
-
+	printk("Starting application...\n\n");
 
 	// dk_set_led_on(TOF_EN);
 	// struct sensor_value value;
@@ -680,7 +681,7 @@ int main(void)
 
 	/* Humidity/temp sensor */
 	if (!device_is_ready(dev_hdc)) {
-		LOG_INF("sensor: device not ready.\n");
+		LOG_ERR("sensor: device not ready.\n");
 		return 0;
 	}
 
@@ -716,16 +717,16 @@ int main(void)
 
 	ret = fuel_gauge_get_prop(dev_fuelgauge, props_fuel_gauge, ARRAY_SIZE(props_fuel_gauge));
 	if (ret < 0) {
-		LOG_INF("Error: cannot get properties\n");
+		LOG_ERR("Error: cannot get properties\n");
 	} else {
 		if (ret != 0) {
-			LOG_INF("Warning: Some properties failed\n");
+			LOG_ERR("Warning: Some properties failed\n");
 		}
 
 		if (props_fuel_gauge[0].status == 0) {
 			LOG_INF("Time to empty %d\n", props_fuel_gauge[0].value.runtime_to_empty);
 		} else {
-			LOG_INF(
+			LOG_ERR(
 			"Time to empty error %d\n",
 			props_fuel_gauge[0].status
 			);
@@ -734,7 +735,7 @@ int main(void)
 		if (props_fuel_gauge[1].status == 0) {
 			LOG_INF("Time to full %d\n", props_fuel_gauge[1].value.runtime_to_full);
 		} else {
-			LOG_INF(
+			LOG_ERR(
 			"Time to full error %d\n",
 			props_fuel_gauge[1].status
 			);
@@ -743,7 +744,7 @@ int main(void)
 		if (props_fuel_gauge[2].status == 0) {
 			LOG_INF("Charge %d%%\n", props_fuel_gauge[2].value.state_of_charge);
 		} else {
-			LOG_INF(
+			LOG_ERR(
 			"Time to full error %d\n",
 			props_fuel_gauge[2].status
 			);
@@ -752,7 +753,7 @@ int main(void)
 		if (props_fuel_gauge[3].status == 0) {
 			LOG_INF("Voltage %d\n", props_fuel_gauge[3].value.voltage);
 		} else {
-			LOG_INF(
+			LOG_ERR(
 			"FUEL_GAUGE_VOLTAGEerror %d\n",
 			props_fuel_gauge[3].status
 			);
