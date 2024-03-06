@@ -1,0 +1,21 @@
+/*
+ * Copyright (c) 2021 Nordic Semiconductor ASA
+ *
+ * SPDX-License-Identifier: LicenseRef-Nordic-5-Clause
+ */
+
+/ {
+    chosen {
+        zephyr,shell-uart = &uart0;
+        zephyr,console = &uart0;
+    };
+};
+
+&uart0 {
+    compatible = "nordic,nrf-uarte";
+    status = "okay";
+    current-speed = <115200>;
+    pinctrl-0 = <&uart0_default>;
+    pinctrl-1 = <&uart0_sleep>;
+    pinctrl-names = "default", "sleep";
+};

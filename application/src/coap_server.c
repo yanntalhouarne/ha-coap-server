@@ -5,6 +5,7 @@
  */
 
 //#include <stdio. h> // for snprintf
+#include <stdio.h>
 #include <zephyr/kernel.h>
 #include <dk_buttons_and_leds.h>
 #include <zephyr/logging/log.h>
@@ -21,6 +22,7 @@
 #include <zephyr/drivers/fuel_gauge.h>
 #include <zephyr/devicetree.h>
 #include <zephyr/drivers/sensor.h>
+#include <zephyr/drivers/pwm.h>
 
 #include "ot_coap_utils.h"
 #include "ot_srp_config.h"
@@ -54,7 +56,6 @@ static inline float out_ev(struct sensor_value *val)
 {
 	return (val->val1 + (float)val->val2 / 1000000);
 }
-
 volatile static struct sensor_value accel_x_out, accel_y_out, accel_z_out;
 volatile static struct sensor_value gyro_x_out, gyro_y_out, gyro_z_out;
 int cnt = 0;
@@ -128,6 +129,15 @@ static void lsm6dsl_trigger_handler(const struct device *dev,
 
 }
 #endif
+
+
+/* PWM */
+static const struct pwm_dt_spec pwm_buzzer = PWM_DT_SPEC_GET(DT_ALIAS(pwm_buzzer));
+
+#define MIN_PERIOD PWM_SEC(1U) / 128U
+#define MAX_PERIOD PWM_SEC(1U)
+
+
 
 LOG_MODULE_REGISTER(coap_server, CONFIG_COAP_SERVER_LOG_LEVEL);
 
@@ -478,6 +488,13 @@ int main(void)
 	if (ret) {
 		LOG_ERR("Could not initialize leds, err code: %d", ret);
 		goto end;
+	}
+
+
+	if (!device_is_ready(pwm_buzzer.dev)) {
+		printk("Error: PWM device %s is not ready\n",
+		       pwm_buzzer.dev->name);
+		return 0;
 	}
 
 	// dk_set_led_on(TOF_EN);

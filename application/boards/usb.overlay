@@ -4,10 +4,10 @@
  * SPDX-License-Identifier: LicenseRef-Nordic-5-Clause
  */
 
-/ {
+ / {
 	chosen {
 		zephyr,shell-uart = &cdc_acm_uart;
-		zephyr,sconsole = &cdc_acm_uart;
+        zephyr,console = &cdc_acm_uart;
 	};
 };
 
