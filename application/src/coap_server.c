@@ -215,6 +215,9 @@ char realinstance[sizeof(service_instance)+SRP_CLIENT_RAND_SIZE+1] = {0};
 #elif SRP_CLIENT_UNIQUE
 char realhostname[sizeof(hostname)+SRP_CLIENT_UNIQUE_SIZE+1] = {0};
 char realinstance[sizeof(service_instance)+SRP_CLIENT_UNIQUE_SIZE+1] = {0};
+#elif SRP_CLIENT_MANUAL
+char realhostname[sizeof(hostname)+SRP_CLIENT_MANUAL_SIZE+1] = {0};
+char realinstance[sizeof(service_instance)+SRP_CLIENT_MANUAL_SIZE+1] = {0};
 #endif
 
 const char service_name[] = SRP_SERVICE_NAME;
@@ -235,7 +238,7 @@ static void on_light_request(uint8_t command)
 			dk_set_led_on(WATER_PUMP);
 			pwm_set_dt(&pwm_buzzer, PWM_KHZ(6), PWM_KHZ(6) / 2U);
 			k_timer_start(&pump_timer, K_SECONDS(PUMP_MAX_ACTIVE_TIME), K_NO_WAIT); // pump will be active for 5 seconds, unless a stop command is received
-			k_timer_start(&buzzer_timer, K_SECONDS(PUMP_MAX_ACTIVE_TIME), K_NO_WAIT);
+			k_timer_start(&buzzer_timer, K_SECONDS(BUZZER_ACTIVE_TIME), K_NO_WAIT);
 		}
 		break;
 
@@ -364,7 +367,20 @@ void srp_client_generate_name()
 		snprintf(realinstance+sizeof(service_instance)-1, SRP_CLIENT_RAND_SIZE+2, "-%x", rn);
 		LOG_INF("hostname is: %s\n", realhostname);
 		LOG_INF("service instance is: %s\n", realinstance);
-	#else
+	#elif SRP_CLIENT_MANUAL
+		LOG_INF("Appending manual ID to hostname");
+		/* append the device ID of size SRP_CLIENT_MANUAL_SIZE to the service hostname and service instance string buffers */
+		// first copy the hostname and service instance defined defined by SRP_CLIENT_HOSTNAME and SRP_CLIENT_SERVICE_INSTANCE, respectively
+		memcpy(realhostname, hostname, sizeof(hostname));
+		memcpy(realinstance, service_instance, sizeof(service_instance));
+		// get a random uint32_t (true random, hw based)
+		uint32_t manual_id = SRP_CLIENT_MANUAL_ID;
+		// append the random number as a string to the hostname and service_instance buffers (numbe of digits is defined by SRP_CLIENT_MANUAL_SIZE)
+		snprintf(realhostname+sizeof(hostname)-1, SRP_CLIENT_MANUAL_SIZE+2, "-%x", manual_id);
+		snprintf(realinstance+sizeof(service_instance)-1, SRP_CLIENT_MANUAL_SIZE+2, "-%x", manual_id);
+		LOG_INF("hostname is: %s\n", realhostname);
+		LOG_INF("service instance is: %s\n", realinstance);
+	#else		
 		LOG_INF("hostname is: %s\n", hostname);
 		LOG_INF("service instance is: %s\n", service_instance);
 	#endif
@@ -374,7 +390,55 @@ void on_srp_client_updated(otError aError, const otSrpClientHostInfo *aHostInfo,
 
 void on_srp_client_updated(otError aError, const otSrpClientHostInfo *aHostInfo, const otSrpClientService *aServices, const otSrpClientService *aRemovedServices, void *aContext)
 {
+	otSrpClientBuffersServiceEntry *entry = NULL;
+	uint16_t size;
+	char *string;
+
 	LOG_INF("SRP callback: %s", otThreadErrorToString(aError));
+
+	if (aError == OT_ERROR_DUPLICATED)
+	{
+		// remove service from client list
+		//otSrpClientRemoveService(openthread_get_default_context(), aServices);
+		// if (otSrpClientRemoveHostAndServices(openthread_get_default_context(), 1, 1) != OT_ERROR_NONE)
+		// 	LOG_INF("Cannot remove SRP service.");
+		// LOG_INF("SRP service removed.");
+		// // add it again
+		// #if defined SRP_CLIENT_RNG || defined SRP_CLIENT_UNIQUE
+		// 		if (otSrpClientSetHostName(openthread_get_default_instance(), realhostname) != OT_ERROR_NONE)
+		// 		#else
+		// 		if (otSrpClientSetHostName(openthread_get_default_instance(), hostname) != OT_ERROR_NONE)
+		// 		#endif
+		// 			LOG_INF("Cannot set SRP host name");
+		// 		// set address to auto
+		// 		if (otSrpClientEnableAutoHostAddress(openthread_get_default_instance()) != OT_ERROR_NONE)
+		// 			LOG_INF("Cannot set SRP host address to auto");
+		// 		// allocate service buffers from OT SRP API
+		// 		entry = otSrpClientBuffersAllocateService(openthread_get_default_instance());
+		// 		// get the service instance name string buffer from OT SRP API
+		// 		string = otSrpClientBuffersGetServiceEntryInstanceNameString(entry, &size); // make sure "service_instance" is not bigger than "size"!
+		// 		// copy the service instance
+		// 		#if defined SRP_CLIENT_RNG || defined SRP_CLIENT_UNIQUE
+		// 		memcpy(string, realinstance, sizeof(realinstance)+1);
+		// 		#else
+		// 		memcpy(string, service_instance, sizeof(service_instance)+1);
+		// 		#endif
+		// 		// get the service name string buffer from OT SRP API
+		// 		string = otSrpClientBuffersGetServiceEntryServiceNameString(entry, &size);
+		// 		// copy the service name (_ot._udp)
+		// 		memcpy(string, service_name, sizeof(service_name)+1); // make sure "service_name" is not bigger than "size"!;
+		// 		// configure service
+		// 		entry->mService.mNumTxtEntries = 0;
+		// 		entry->mService.mPort = 49154;
+		// 		// add service
+		// 		if (otSrpClientAddService(openthread_get_default_instance(), &entry->mService) != OT_ERROR_NONE)
+		// 			LOG_INF("Cannot add service to SRP client");
+		// 		else
+		// 			LOG_INF("Adding SRP client service...");
+		// 		// start SRP client (and set to auto-mode)
+		// 		otSrpClientEnableAutoStartMode(openthread_get_default_instance(), NULL, NULL);
+		// 		entry = NULL;
+	}
 }
 
 static void on_thread_state_changed(otChangedFlags flags, struct openthread_context *ot_context,
@@ -398,7 +462,7 @@ static void on_thread_state_changed(otChangedFlags flags, struct openthread_cont
 				// set the SRP update callback
 				otSrpClientSetCallback(openthread_get_default_instance(), on_srp_client_updated, NULL);
 				// set the service hostname
-				#if defined SRP_CLIENT_RNG || defined SRP_CLIENT_UNIQUE
+				#if defined SRP_CLIENT_RNG || defined SRP_CLIENT_UNIQUE || defined SRP_CLIENT_MANUAL
 				if (otSrpClientSetHostName(openthread_get_default_instance(), realhostname) != OT_ERROR_NONE)
 				#else
 				if (otSrpClientSetHostName(openthread_get_default_instance(), hostname) != OT_ERROR_NONE)
@@ -412,7 +476,7 @@ static void on_thread_state_changed(otChangedFlags flags, struct openthread_cont
 				// get the service instance name string buffer from OT SRP API
 				string = otSrpClientBuffersGetServiceEntryInstanceNameString(entry, &size); // make sure "service_instance" is not bigger than "size"!
 				// copy the service instance
-				#if defined SRP_CLIENT_RNG || defined SRP_CLIENT_UNIQUE
+				#if defined SRP_CLIENT_RNG || defined SRP_CLIENT_UNIQUE || defined SRP_CLIENT_MANUAL
 				memcpy(string, realinstance, sizeof(realinstance)+1);
 				#else
 				memcpy(string, service_instance, sizeof(service_instance)+1);
