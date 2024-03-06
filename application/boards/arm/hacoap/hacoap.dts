@@ -121,6 +121,15 @@
 	status = "okay";
 };
 
+&uart0 {
+    compatible = "nordic,nrf-uarte";
+    status = "okay";
+    current-speed = <115200>;
+    pinctrl-0 = <&uart0_default>;
+    pinctrl-1 = <&uart0_sleep>;
+    pinctrl-names = "default", "sleep";
+};
+
 &i2c0 {
 	status = "okay";
 	compatible = "nordic,nrf-twim";
@@ -191,6 +200,11 @@
 		};
 	};
 };
+
+// zephyr_udc0: &usbd {
+// 	compatible = "nordic,nrf-usbd";
+// 	status = "okay";
+// };
 
 
 

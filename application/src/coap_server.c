@@ -530,6 +530,13 @@ int main(void)
 {
 	int ret;
 
+	/* enable USB */
+	ret = usb_enable(NULL);
+	if (ret != 0) {
+		LOG_ERR("Failed to enable USB");
+		goto end;
+	}
+
 	ret = dk_leds_init();
 	if (ret) {
 		LOG_ERR("Could not initialize leds, err code: %d", ret);
@@ -670,14 +677,6 @@ int main(void)
 	k_sleep(K_MSEC(100));
 	dk_set_led_off(LIGHT_LED);
 	k_sleep(K_MSEC(100));
-
-	/* enable USB */
-	// ret = usb_enable(NULL);
-	// if (ret != 0) {
-	// 	LOG_ERR("Failed to enable USB");
-	// 	goto end;
-	// }
-	// k_sleep(K_MSEC(5000));
 
 	/* Humidity/temp sensor */
 	if (!device_is_ready(dev_hdc)) {
