@@ -147,10 +147,14 @@ LOG_MODULE_REGISTER(coap_server, CONFIG_COAP_SERVER_LOG_LEVEL);
 #define WATER_PUMP 4
 #define TOF_EN 5
 
-#define PUMP_MAX_ACTIVE_TIME 4 // seconds
-#define ADC_TIMER_PERIOD 1 // seconds
+#define PUMP_MAX_ACTIVE_TIME 4 // in seconds
+#define OT_BUZZER_PERIOD 100 // in milli-seconds
+#define OT_BUZZER_NBR_PULSES 6 
+#define INIT_BUZZER_PERIOD 100 // in milli-seconds
+#define BUZZER_ACTIVE_TIME 1 // in seconds
+#define ADC_TIMER_PERIOD 1 // in seconds
 #define HUMIDITY_DRY 2100 // in mV
-#define HUMIDITY_WET 800
+#define HUMIDITY_WET 800  // in mV
 
 // data global
 uint8_t data[4] = {0};
@@ -182,6 +186,8 @@ int16_t temperature = 0;
 /* timer */
 static struct k_timer pump_timer;
 static struct k_timer adc_timer;
+static struct k_timer buzzer_timer;
+static struct k_timer ot_buzzer_timer;
 
 /* fuel gauge*/
 const struct device *const dev_fuelgauge = DEVICE_DT_GET_ANY(maxim_max17048);
@@ -227,7 +233,9 @@ static void on_light_request(uint8_t command)
 			coap_activate_pump();
 			dk_set_led_on(LIGHT_LED);
 			dk_set_led_on(WATER_PUMP);
+			pwm_set_dt(&pwm_buzzer, PWM_KHZ(6), PWM_KHZ(6) / 2U);
 			k_timer_start(&pump_timer, K_SECONDS(PUMP_MAX_ACTIVE_TIME), K_NO_WAIT); // pump will be active for 5 seconds, unless a stop command is received
+			k_timer_start(&buzzer_timer, K_SECONDS(PUMP_MAX_ACTIVE_TIME), K_NO_WAIT);
 		}
 		break;
 
@@ -245,7 +253,6 @@ static void on_light_request(uint8_t command)
 		break;
 	}
 }
-
 
 static int8_t * on_temperature_request()
 {
@@ -386,7 +393,8 @@ static void on_thread_state_changed(otChangedFlags flags, struct openthread_cont
 			if (!oneTime)
 			{
 				oneTime = 1;
-
+				// start buzzer OT connection tune
+				k_timer_start(&ot_buzzer_timer, K_MSEC(1), K_NO_WAIT);
 				// set the SRP update callback
 				otSrpClientSetCallback(openthread_get_default_instance(), on_srp_client_updated, NULL);
 				// set the service hostname
@@ -435,8 +443,7 @@ static void on_thread_state_changed(otChangedFlags flags, struct openthread_cont
 		}
 	}
 }
-static struct openthread_state_changed_cb ot_state_chaged_cb = { .state_changed_cb =
-									 on_thread_state_changed };
+static struct openthread_state_changed_cb ot_state_chaged_cb = { .state_changed_cb = on_thread_state_changed };
 
 static void on_pump_timer_expiry(struct k_timer *timer_id)
 {
@@ -480,6 +487,45 @@ static void on_adc_timer_expiry(struct k_timer *timer_id)
 	temperature = (int16_t)val_mv;
 }
 
+static void on_buzzer_timer_expiry(struct k_timer *timer_id)
+{
+	ARG_UNUSED(timer_id);
+
+	pwm_set_dt(&pwm_buzzer, PWM_KHZ(6), 0);
+
+	k_timer_stop(&buzzer_timer);
+
+}
+
+static void on_ot_buzzer_timer_expiry(struct k_timer *timer_id)
+{
+	ARG_UNUSED(timer_id);
+	
+	static uint8_t cnt = 0;
+	
+	if (cnt < OT_BUZZER_NBR_PULSES)
+	{
+		if (cnt%2) // 1, 3, 5, ...
+		{
+			pwm_set_dt(&pwm_buzzer, PWM_KHZ(6), 0);
+			k_timer_start(&ot_buzzer_timer, K_MSEC(OT_BUZZER_PERIOD), K_NO_WAIT);
+		}
+		else  // 0, 2, 4, ...
+		{
+			pwm_set_dt(&pwm_buzzer, PWM_KHZ(6), PWM_KHZ(6) / 2U);
+			k_timer_start(&ot_buzzer_timer, K_MSEC(OT_BUZZER_PERIOD), K_NO_WAIT);
+		}
+		cnt++;
+	}
+	else
+	{
+		cnt = 0;
+		k_timer_stop(&ot_buzzer_timer);
+	}
+}
+
+
+
 int main(void)
 {
 	int ret;
@@ -490,12 +536,15 @@ int main(void)
 		goto end;
 	}
 
+	pwm_set_dt(&pwm_buzzer, PWM_KHZ(2), PWM_KHZ(2) / 2U);
+	k_sleep(K_MSEC(INIT_BUZZER_PERIOD));
+	pwm_set_dt(&pwm_buzzer, PWM_KHZ(4), PWM_KHZ(4) / 2U);
+	k_sleep(K_MSEC(INIT_BUZZER_PERIOD));
+	pwm_set_dt(&pwm_buzzer, PWM_KHZ(6), PWM_KHZ(6) / 2U);
+	k_sleep(K_MSEC(INIT_BUZZER_PERIOD));
+	pwm_set_dt(&pwm_buzzer, PWM_KHZ(6), 0);
 
-	if (!device_is_ready(pwm_buzzer.dev)) {
-		printk("Error: PWM device %s is not ready\n",
-		       pwm_buzzer.dev->name);
-		return 0;
-	}
+
 
 	// dk_set_led_on(TOF_EN);
 	// struct sensor_value value;
@@ -518,79 +567,83 @@ int main(void)
 	// 	LOG_INF("distance is %.3fm\n", sensor_value_to_double(&value));
 	// dk_set_led_off(TOF_EN);
 
-		if (!device_is_ready(lsm6dsl_dev)) {
-		printk("sensor: device not ready.\n");
-		return 0;
-	}
 
-	/* set accel/gyro sampling frequency to 104 Hz */
-	odr_attr.val1 = 104;
-	odr_attr.val2 = 0;
 
-	if (sensor_attr_set(lsm6dsl_dev, SENSOR_CHAN_ACCEL_XYZ,
-			    SENSOR_ATTR_SAMPLING_FREQUENCY, &odr_attr) < 0) {
-			printk("Cannot set sampling frequency for accelerometer.\n");
-		return 0;
-	}
 
-	if (sensor_attr_set(lsm6dsl_dev, SENSOR_CHAN_GYRO_XYZ,
-			    SENSOR_ATTR_SAMPLING_FREQUENCY, &odr_attr) < 0) {
-			printk("Cannot set sampling frequency for gyro.\n");
-		return 0;
-	}
 
-	#ifdef CONFIG_LSM6DSL_TRIGGER
-	struct sensor_trigger trig;
+	// if (!device_is_ready(lsm6dsl_dev)) {
+	// 	printk("sensor: device not ready.\n");
+	// 	return 0;
+	// }
 
-	trig.type = SENSOR_TRIG_DATA_READY;
-	trig.chan = SENSOR_CHAN_ACCEL_XYZ;
+	// /* set accel/gyro sampling frequency to 104 Hz */
+	// odr_attr.val1 = 104;
+	// odr_attr.val2 = 0;
 
-	if (sensor_trigger_set(lsm6dsl_dev, &trig, lsm6dsl_trigger_handler) != 0) {
-		printk("Could not set sensor type and channel\n");
-		return 0;
-	}
-	#endif
+	// if (sensor_attr_set(lsm6dsl_dev, SENSOR_CHAN_ACCEL_XYZ,
+	// 		    SENSOR_ATTR_SAMPLING_FREQUENCY, &odr_attr) < 0) {
+	// 		printk("Cannot set sampling frequency for accelerometer.\n");
+	// 	return 0;
+	// }
 
-	if (sensor_sample_fetch(lsm6dsl_dev) < 0) {
-			printk("Sensor sample update error\n");
-		return 0;
-	}
-	/* Erase previous */
-	printk("\0033\014");
-	printf("LSM6DSL sensor samples:\n\n");
+	// if (sensor_attr_set(lsm6dsl_dev, SENSOR_CHAN_GYRO_XYZ,
+	// 		    SENSOR_ATTR_SAMPLING_FREQUENCY, &odr_attr) < 0) {
+	// 		printk("Cannot set sampling frequency for gyro.\n");
+	// 	return 0;
+	// }
 
-	/* lsm6dsl accel */
-	sprintf(out_str, "accel x:%f ms/2 y:%f ms/2 z:%f ms/2",
-							out_ev(&accel_x_out),
-							out_ev(&accel_y_out),
-							out_ev(&accel_z_out));
-	printk("%s\n", out_str);
+	// #ifdef CONFIG_LSM6DSL_TRIGGER
+	// struct sensor_trigger trig;
 
-	/* lsm6dsl gyro */
-	sprintf(out_str, "gyro x:%f dps y:%f dps z:%f dps",
-							out_ev(&gyro_x_out),
-							out_ev(&gyro_y_out),
-							out_ev(&gyro_z_out));
-	printk("%s\n", out_str);
-	#if defined(CONFIG_LSM6DSL_EXT0_LIS2MDL)
-		/* lsm6dsl external magn */
-		sprintf(out_str, "magn x:%f gauss y:%f gauss z:%f gauss",
-							out_ev(&magn_x_out),
-							out_ev(&magn_y_out),
-							out_ev(&magn_z_out));
-		printk("%s\n", out_str);
-	#endif
+	// trig.type = SENSOR_TRIG_DATA_READY;
+	// trig.chan = SENSOR_CHAN_ACCEL_XYZ;
 
-	#if defined(CONFIG_LSM6DSL_EXT0_LPS22HB)
-		/* lsm6dsl external press/temp */
-		sprintf(out_str, "press: %f kPa - temp: %f deg",
-			out_ev(&press_out), out_ev(&temp_out));
-		printk("%s\n", out_str);
-	#endif
+	// if (sensor_trigger_set(lsm6dsl_dev, &trig, lsm6dsl_trigger_handler) != 0) {
+	// 	printk("Could not set sensor type and channel\n");
+	// 	return 0;
+	// }
+	// #endif
 
-	printk("loop:%d trig_cnt:%d\n\n", ++cnt, lsm6dsl_trig_cnt);
+	// if (sensor_sample_fetch(lsm6dsl_dev) < 0) {
+	// 		printk("Sensor sample update error\n");
+	// 	return 0;
+	// }
+	// /* Erase previous */
+	// printk("\0033\014");
+	// printf("LSM6DSL sensor samples:\n\n");
 
-	print_samples = 1;
+	// /* lsm6dsl accel */
+	// sprintf(out_str, "accel x:%f ms/2 y:%f ms/2 z:%f ms/2",
+	// 						out_ev(&accel_x_out),
+	// 						out_ev(&accel_y_out),
+	// 						out_ev(&accel_z_out));
+	// printk("%s\n", out_str);
+
+	// /* lsm6dsl gyro */
+	// sprintf(out_str, "gyro x:%f dps y:%f dps z:%f dps",
+	// 						out_ev(&gyro_x_out),
+	// 						out_ev(&gyro_y_out),
+	// 						out_ev(&gyro_z_out));
+	// printk("%s\n", out_str);
+	// #if defined(CONFIG_LSM6DSL_EXT0_LIS2MDL)
+	// 	/* lsm6dsl external magn */
+	// 	sprintf(out_str, "magn x:%f gauss y:%f gauss z:%f gauss",
+	// 						out_ev(&magn_x_out),
+	// 						out_ev(&magn_y_out),
+	// 						out_ev(&magn_z_out));
+	// 	printk("%s\n", out_str);
+	// #endif
+
+	// #if defined(CONFIG_LSM6DSL_EXT0_LPS22HB)
+	// 	/* lsm6dsl external press/temp */
+	// 	sprintf(out_str, "press: %f kPa - temp: %f deg",
+	// 		out_ev(&press_out), out_ev(&temp_out));
+	// 	printk("%s\n", out_str);
+	// #endif
+
+	// printk("loop:%d trig_cnt:%d\n\n", ++cnt, lsm6dsl_trig_cnt);
+
+	// print_samples = 1;
 
 	dk_set_led_on(OT_CONNECTION_LED);
 	k_sleep(K_MSEC(100));
@@ -745,6 +798,8 @@ int main(void)
 	/* Timer */
 	k_timer_init(&pump_timer, on_pump_timer_expiry, NULL);
 	k_timer_init(&adc_timer, on_adc_timer_expiry, NULL);
+	k_timer_init(&buzzer_timer, on_buzzer_timer_expiry, NULL);
+	k_timer_init(&ot_buzzer_timer, on_ot_buzzer_timer_expiry, NULL);
 	/*
 		If we want to get the temperature value periodically, start the timer.
 		Otherwise, the ADC will be check only upon a tempereature GET request
