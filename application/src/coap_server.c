@@ -151,7 +151,7 @@ LOG_MODULE_REGISTER(coap_server, CONFIG_COAP_SERVER_LOG_LEVEL);
 #define OT_BUZZER_PERIOD 100 // in milli-seconds
 #define OT_BUZZER_NBR_PULSES 6 
 #define INIT_BUZZER_PERIOD 100 // in milli-seconds
-#define BUZZER_ACTIVE_TIME 1 // in seconds
+#define BUZZER_ACTIVE_TIME 200 // in milli-seconds
 #define ADC_TIMER_PERIOD 1 // in seconds
 #define HUMIDITY_DRY 2100 // in mV
 #define HUMIDITY_WET 800  // in mV
@@ -238,7 +238,7 @@ static void on_light_request(uint8_t command)
 			dk_set_led_on(WATER_PUMP);
 			pwm_set_dt(&pwm_buzzer, PWM_KHZ(6), PWM_KHZ(6) / 2U);
 			k_timer_start(&pump_timer, K_SECONDS(PUMP_MAX_ACTIVE_TIME), K_NO_WAIT); // pump will be active for 5 seconds, unless a stop command is received
-			k_timer_start(&buzzer_timer, K_SECONDS(BUZZER_ACTIVE_TIME), K_NO_WAIT);
+			k_timer_start(&buzzer_timer, K_MSEC(BUZZER_ACTIVE_TIME), K_NO_WAIT);
 		}
 		break;
 
@@ -593,14 +593,6 @@ static void on_ot_buzzer_timer_expiry(struct k_timer *timer_id)
 int main(void)
 {
 	int ret;
-
-	/* enable USB */
-	ret = usb_enable(NULL);
-	if (ret != 0) {
-		LOG_ERR("Failed to enable USB");
-		goto end;
-	}
-	k_sleep(K_MSEC(5000));
 
 	ret = dk_leds_init();
 	if (ret) {
