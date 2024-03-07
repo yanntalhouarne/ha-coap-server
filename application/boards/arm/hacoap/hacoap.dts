@@ -145,9 +145,9 @@
 		compatible = "ti,hdc","ti,hdc1080";
 		reg = <0x40>;
 	};
-	vl53l0x@29 {
+	vl53l0x@30 {
 		compatible = "st,vl53l0x";
-		reg = <0x29>;
+		reg = <0x30>;
 		label = "VL53L0X";
 	};
 	lsm6dsl@6a {

@@ -6,6 +6,7 @@
 
 //#include <stdio. h> // for snprintf
 #include <stdio.h>
+#include <zephyr/sys/util.h>
 #include <zephyr/kernel.h>
 #include <dk_buttons_and_leds.h>
 #include <zephyr/logging/log.h>
@@ -48,11 +49,10 @@ const struct device *const dev_hdc = DEVICE_DT_GET_ONE(ti_hdc);
 const struct device *const dev_tof = DEVICE_DT_GET_ONE(st_vl53l0x);
 
 /* IMU */
-#define CONFIG_LSM6DSL_TRIGGER
 static int print_samples;
 static int lsm6dsl_trig_cnt;
 const struct device *const lsm6dsl_dev = DEVICE_DT_GET_ONE(st_lsm6dsl);
-static inline float out_ev(struct sensor_value *val)
+static float out_ev(struct sensor_value *val)
 {
 	return (val->val1 + (float)val->val2 / 1000000);
 }
@@ -61,74 +61,6 @@ volatile static struct sensor_value gyro_x_out, gyro_y_out, gyro_z_out;
 int cnt = 0;
 char out_str[64];
 struct sensor_value odr_attr;
-
-#ifdef CONFIG_LSM6DSL_TRIGGER
-static void lsm6dsl_trigger_handler(const struct device *dev,
-				    const struct sensor_trigger *trig)
-{
-	static struct sensor_value accel_x, accel_y, accel_z;
-	static struct sensor_value gyro_x, gyro_y, gyro_z;
-#if defined(CONFIG_LSM6DSL_EXT0_LIS2MDL)
-	static struct sensor_value magn_x, magn_y, magn_z;
-#endif
-#if defined(CONFIG_LSM6DSL_EXT0_LPS22HB)
-	static struct sensor_value press, temp;
-#endif
-	lsm6dsl_trig_cnt++;
-
-	sensor_sample_fetch_chan(dev, SENSOR_CHAN_ACCEL_XYZ);
-	sensor_channel_get(dev, SENSOR_CHAN_ACCEL_X, &accel_x);
-	sensor_channel_get(dev, SENSOR_CHAN_ACCEL_Y, &accel_y);
-	sensor_channel_get(dev, SENSOR_CHAN_ACCEL_Z, &accel_z);
-
-	/* lsm6dsl gyro */
-	sensor_sample_fetch_chan(dev, SENSOR_CHAN_GYRO_XYZ);
-	sensor_channel_get(dev, SENSOR_CHAN_GYRO_X, &gyro_x);
-	sensor_channel_get(dev, SENSOR_CHAN_GYRO_Y, &gyro_y);
-	sensor_channel_get(dev, SENSOR_CHAN_GYRO_Z, &gyro_z);
-
-#if defined(CONFIG_LSM6DSL_EXT0_LIS2MDL)
-	/* lsm6dsl external magn */
-	sensor_sample_fetch_chan(dev, SENSOR_CHAN_MAGN_XYZ);
-	sensor_channel_get(dev, SENSOR_CHAN_MAGN_X, &magn_x);
-	sensor_channel_get(dev, SENSOR_CHAN_MAGN_Y, &magn_y);
-	sensor_channel_get(dev, SENSOR_CHAN_MAGN_Z, &magn_z);
-#endif
-
-#if defined(CONFIG_LSM6DSL_EXT0_LPS22HB)
-	/* lsm6dsl external press/temp */
-	sensor_sample_fetch_chan(dev, SENSOR_CHAN_PRESS);
-	sensor_channel_get(dev, SENSOR_CHAN_PRESS, &press);
-
-	sensor_sample_fetch_chan(dev, SENSOR_CHAN_AMBIENT_TEMP);
-	sensor_channel_get(dev, SENSOR_CHAN_AMBIENT_TEMP, &temp);
-#endif
-
-	if (print_samples) {
-		print_samples = 0;
-
-		accel_x_out = accel_x;
-		accel_y_out = accel_y;
-		accel_z_out = accel_z;
-
-		gyro_x_out = gyro_x;
-		gyro_y_out = gyro_y;
-		gyro_z_out = gyro_z;
-
-#if defined(CONFIG_LSM6DSL_EXT0_LIS2MDL)
-		magn_x_out = magn_x;
-		magn_y_out = magn_y;
-		magn_z_out = magn_z;
-#endif
-
-#if defined(CONFIG_LSM6DSL_EXT0_LPS22HB)
-		press_out = press;
-		temp_out = temp;
-#endif
-	}
-
-}
-#endif
 
 
 /* PWM */
@@ -233,6 +165,13 @@ static void on_light_request(uint8_t command)
 	case THREAD_COAP_UTILS_LIGHT_CMD_ON:
 		if (coap_is_pump_active() == false)
 		{
+			struct sensor_value x,y,z;
+			sensor_channel_get(lsm6dsl_dev, SENSOR_CHAN_ACCEL_X, &x);
+			sensor_channel_get(lsm6dsl_dev, SENSOR_CHAN_ACCEL_Y, &y);
+			sensor_channel_get(lsm6dsl_dev, SENSOR_CHAN_ACCEL_Z, &z);
+			LOG_INF("x-accel = %d.%06d ms/2, z-accel = = %d.%06d ms/2, z-accel = = %d.%06d ms/2  %%\n",
+				x.val1, x.val2, y.val1, y.val2, z.val1, z.val2);
+			
 			coap_activate_pump();
 			dk_set_led_on(LIGHT_LED);
 			dk_set_led_on(WATER_PUMP);
@@ -390,11 +329,23 @@ void on_srp_client_updated(otError aError, const otSrpClientHostInfo *aHostInfo,
 
 void on_srp_client_updated(otError aError, const otSrpClientHostInfo *aHostInfo, const otSrpClientService *aServices, const otSrpClientService *aRemovedServices, void *aContext)
 {
-	otSrpClientBuffersServiceEntry *entry = NULL;
-	uint16_t size;
-	char *string;
+	// otSrpClientBuffersServiceEntry *entry = NULL;
+	// uint16_t size;
+	// const char string[30];
+
 
 	LOG_INF("SRP callback: %s", otThreadErrorToString(aError));
+	if (aError == OT_ERROR_NONE)
+	{
+		// start buzzer OT connection tune
+		k_timer_start(&ot_buzzer_timer, K_MSEC(1), K_NO_WAIT);
+		// otLinkModeConfig linkMode;
+		// //linkMode = otThreadGetLinkMode(openthread_get_default_context());
+		// ptr = otThreadDeviceRoleToString(openthread_get_default_context());
+		// LOG_INF("%s", ptr);
+
+		//otThreadSetLinkMode(openthread_get_default_context(), linkMode)
+	}
 
 	if (aError == OT_ERROR_DUPLICATED)
 	{
@@ -457,8 +408,7 @@ static void on_thread_state_changed(otChangedFlags flags, struct openthread_cont
 			if (!oneTime)
 			{
 				oneTime = 1;
-				// start buzzer OT connection tune
-				k_timer_start(&ot_buzzer_timer, K_MSEC(1), K_NO_WAIT);
+
 				// set the SRP update callback
 				otSrpClientSetCallback(openthread_get_default_instance(), on_srp_client_updated, NULL);
 				// set the service hostname
@@ -600,15 +550,17 @@ int main(void)
 		goto end;
 	}
 
-	pwm_set_dt(&pwm_buzzer, PWM_KHZ(2), PWM_KHZ(2) / 2U);
-	k_sleep(K_MSEC(INIT_BUZZER_PERIOD));
-	pwm_set_dt(&pwm_buzzer, PWM_KHZ(4), PWM_KHZ(4) / 2U);
-	k_sleep(K_MSEC(INIT_BUZZER_PERIOD));
-	pwm_set_dt(&pwm_buzzer, PWM_KHZ(6), PWM_KHZ(6) / 2U);
-	k_sleep(K_MSEC(INIT_BUZZER_PERIOD));
-	pwm_set_dt(&pwm_buzzer, PWM_KHZ(6), 0);
+	//k_sleep(K_MSEC(5000));
 
-	printk("Starting application...\n\n");
+	// pwm_set_dt(&pwm_buzzer, PWM_KHZ(2), PWM_KHZ(2) / 2U);
+	// k_sleep(K_MSEC(INIT_BUZZER_PERIOD));
+	// pwm_set_dt(&pwm_buzzer, PWM_KHZ(4), PWM_KHZ(4) / 2U);
+	// k_sleep(K_MSEC(INIT_BUZZER_PERIOD));
+	// pwm_set_dt(&pwm_buzzer, PWM_KHZ(6), PWM_KHZ(6) / 2U);
+	// k_sleep(K_MSEC(INIT_BUZZER_PERIOD));
+	// pwm_set_dt(&pwm_buzzer, PWM_KHZ(6), 0);
+
+	LOG_INF("Starting application...\n\n");
 
 	// dk_set_led_on(TOF_EN);
 	// struct sensor_value value;
@@ -632,82 +584,78 @@ int main(void)
 	// dk_set_led_off(TOF_EN);
 
 
+	if (!device_is_ready(lsm6dsl_dev)) {
+		LOG_ERR("sensor: device not ready.\n");
+		return 0;
+	}
+
+	/* set accel/gyro sampling frequency to 104 Hz */
+	odr_attr.val1 = 104;
+	odr_attr.val2 = 0;
+
+	if (sensor_attr_set(lsm6dsl_dev, SENSOR_CHAN_ACCEL_XYZ,
+			    SENSOR_ATTR_SAMPLING_FREQUENCY, &odr_attr) < 0) {
+			LOG_ERR("Cannot set sampling frequency for accelerometer.\n");
+		return 0;
+	}
+
+	if (sensor_attr_set(lsm6dsl_dev, SENSOR_CHAN_GYRO_XYZ,
+			    SENSOR_ATTR_SAMPLING_FREQUENCY, &odr_attr) < 0) {
+			LOG_ERR("Cannot set sampling frequency for gyro.\n");
+		return 0;
+	}
+
+	#ifdef CONFIG_LSM6DSL_TRIGGER
+	struct sensor_trigger trig;
+
+	trig.type = SENSOR_TRIG_DATA_READY;
+	trig.chan = SENSOR_CHAN_ACCEL_XYZ;
+
+	if (sensor_trigger_set(lsm6dsl_dev, &trig, lsm6dsl_trigger_handler) != 0) {
+		LOG_ERR("Could not set sensor type and channel\n");
+		return 0;
+	}
+	#endif
+
+	if (sensor_sample_fetch(lsm6dsl_dev) < 0) {
+			LOG_ERR("Sensor sample update error\n");
+		return 0;
+	}
+
+	struct sensor_value imu_temp;
+	// sensor_channel_get(lsm6dsl_dev, SENSOR_CHAN_ACCEL_X, &imu_temp);
+	// printk("%d", "x_accel = %d.%d", imu_temp.val1, imu_temp.val2);
+	// sensor_channel_get(lsm6dsl_dev, SENSOR_CHAN_ACCEL_Y, &imu_temp);
+	// printk("%d", "y_accel = %d.%d", imu_temp.val1, imu_temp.val2);
+	// sensor_channel_get(lsm6dsl_dev, SENSOR_CHAN_ACCEL_Z, &imu_temp);
+	// printk("%d", "z_accel = %d.%d", imu_temp.val1, imu_temp.val2);
+	// sensor_channel_get(lsm6dsl_dev, SENSOR_CHAN_GYRO_X, &imu_temp);
+	// printk("%d", "x_gyro = %d.%d", imu_temp.val1, imu_temp.val2);
+	// sensor_channel_get(lsm6dsl_dev, SENSOR_CHAN_GYRO_Y, &imu_temp);
+	// printk("%d", "y_gyro = %d.%d", imu_temp.val1, imu_temp.val2);
+	// sensor_channel_get(lsm6dsl_dev, SENSOR_CHAN_GYRO_Z, &imu_temp);
+	// printk("%d", "z_gyro = %d.%d", imu_temp.val1, imu_temp.val2);
 
 
+	/* Erase previous */
+	LOG_INF("\0033\014");
+	LOG_INF("LSM6DSL sensor samples:\n\n");
 
-	// if (!device_is_ready(lsm6dsl_dev)) {
-	// 	printk("sensor: device not ready.\n");
-	// 	return 0;
-	// }
+	/* lsm6dsl accel */
+	struct sensor_value x,y,z;
+	sensor_channel_get(lsm6dsl_dev, SENSOR_CHAN_ACCEL_X, &x);
+	sensor_channel_get(lsm6dsl_dev, SENSOR_CHAN_ACCEL_Y, &y);
+	sensor_channel_get(lsm6dsl_dev, SENSOR_CHAN_ACCEL_Z, &z);
+	LOG_INF("x-accel = %d.%06d ms/2, z-accel = = %d.%06d ms/2, z-accel = = %d.%06d ms/2  %%\n",
+		x.val1, x.val2, y.val1, y.val2, z.val1, z.val2);
 
-	// /* set accel/gyro sampling frequency to 104 Hz */
-	// odr_attr.val1 = 104;
-	// odr_attr.val2 = 0;
+	/* lsm6dsl gyro */
+	sensor_channel_get(lsm6dsl_dev, SENSOR_CHAN_GYRO_X, &x);
+	sensor_channel_get(lsm6dsl_dev, SENSOR_CHAN_GYRO_Y, &y);
+	sensor_channel_get(lsm6dsl_dev, SENSOR_CHAN_GYRO_Z, &z);
+	LOG_INF("x-gyro = %d.%06d dps, z-gyro = = %d.%06d dps, z-gyro = = %d.%06d dps  %%\n",
+		x.val1, x.val2, y.val1, y.val2, z.val1, z.val2);
 
-	// if (sensor_attr_set(lsm6dsl_dev, SENSOR_CHAN_ACCEL_XYZ,
-	// 		    SENSOR_ATTR_SAMPLING_FREQUENCY, &odr_attr) < 0) {
-	// 		printk("Cannot set sampling frequency for accelerometer.\n");
-	// 	return 0;
-	// }
-
-	// if (sensor_attr_set(lsm6dsl_dev, SENSOR_CHAN_GYRO_XYZ,
-	// 		    SENSOR_ATTR_SAMPLING_FREQUENCY, &odr_attr) < 0) {
-	// 		printk("Cannot set sampling frequency for gyro.\n");
-	// 	return 0;
-	// }
-
-	// #ifdef CONFIG_LSM6DSL_TRIGGER
-	// struct sensor_trigger trig;
-
-	// trig.type = SENSOR_TRIG_DATA_READY;
-	// trig.chan = SENSOR_CHAN_ACCEL_XYZ;
-
-	// if (sensor_trigger_set(lsm6dsl_dev, &trig, lsm6dsl_trigger_handler) != 0) {
-	// 	printk("Could not set sensor type and channel\n");
-	// 	return 0;
-	// }
-	// #endif
-
-	// if (sensor_sample_fetch(lsm6dsl_dev) < 0) {
-	// 		printk("Sensor sample update error\n");
-	// 	return 0;
-	// }
-	// /* Erase previous */
-	// printk("\0033\014");
-	// printf("LSM6DSL sensor samples:\n\n");
-
-	// /* lsm6dsl accel */
-	// sprintf(out_str, "accel x:%f ms/2 y:%f ms/2 z:%f ms/2",
-	// 						out_ev(&accel_x_out),
-	// 						out_ev(&accel_y_out),
-	// 						out_ev(&accel_z_out));
-	// printk("%s\n", out_str);
-
-	// /* lsm6dsl gyro */
-	// sprintf(out_str, "gyro x:%f dps y:%f dps z:%f dps",
-	// 						out_ev(&gyro_x_out),
-	// 						out_ev(&gyro_y_out),
-	// 						out_ev(&gyro_z_out));
-	// printk("%s\n", out_str);
-	// #if defined(CONFIG_LSM6DSL_EXT0_LIS2MDL)
-	// 	/* lsm6dsl external magn */
-	// 	sprintf(out_str, "magn x:%f gauss y:%f gauss z:%f gauss",
-	// 						out_ev(&magn_x_out),
-	// 						out_ev(&magn_y_out),
-	// 						out_ev(&magn_z_out));
-	// 	printk("%s\n", out_str);
-	// #endif
-
-	// #if defined(CONFIG_LSM6DSL_EXT0_LPS22HB)
-	// 	/* lsm6dsl external press/temp */
-	// 	sprintf(out_str, "press: %f kPa - temp: %f deg",
-	// 		out_ev(&press_out), out_ev(&temp_out));
-	// 	printk("%s\n", out_str);
-	// #endif
-
-	// printk("loop:%d trig_cnt:%d\n\n", ++cnt, lsm6dsl_trig_cnt);
-
-	// print_samples = 1;
 
 	dk_set_led_on(OT_CONNECTION_LED);
 	k_sleep(K_MSEC(100));
