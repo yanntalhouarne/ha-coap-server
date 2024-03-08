@@ -17,7 +17,7 @@
                 "CONFIG_DEBUG_OPTIMIZATIONS": "y",
                 "CONFIG_DEBUG_THREAD_INFO": "y",
                 "CACHED_CONF_FILE": "${sourceDir}/prj.conf",
-                "OVERLAY_CONFIG": "${sourceDir}/overlay-logging.conf;${sourceDir}/overlay-usb.conf",
+                "OVERLAY_CONFIG": "${sourceDir}/overlay-logging.conf;${sourceDir}/overlay-usb.conf;${sourceDir}/overlay-mtd.conf",
                 "DTC_OVERLAY_FILE": "${sourceDir}/boards/usb.overlay"
             }
         },
