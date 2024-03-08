@@ -117,11 +117,6 @@ struct adc_sequence sequence = {
 
 /* FW version */
 const char fw_version[] = SRP_CLIENT_INFO;
-struct fw_version
-{
-    const char *fw_version_buf;
-    uint8_t fw_version_size;
-};
 struct fw_version fw = {
     .fw_version_buf = fw_version,
     .fw_version_size = sizeof(fw_version),
@@ -178,10 +173,10 @@ struct fw_version on_info_request()
  ██████  ██████  ██   ██ ██          ██   ██ ██   ██ ██   ████ ██████  ███████ ███████ ██   ██ ███████
 
 */
-/* LIGHT REQUEST */
-static void on_light_request(uint8_t command);
-/* TEMPERATURE REQUEST */
-static int8_t *on_temperature_request();
+/* PUMP PUT REQUEST */
+static void on_pump_request(uint8_t command);
+/* DATA GET REQUEST */
+static int8_t *on_data_request();
 
 /*
 ███████ ██████  ██████      ██   ██  █████  ███    ██ ██████  ██      ███████ ██████
