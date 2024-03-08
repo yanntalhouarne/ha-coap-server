@@ -13,7 +13,7 @@
 #include <openthread/message.h>
 #include <openthread/thread.h>
 
-#include "ot_coap_utils.h"
+#include "../include/ot_coap_utils.h"
 
 LOG_MODULE_REGISTER(ot_coap_utils, CONFIG_OT_COAP_UTILS_LOG_LEVEL);
 
@@ -219,7 +219,7 @@ static otError light_put_response_send(otMessage *request_message, const otMessa
 	otMessage *response;
 	const void *payload;
 	uint16_t payload_size;
-	uint8_t light_status;
+	uint8_t light_status = 0;
 
 	// create response message
 	response = otCoapNewMessage(srv_context.ot, NULL);
@@ -242,8 +242,7 @@ static otError light_put_response_send(otMessage *request_message, const otMessa
 	// update payload
 	if (coap_is_pump_active())
 		light_status = 1;
-	else
-		light_status - 0;
+
 	payload = &light_status;
 	payload_size = sizeof(light_status);
 

@@ -70,10 +70,6 @@
 			gpios = <&gpio1 10 (GPIO_PULL_UP | GPIO_ACTIVE_LOW)>;
 			label = "CHRG";
 		};
-		//  button3: button_3 {
-			//      gpios = <&gpio0 29 (GPIO_PULL_UP | GPIO_ACTIVE_LOW)>;
-			//      label = "IMU_INT1";
-		//  };
 	};
 
 	/* These aliases are provided for compatibility with samples */
