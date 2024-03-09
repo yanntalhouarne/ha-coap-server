@@ -12,6 +12,39 @@
 #define __OT_COAP_SEVER_H__
 
 /*
+██ ███    ██  ██████ ██      ██    ██ ██████  ███████ ███████
+██ ████   ██ ██      ██      ██    ██ ██   ██ ██      ██
+██ ██ ██  ██ ██      ██      ██    ██ ██   ██ █████   ███████
+██ ██  ██ ██ ██      ██      ██    ██ ██   ██ ██           ██
+██ ██   ████  ██████ ███████  ██████  ██████  ███████ ███████
+*/
+/* ZEPHYR */
+#include <zephyr/kernel.h>
+#include <zephyr/sys/util.h>
+#include <zephyr/logging/log.h>
+#include <zephyr/net/openthread.h>
+#include <zephyr/usb/usb_device.h>
+#include <zephyr/random/rand32.h>
+#include <zephyr/devicetree.h>
+#include <zephyr/device.h>
+#include <zephyr/drivers/adc.h>
+#include <zephyr/drivers/fuel_gauge.h>
+#include <zephyr/drivers/sensor.h>
+#include <zephyr/drivers/pwm.h>
+#include <zephyr/drivers/uart.h>
+#include <zephyr/drivers/gpio.h>
+/* OPENTHREAD */
+#include <openthread/thread.h>
+#include <openthread/srp_client.h>
+#include <openthread/srp_client_buffers.h>
+/* APPLICATION */
+#include <dk_buttons_and_leds.h>
+#include "ot_coap_utils.h"
+#include "ot_srp_config.h"
+/* OTHERS */
+#include <stdio.h>
+
+/*
 ███    ███  █████   ██████ ██████   ██████  ███████
 ████  ████ ██   ██ ██      ██   ██ ██    ██ ██
 ██ ████ ██ ███████ ██      ██████  ██    ██ ███████
@@ -75,6 +108,15 @@ static const struct pwm_dt_spec pwm_buzzer = PWM_DT_SPEC_GET(DT_ALIAS(pwm_buzzer
 /* Fuel gauge*/
 const struct device *const dev_fuelgauge = DEVICE_DT_GET_ANY(maxim_max17048);
 
+/* Get button configuration from the devicetree sw0 alias. This is mandatory. */
+#define USRBUTTON_NODE	DT_ALIAS(usrbutton)
+#if !DT_NODE_HAS_STATUS(USRBUTTON_NODE, okay)
+#error "Unsupported board: usrbutton devicetree alias is not defined"
+#endif
+static const struct gpio_dt_spec usr_button = GPIO_DT_SPEC_GET_OR(USRBUTTON_NODE, gpios,
+							      {0});
+static struct gpio_callback usr_button_cb_data;
+
 /*
 ████████ ██ ███    ███ ███████ ██████  ███████
    ██    ██ ████  ████ ██      ██   ██ ██
@@ -102,8 +144,8 @@ static const struct adc_dt_spec adc_channels[] = {
                          DT_SPEC_AND_COMMA)};
 
 /* IMU sensor structs */
-volatile static struct sensor_value accel_x_out, accel_y_out, accel_z_out;
-volatile static struct sensor_value gyro_x_out, gyro_y_out, gyro_z_out;
+static struct sensor_value accel_x_out, accel_y_out, accel_z_out;
+static struct sensor_value gyro_x_out, gyro_y_out, gyro_z_out;
 struct sensor_value odr_attr;
 
 /* HDC sensor global */
@@ -220,12 +262,20 @@ static void on_pump_timer_expiry(struct k_timer *timer_id);
 static void on_buzzer_timer_expiry(struct k_timer *timer_id);
 /* Pulses the buzzer "OT_BUZZER_NBR_PULSES" times with a period of "OT_BUZZER_PERIOD" upon connection to the OT network. */
 static void on_ot_buzzer_timer_expiry(struct k_timer *timer_id);
-/* Called when S1 is pressed. */
-static void on_button_changed(uint32_t button_state, uint32_t has_changed);
 /* Fetches the ADC value every "ADC_TIMER_PERIOD" seconds.*/
 #ifdef ADC_TIMER_ENABLED
 static void on_adc_timer_expiry(struct k_timer *timer_id);
 #endif
+
+/*
+██████  ██    ██ ████████ ████████  ██████  ███    ██ ███████     ██   ██  █████  ███    ██ ██████  ██      ███████ ██████  ███████ 
+██   ██ ██    ██    ██       ██    ██    ██ ████   ██ ██          ██   ██ ██   ██ ████   ██ ██   ██ ██      ██      ██   ██ ██      
+██████  ██    ██    ██       ██    ██    ██ ██ ██  ██ ███████     ███████ ███████ ██ ██  ██ ██   ██ ██      █████   ██████  ███████ 
+██   ██ ██    ██    ██       ██    ██    ██ ██  ██ ██      ██     ██   ██ ██   ██ ██  ██ ██ ██   ██ ██      ██      ██   ██      ██ 
+██████   ██████     ██       ██     ██████  ██   ████ ███████     ██   ██ ██   ██ ██   ████ ██████  ███████ ███████ ██   ██ ███████
+*/
+/* Called when S1 is pressed. */
+void on_usr_button_changed();
 
 /*
 ██   ██ ███████ ██      ██████  ███████ ██████  ███████
@@ -236,5 +286,9 @@ static void on_adc_timer_expiry(struct k_timer *timer_id);
 */
 /* Generates a unique SRP hostname and service name */
 void srp_client_generate_name();
+
+/* Converts a sensor_value struct into a float */
+static inline float out_ev(struct sensor_value *val);
+
 
 #endif // __OT_COAP_SERVER_H__

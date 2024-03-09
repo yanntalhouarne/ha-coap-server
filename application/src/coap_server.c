@@ -15,31 +15,8 @@
 ██ ██  ██ ██ ██      ██      ██    ██ ██   ██ ██           ██
 ██ ██   ████  ██████ ███████  ██████  ██████  ███████ ███████
 */
-/* ZEPHYR */
-#include <zephyr/kernel.h>
-#include <zephyr/sys/util.h>
-#include <zephyr/logging/log.h>
-#include <zephyr/net/openthread.h>
-#include <zephyr/usb/usb_device.h>
-#include <zephyr/random/rand32.h>
-#include <zephyr/devicetree.h>
-#include <zephyr/device.h>
-#include <zephyr/drivers/adc.h>
-#include <zephyr/drivers/fuel_gauge.h>
-#include <zephyr/drivers/sensor.h>
-#include <zephyr/drivers/pwm.h>
-#include <zephyr/drivers/uart.h>
-/* OPENTHREAD */
-#include <openthread/thread.h>
-#include <openthread/srp_client.h>
-#include <openthread/srp_client_buffers.h>
 /* APPLICATION */
-#include <dk_buttons_and_leds.h>
-#include "../include/ot_coap_utils.h"
-#include "../include/ot_srp_config.h"
 #include "../include/coap_server.h"
-/* OTHERS */
-#include <stdio.h>
 
 /*
  ██████  ██████   █████  ██████      ██   ██  █████  ███    ██ ██████  ██      ███████ ██████  ███████
@@ -57,24 +34,6 @@ static void on_pump_request(uint8_t command)
 	case THREAD_COAP_UTILS_PUMP_CMD_ON:
 		if (coap_is_pump_active() == false)
 		{
-			/* fetch IMU data */
-			if (sensor_sample_fetch(lsm6dsl_dev) < 0)
-			{
-				LOG_INF("Sensor sample update error\n");
-			}
-			// /* lsm6dsl accel */
-			// sensor_channel_get(lsm6dsl_dev, SENSOR_CHAN_ACCEL_X, &accel_x_out);
-			// sensor_channel_get(lsm6dsl_dev, SENSOR_CHAN_ACCEL_Y, &accel_y_out);
-			// sensor_channel_get(lsm6dsl_dev, SENSOR_CHAN_ACCEL_Z, &accel_z_out);
-			// LOG_INF("x-accel = %d.%06d ms/2, z-accel = = %d.%06d ms/2, z-accel = = %d.%06d ms/2  %%\n",
-			// 		x.val1, x.val2, y.val1, y.val2, z.val1, z.val2);
-			// /* lsm6dsl gyro */
-			// sensor_channel_get(lsm6dsl_dev, SENSOR_CHAN_GYRO_X, &gyro_x_out);
-			// sensor_channel_get(lsm6dsl_dev, SENSOR_CHAN_GYRO_Y, &gyro_y_out);
-			// sensor_channel_get(lsm6dsl_dev, SENSOR_CHAN_GYRO_Z, &gyro_z_out);
-			// LOG_INF("x-gyro = %d.%06d dps, z-gyro = = %d.%06d dps, z-gyro = = %d.%06d dps  %%\n",
-			// 		x.val1, x.val2, y.val1, y.val2, z.val1, z.val2);
-
 			coap_activate_pump();
 			dk_set_led_on(LED1);
 			dk_set_led_on(WATER_PUMP);
@@ -344,17 +303,6 @@ static void on_ot_buzzer_timer_expiry(struct k_timer *timer_id)
 	}
 }
 
-/* Called when S1 is pressed. */
-static void on_button_changed(uint32_t button_state, uint32_t has_changed)
-{
-	uint32_t buttons = button_state & has_changed;
-
-	if (buttons & 4)
-	{
-		// k_work_submit(&provisioning_work);
-	}
-}
-
 /* Fetches the ADC value every "ADC_TIMER_PERIOD" seconds.*/
 #ifdef ADC_TIMER_ENABLED
 static void on_adc_timer_expiry(struct k_timer *timer_id)
@@ -388,6 +336,47 @@ static void on_adc_timer_expiry(struct k_timer *timer_id)
 	adc_reading = (int16_t)val_mv;
 }
 #endif
+
+/*
+██████  ██    ██ ████████ ████████  ██████  ███    ██ ███████     ██   ██  █████  ███    ██ ██████  ██      ███████ ██████  ███████ 
+██   ██ ██    ██    ██       ██    ██    ██ ████   ██ ██          ██   ██ ██   ██ ████   ██ ██   ██ ██      ██      ██   ██ ██      
+██████  ██    ██    ██       ██    ██    ██ ██ ██  ██ ███████     ███████ ███████ ██ ██  ██ ██   ██ ██      █████   ██████  ███████ 
+██   ██ ██    ██    ██       ██    ██    ██ ██  ██ ██      ██     ██   ██ ██   ██ ██  ██ ██ ██   ██ ██      ██      ██   ██      ██ 
+██████   ██████     ██       ██     ██████  ██   ████ ███████     ██   ██ ██   ██ ██   ████ ██████  ███████ ███████ ██   ██ ███████
+*/
+/* Called when S1 is pressed. */
+void on_usr_button_changed()
+{
+	/* Print IMU data */
+	char imu_buf[100];
+	// /* lsm6dsl accel */
+	sensor_channel_get(lsm6dsl_dev, SENSOR_CHAN_ACCEL_X, &accel_x_out);
+	sensor_channel_get(lsm6dsl_dev, SENSOR_CHAN_ACCEL_Y, &accel_y_out);
+	sensor_channel_get(lsm6dsl_dev, SENSOR_CHAN_ACCEL_Z, &accel_z_out);
+	sprintf(imu_buf, "accel x = %f ms/2, accel = %f ms/2, accel = %f ms/2",
+							out_ev(&accel_x_out),
+							out_ev(&accel_y_out),
+							out_ev(&accel_z_out));
+	LOG_INF("%s\n", imu_buf);
+	/* lsm6dsl gyro */
+	sensor_channel_get(lsm6dsl_dev, SENSOR_CHAN_GYRO_X, &gyro_x_out);
+	sensor_channel_get(lsm6dsl_dev, SENSOR_CHAN_GYRO_Y, &gyro_y_out);
+	sensor_channel_get(lsm6dsl_dev, SENSOR_CHAN_GYRO_Z, &gyro_z_out);
+	sprintf(imu_buf, "gyro x = %f dps, y = %f dps, z = %f dps",
+							out_ev(&gyro_x_out),
+							out_ev(&gyro_y_out),
+							out_ev(&gyro_z_out));
+	LOG_INF("%s\n", imu_buf);
+
+	/* Active pump, buzzer user LED*/
+	coap_activate_pump(); // notify ot_coap_util.c that the pump is active
+	dk_set_led_on(LED1);
+	dk_set_led_on(WATER_PUMP);
+	pwm_set_dt(&pwm_buzzer, PWM_KHZ(6), PWM_KHZ(6) / 2U);
+	/*  Start pump and buzzer shutoff timers */
+	k_timer_start(&pump_timer, K_SECONDS(PUMP_MAX_ACTIVE_TIME), K_NO_WAIT); // pump will be active for 5 seconds, unless a stop command is received
+	k_timer_start(&buzzer_timer, K_MSEC(OT_BUZZER_PERIOD), K_NO_WAIT);
+}
 
 /*
 ██   ██ ███████ ██      ██████  ███████ ██████  ███████
@@ -443,6 +432,12 @@ void srp_client_generate_name()
 #endif
 }
 
+/* Converts a sensor_value struct into a float */
+static inline float out_ev(struct sensor_value *val)
+{
+	return (val->val1 + (float)val->val2 / 1000000);
+}
+
 /*
 ███    ███  █████  ██ ███    ██
 ████  ████ ██   ██ ██ ████   ██
@@ -452,6 +447,8 @@ void srp_client_generate_name()
 */
 int main(void)
 {
+
+	k_sleep(K_MSEC(3000));
 
 	/*
 	 _      ____   _____          _       _____       _____ _   _ _____ _______
@@ -492,38 +489,27 @@ int main(void)
 	/**********************
 	 * Initialize buttons *
 	 **********************/
-	ret = dk_buttons_init(on_button_changed);
-	if (ret)
-	{
-		LOG_ERR("Cannot initialize buttons (error: %d)", ret);
+	if (!gpio_is_ready_dt(&usr_button)) {
+		printk("Error: Device %s is not ready\n",
+		       usr_button.port->name);
 		goto end;
 	}
-
-	/*
-	 ____   ____   ____ _______     _    _ _____        _____ _   _ _____ _______
-	|  _ \ / __ \ / __ \__   __|   | |  | |  __ \      |_   _| \ | |_   _|__   __|
-	| |_) | |  | | |  | | | |______| |  | | |__) |       | | |  \| | | |    | |
-	|  _ <| |  | | |  | | | |______| |  | |  ___/        | | | . ` | | |    | |
-	| |_) | |__| | |__| | | |      | |__| | |           _| |_| |\  |_| |_   | |
-	|____/ \____/ \____/  |_|       \____/|_|          |_____|_| \_|_____|  |_|
-
-	*/
-	/*********************
-	 * Boot-up sequence *
-	 *********************/
-	dk_set_led_on(RADIO_GREEN_LED);
-	pwm_set_dt(&pwm_buzzer, PWM_KHZ(2), PWM_KHZ(2) / 2U);
-	k_sleep(K_MSEC(INIT_BUZZER_PERIOD));
-	dk_set_led_off(RADIO_GREEN_LED);
-	pwm_set_dt(&pwm_buzzer, PWM_KHZ(4), PWM_KHZ(4) / 2U);
-	k_sleep(K_MSEC(INIT_BUZZER_PERIOD));
-	dk_set_led_on(RADIO_GREEN_LED);
-	pwm_set_dt(&pwm_buzzer, PWM_KHZ(6), PWM_KHZ(6) / 2U);
-	k_sleep(K_MSEC(INIT_BUZZER_PERIOD));
-	dk_set_led_off(RADIO_GREEN_LED);
-	pwm_set_dt(&pwm_buzzer, PWM_KHZ(6), 0);
-	LOG_INF("Starting application...\n\n");
-	k_sleep(K_MSEC(5000));
+	ret = gpio_pin_configure_dt(&usr_button, GPIO_INPUT);
+	if (ret != 0) {
+		printk("Error %d: failed to configure %s pin %d\n",
+		       ret, usr_button.port->name, usr_button.pin);
+		return 0;
+	}
+	ret = gpio_pin_interrupt_configure_dt(&usr_button,
+					      GPIO_INT_EDGE_TO_ACTIVE);
+	if (ret != 0) {
+		printk("Error %d: failed to configure interrupt on %s pin %d\n",
+			ret, usr_button.port->name, usr_button.pin);
+		return 0;
+	}
+	gpio_init_callback(&usr_button_cb_data, on_usr_button_changed, BIT(usr_button.pin));
+	gpio_add_callback(usr_button.port, &usr_button_cb_data);
+	printk("Set up user button at %s pin %d\n", usr_button.port->name, usr_button.pin);
 
 	/*
 	  _______ ____  ______        _____ ______ _   _  _____  ____  _____        _____ _   _ _____ _______
@@ -595,7 +581,7 @@ int main(void)
 		LOG_ERR("Cannot set sampling frequency for gyro.\n");
 		goto end;
 	}
-	/*****************
+	/******************
 	 * Fetch IMU data *
 	 ******************/
 	if (sensor_sample_fetch(lsm6dsl_dev) < 0)
@@ -606,19 +592,27 @@ int main(void)
 	/******************
 	 * Print IMU data *
 	 ******************/
-	// LOG_INF("LSM6DSL sensor data:\n");
+	LOG_INF("LSM6DSL sensor data:\n");
+	
+	char imu_buf[100];
 	// /* lsm6dsl accel */
 	sensor_channel_get(lsm6dsl_dev, SENSOR_CHAN_ACCEL_X, &accel_x_out);
 	sensor_channel_get(lsm6dsl_dev, SENSOR_CHAN_ACCEL_Y, &accel_y_out);
 	sensor_channel_get(lsm6dsl_dev, SENSOR_CHAN_ACCEL_Z, &accel_z_out);
-	LOG_INF("x-accel = %d.%06d ms/2, z-accel = = %d.%06d ms/2, z-accel = = %d.%06d ms/2  %%\n",
-			accel_x_out.val1, accel_x_out.val2, accel_y_out.val1, accel_y_out.val2, accel_z_out.val1, accel_z_out.val2);
+	sprintf(imu_buf, "accel x = %f ms/2, accel = %f ms/2, accel = %f ms/2",
+							out_ev(&accel_x_out),
+							out_ev(&accel_y_out),
+							out_ev(&accel_z_out));
+	LOG_INF("%s\n", imu_buf);
 	/* lsm6dsl gyro */
 	sensor_channel_get(lsm6dsl_dev, SENSOR_CHAN_GYRO_X, &gyro_x_out);
 	sensor_channel_get(lsm6dsl_dev, SENSOR_CHAN_GYRO_Y, &gyro_y_out);
 	sensor_channel_get(lsm6dsl_dev, SENSOR_CHAN_GYRO_Z, &gyro_z_out);
-	LOG_INF("x-gyro = %d.%06d dps, z-gyro = = %d.%06d dps, z-gyro = = %d.%06d dps  %%\n",
-			gyro_x_out.val1, gyro_x_out.val2, gyro_y_out.val1, gyro_y_out.val2, gyro_y_out.val1, gyro_y_out.val2);
+	sprintf(imu_buf, "gyro x = %f dps, y = %f dps, z = %f dps",
+							out_ev(&gyro_x_out),
+							out_ev(&gyro_y_out),
+							out_ev(&gyro_z_out));
+	LOG_INF("%s\n", imu_buf);
 
 	/*
 	 _    _ _____   _____        _____ ______ _   _  _____  ____  _____        _____ _   _ _____ _______
@@ -787,6 +781,32 @@ int main(void)
 		LOG_ERR("Could not initialize OpenThread CoAP");
 		goto end;
 	}
+
+	/*
+	 ____   ____   ____ _______     _    _ _____         _____ ______ ____  _    _ ______ _   _  _____ ______ 
+	|  _ \ / __ \ / __ \__   __|   | |  | |  __ \       / ____|  ____/ __ \| |  | |  ____| \ | |/ ____|  ____|
+	| |_) | |  | | |  | | | |______| |  | | |__) |     | (___ | |__ | |  | | |  | | |__  |  \| | |    | |__   
+	|  _ <| |  | | |  | | | |______| |  | |  ___/       \___ \|  __|| |  | | |  | |  __| | . ` | |    |  __|  
+	| |_) | |__| | |__| | | |      | |__| | |           ____) | |___| |__| | |__| | |____| |\  | |____| |____ 
+	|____/ \____/ \____/  |_|       \____/|_|          |_____/|______\___\_\\____/|______|_| \_|\_____|______|
+
+	*/
+	/*********************
+	 * Boot-up sequence *
+	 *********************/
+	LOG_INF("All devices and peripheralve has been sucessfully initiated. Starting Openthread...\n\n");
+	dk_set_led_on(RADIO_GREEN_LED);
+	pwm_set_dt(&pwm_buzzer, PWM_KHZ(2), PWM_KHZ(2) / 2U);
+	k_sleep(K_MSEC(INIT_BUZZER_PERIOD));
+	dk_set_led_off(RADIO_GREEN_LED);
+	pwm_set_dt(&pwm_buzzer, PWM_KHZ(4), PWM_KHZ(4) / 2U);
+	k_sleep(K_MSEC(INIT_BUZZER_PERIOD));
+	dk_set_led_on(RADIO_GREEN_LED);
+	pwm_set_dt(&pwm_buzzer, PWM_KHZ(6), PWM_KHZ(6) / 2U);
+	k_sleep(K_MSEC(INIT_BUZZER_PERIOD));
+	dk_set_led_off(RADIO_GREEN_LED);
+	pwm_set_dt(&pwm_buzzer, PWM_KHZ(6), 0);
+
 
 	/*
 	  ____  _____  ______ _   _ _______ _    _ _____  ______          _____        _____ _   _ _____ _______
