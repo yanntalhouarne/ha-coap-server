@@ -8,6 +8,9 @@
  * 	   - minor: Big          (default): https://patorjk.com/software/taag/#p=display&f=Big&t=LEDS%20%20%20%20%20INIT
  */
 
+#ifndef __OT_COAP_SERVER_H__
+#define __OT_COAP_SEVER_H__
+
 /*
 ███    ███  █████   ██████ ██████   ██████  ███████
 ████  ████ ██   ██ ██      ██   ██ ██    ██ ██
@@ -116,10 +119,16 @@ struct adc_sequence sequence = {
 };
 
 /* FW version */
-const char fw_version[] = SRP_CLIENT_INFO;
-struct fw_version fw = {
+const char fw_version[] = FW_VERSION;
+const char hw_version[] = HW_VERSION;
+struct info_data info = {
     .fw_version_buf = fw_version,
     .fw_version_size = sizeof(fw_version),
+
+    .hw_version_buf = hw_version,
+    .hw_version_size = sizeof(hw_version),
+
+    .total_size = sizeof(fw_version)+sizeof(hw_version),
 };
 
 /* ADC channel reading */
@@ -160,11 +169,6 @@ char realinstance[sizeof(service_instance) + SRP_CLIENT_MANUAL_SIZE + 1] = {0};
 /* SRP service name */
 const char service_name[] = SRP_SERVICE_NAME;
 
-struct fw_version on_info_request()
-{
-    return fw;
-}
-
 /*
  ██████  ██████   █████  ██████      ██   ██  █████  ███    ██ ██████  ██      ███████ ██████  ███████
 ██      ██    ██ ██   ██ ██   ██     ██   ██ ██   ██ ████   ██ ██   ██ ██      ██      ██   ██ ██
@@ -177,6 +181,8 @@ struct fw_version on_info_request()
 static void on_pump_request(uint8_t command);
 /* DATA GET REQUEST */
 static int8_t *on_data_request();
+/* INFO GET REQUEST */
+struct info_data on_info_request();
 
 /*
 ███████ ██████  ██████      ██   ██  █████  ███    ██ ██████  ██      ███████ ██████
@@ -230,3 +236,5 @@ static void on_adc_timer_expiry(struct k_timer *timer_id);
 */
 /* Generates a unique SRP hostname and service name */
 void srp_client_generate_name();
+
+#endif // __OT_COAP_SERVER_H__

@@ -18,6 +18,10 @@
 ██  ██  ██ ██   ██ ██      ██   ██ ██    ██      ██
 ██      ██ ██   ██  ██████ ██   ██  ██████  ███████
 */
+/* Firmare version */
+#define FW_VERSION "v0.01-dev"
+/* Hardware version */
+#define HW_VERSION "v2.0"
 /* CoAp port */
 #define COAP_PORT 5683
 /* CoAp resources*/
@@ -40,7 +44,7 @@ enum pump_command
 */
 typedef void (*pump_request_callback_t)(uint8_t cmd);
 typedef int8_t *(*data_request_callback_t)();
-typedef struct fw_version (*info_request_callback_t)();
+typedef struct info_data (*info_request_callback_t)();
 
 /*
 ███████ ████████ ██████  ██    ██  ██████ ████████ ███████
@@ -60,11 +64,18 @@ struct server_context
 };
 
 /* FW version data struct */
-struct fw_version
+struct info_data
 {
     // FW version
     const char *fw_version_buf;
     uint8_t fw_version_size;
+
+    // HW version
+    const char *hw_version_buf;
+    uint8_t hw_version_size;
+
+    // Total string length
+    uint8_t total_size;
 };
 
 /*
@@ -121,4 +132,6 @@ bool coap_is_pump_active(void);
 */
 /**@brief CoAp server initialization. */
 int ot_coap_init(pump_request_callback_t on_pump_request, data_request_callback_t on_data_request, info_request_callback_t on_info_request);
-#endif
+
+
+#endif // __OT_COAP_UTILS_H__

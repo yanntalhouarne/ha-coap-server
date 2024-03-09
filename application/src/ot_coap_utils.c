@@ -27,6 +27,10 @@
 #include <zephyr/net/openthread.h>
 /* APPLICATION */
 #include "../include/ot_coap_utils.h"
+/* OTHERS */
+#include <stdio.h>
+#include <string.h>
+#include <stdlib.h>
 
 /*
 ███    ███  █████   ██████ ██████   ██████  ███████
@@ -473,9 +477,8 @@ otError info_response_send(otMessage *request_message, const otMessageInfo *mess
 	otMessage *response;
 	const void *payload;
 	uint16_t payload_size;
-	struct fw_version fw;
-
-	fw = srv_context.on_info_request(); // get temperature from coap_server.c
+	struct info_data _info;
+	_info = srv_context.on_info_request(); // get temperature from coap_server.c
 
 	response = otCoapNewMessage(srv_context.ot, NULL);
 	if (response == NULL)
@@ -500,9 +503,18 @@ otError info_response_send(otMessage *request_message, const otMessageInfo *mess
 		goto end;
 	}
 
-	payload = &fw.fw_version_buf;
-	payload_size = sizeof(fw.fw_version_size);
 
+//    char * info_output = (char*)malloc(_info.total_size);
+	char info_output[50] = {0};
+	// if (info_output = NULL)
+	// 	LOG_INF("Could not allocate memory for Info Data buffer.");
+	// else
+	// {
+		snprintf(info_output, _info.total_size, "%s,%s", _info.fw_version_buf, _info.hw_version_buf);
+		payload = &info_output;
+		payload_size = _info.total_size;
+	//}
+	
 	error = otMessageAppend(response, payload, payload_size);
 	if (error != OT_ERROR_NONE)
 	{
@@ -511,7 +523,7 @@ otError info_response_send(otMessage *request_message, const otMessageInfo *mess
 
 	error = otCoapSendResponse(srv_context.ot, response, message_info);
 
-	LOG_INF("Firmware version is: %s", fw.fw_version_buf);
+	LOG_INF("Firmware version is: %s", info_output);
 
 end:
 	if (error != OT_ERROR_NONE && response != NULL)
