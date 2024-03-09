@@ -147,6 +147,7 @@ static const struct adc_dt_spec adc_channels[] = {
 static struct sensor_value accel_x_out, accel_y_out, accel_z_out;
 static struct sensor_value gyro_x_out, gyro_y_out, gyro_z_out;
 struct sensor_value odr_attr;
+char imu_buf[100];
 
 /* HDC sensor global */
 struct sensor_value temp, humidity;

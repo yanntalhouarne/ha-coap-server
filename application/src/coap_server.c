@@ -34,6 +34,35 @@ static void on_pump_request(uint8_t command)
 	case THREAD_COAP_UTILS_PUMP_CMD_ON:
 		if (coap_is_pump_active() == false)
 		{
+			/******************
+			 * Fetch IMU data *
+			 ******************/
+			if (sensor_sample_fetch(lsm6dsl_dev) < 0)
+			{
+				LOG_INF("IMU sensor sample update error\n");
+			}
+			else
+			{
+				/* Print IMU data */
+				// /* lsm6dsl accel */
+				sensor_channel_get(lsm6dsl_dev, SENSOR_CHAN_ACCEL_X, &accel_x_out);
+				sensor_channel_get(lsm6dsl_dev, SENSOR_CHAN_ACCEL_Y, &accel_y_out);
+				sensor_channel_get(lsm6dsl_dev, SENSOR_CHAN_ACCEL_Z, &accel_z_out);
+				sprintf(imu_buf, "accel x = %f ms/2, accel = %f ms/2, accel = %f ms/2",
+										out_ev(&accel_x_out),
+										out_ev(&accel_y_out),
+										out_ev(&accel_z_out));
+				LOG_INF("%s\n", imu_buf);
+				/* lsm6dsl gyro */
+				sensor_channel_get(lsm6dsl_dev, SENSOR_CHAN_GYRO_X, &gyro_x_out);
+				sensor_channel_get(lsm6dsl_dev, SENSOR_CHAN_GYRO_Y, &gyro_y_out);
+				sensor_channel_get(lsm6dsl_dev, SENSOR_CHAN_GYRO_Z, &gyro_z_out);
+				sprintf(imu_buf, "gyro x = %f dps, y = %f dps, z = %f dps",
+										out_ev(&gyro_x_out),
+										out_ev(&gyro_y_out),
+										out_ev(&gyro_z_out));
+				LOG_INF("%s\n", imu_buf);
+			}
 			coap_activate_pump();
 			dk_set_led_on(LED1);
 			dk_set_led_on(WATER_PUMP);
@@ -347,27 +376,6 @@ static void on_adc_timer_expiry(struct k_timer *timer_id)
 /* Called when S1 is pressed. */
 void on_usr_button_changed()
 {
-	/* Print IMU data */
-	char imu_buf[100];
-	// /* lsm6dsl accel */
-	sensor_channel_get(lsm6dsl_dev, SENSOR_CHAN_ACCEL_X, &accel_x_out);
-	sensor_channel_get(lsm6dsl_dev, SENSOR_CHAN_ACCEL_Y, &accel_y_out);
-	sensor_channel_get(lsm6dsl_dev, SENSOR_CHAN_ACCEL_Z, &accel_z_out);
-	sprintf(imu_buf, "accel x = %f ms/2, accel = %f ms/2, accel = %f ms/2",
-							out_ev(&accel_x_out),
-							out_ev(&accel_y_out),
-							out_ev(&accel_z_out));
-	LOG_INF("%s\n", imu_buf);
-	/* lsm6dsl gyro */
-	sensor_channel_get(lsm6dsl_dev, SENSOR_CHAN_GYRO_X, &gyro_x_out);
-	sensor_channel_get(lsm6dsl_dev, SENSOR_CHAN_GYRO_Y, &gyro_y_out);
-	sensor_channel_get(lsm6dsl_dev, SENSOR_CHAN_GYRO_Z, &gyro_z_out);
-	sprintf(imu_buf, "gyro x = %f dps, y = %f dps, z = %f dps",
-							out_ev(&gyro_x_out),
-							out_ev(&gyro_y_out),
-							out_ev(&gyro_z_out));
-	LOG_INF("%s\n", imu_buf);
-
 	/* Active pump, buzzer user LED*/
 	coap_activate_pump(); // notify ot_coap_util.c that the pump is active
 	dk_set_led_on(LED1);
@@ -489,27 +497,27 @@ int main(void)
 	/**********************
 	 * Initialize buttons *
 	 **********************/
-	if (!gpio_is_ready_dt(&usr_button)) {
-		printk("Error: Device %s is not ready\n",
-		       usr_button.port->name);
-		goto end;
-	}
-	ret = gpio_pin_configure_dt(&usr_button, GPIO_INPUT);
-	if (ret != 0) {
-		printk("Error %d: failed to configure %s pin %d\n",
-		       ret, usr_button.port->name, usr_button.pin);
-		return 0;
-	}
-	ret = gpio_pin_interrupt_configure_dt(&usr_button,
-					      GPIO_INT_EDGE_TO_ACTIVE);
-	if (ret != 0) {
-		printk("Error %d: failed to configure interrupt on %s pin %d\n",
-			ret, usr_button.port->name, usr_button.pin);
-		return 0;
-	}
-	gpio_init_callback(&usr_button_cb_data, on_usr_button_changed, BIT(usr_button.pin));
-	gpio_add_callback(usr_button.port, &usr_button_cb_data);
-	printk("Set up user button at %s pin %d\n", usr_button.port->name, usr_button.pin);
+	// if (!gpio_is_ready_dt(&usr_button)) {
+	// 	printk("Error: Device %s is not ready\n",
+	// 	       usr_button.port->name);
+	// 	goto end;
+	// }
+	// ret = gpio_pin_configure_dt(&usr_button, GPIO_INPUT);
+	// if (ret != 0) {
+	// 	printk("Error %d: failed to configure %s pin %d\n",
+	// 	       ret, usr_button.port->name, usr_button.pin);
+	// 	return 0;
+	// }
+	// ret = gpio_pin_interrupt_configure_dt(&usr_button,
+	// 				      GPIO_INT_EDGE_TO_ACTIVE);
+	// if (ret != 0) {
+	// 	printk("Error %d: failed to configure interrupt on %s pin %d\n",
+	// 		ret, usr_button.port->name, usr_button.pin);
+	// 	return 0;
+	// }
+	// gpio_init_callback(&usr_button_cb_data, on_usr_button_changed, BIT(usr_button.pin));
+	// gpio_add_callback(usr_button.port, &usr_button_cb_data);
+	// printk("Set up user button at %s pin %d\n", usr_button.port->name, usr_button.pin);
 
 	/*
 	  _______ ____  ______        _____ ______ _   _  _____  ____  _____        _____ _   _ _____ _______
@@ -594,7 +602,6 @@ int main(void)
 	 ******************/
 	LOG_INF("LSM6DSL sensor data:\n");
 	
-	char imu_buf[100];
 	// /* lsm6dsl accel */
 	sensor_channel_get(lsm6dsl_dev, SENSOR_CHAN_ACCEL_X, &accel_x_out);
 	sensor_channel_get(lsm6dsl_dev, SENSOR_CHAN_ACCEL_Y, &accel_y_out);
