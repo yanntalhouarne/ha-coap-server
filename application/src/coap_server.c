@@ -799,7 +799,7 @@ int main(void)
 		ret = adc_read(adc_channels[i].dev, &sequence);
 		if (ret < 0)
 		{
-			LOG_ERR("Could not read (%d)\n", err);
+			LOG_ERR("Could not read (%d)\n", ret);
 			continue;
 		}
 
