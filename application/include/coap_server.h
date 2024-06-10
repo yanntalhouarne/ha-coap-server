@@ -63,6 +63,8 @@ LOG_MODULE_REGISTER(coap_server, CONFIG_COAP_SERVER_LOG_LEVEL);
 /* Outputs */
 #define WATER_PUMP 4 // IO 0_17
 #define TOF_EN 5     // IO 0_9
+#define SENSOR_EN 6 // IO 0_28
+#define SENSOR_PWR 7 // IO 1_15
 
 /* Timing */
 #define PUMP_MAX_ACTIVE_TIME 4 // in seconds. Maximum time the water pump can be ON continuously.
@@ -99,8 +101,8 @@ const struct device *const dev_hdc = DEVICE_DT_GET_ONE(ti_hdc);
 /* TOF sensor */
 const struct device *const dev_tof = DEVICE_DT_GET_ONE(st_vl53l0x);
 
-/* IMU */
-const struct device *const lsm6dsl_dev = DEVICE_DT_GET_ONE(st_lsm6dsl);
+// /* IMU */
+// const struct device *const lsm6dsl_dev = DEVICE_DT_GET_ONE(st_lsm6dsl);
 
 /* BUZZER */
 static const struct pwm_dt_spec pwm_buzzer = PWM_DT_SPEC_GET(DT_ALIAS(pwm_buzzer));
@@ -276,7 +278,7 @@ static void on_adc_timer_expiry(struct k_timer *timer_id);
 ██████   ██████     ██       ██     ██████  ██   ████ ███████     ██   ██ ██   ██ ██   ████ ██████  ███████ ███████ ██   ██ ███████
 */
 /* Called when S1 is pressed. */
-void on_usr_button_changed();
+void on_usr_button_changed(const struct device *dev, struct gpio_callback *cb, uint32_t pins);
 
 /*
 ██   ██ ███████ ██      ██████  ███████ ██████  ███████
