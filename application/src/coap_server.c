@@ -34,35 +34,35 @@ static void on_pump_request(uint8_t command)
 	case THREAD_COAP_UTILS_PUMP_CMD_ON:
 		if (coap_is_pump_active() == false)
 		{
-			/******************
-			 * Fetch IMU data *
-			 ******************/
-			if (sensor_sample_fetch(lsm6dsl_dev) < 0)
-			{
-				LOG_INF("IMU sensor sample update error\n");
-			}
-			else
-			{
-				/* Print IMU data */
-				// /* lsm6dsl accel */
-				sensor_channel_get(lsm6dsl_dev, SENSOR_CHAN_ACCEL_X, &accel_x_out);
-				sensor_channel_get(lsm6dsl_dev, SENSOR_CHAN_ACCEL_Y, &accel_y_out);
-				sensor_channel_get(lsm6dsl_dev, SENSOR_CHAN_ACCEL_Z, &accel_z_out);
-				sprintf(imu_buf, "accel x = %f ms/2, accel = %f ms/2, accel = %f ms/2",
-										out_ev(&accel_x_out),
-										out_ev(&accel_y_out),
-										out_ev(&accel_z_out));
-				LOG_INF("%s\n", imu_buf);
-				/* lsm6dsl gyro */
-				sensor_channel_get(lsm6dsl_dev, SENSOR_CHAN_GYRO_X, &gyro_x_out);
-				sensor_channel_get(lsm6dsl_dev, SENSOR_CHAN_GYRO_Y, &gyro_y_out);
-				sensor_channel_get(lsm6dsl_dev, SENSOR_CHAN_GYRO_Z, &gyro_z_out);
-				sprintf(imu_buf, "gyro x = %f dps, y = %f dps, z = %f dps",
-										out_ev(&gyro_x_out),
-										out_ev(&gyro_y_out),
-										out_ev(&gyro_z_out));
-				LOG_INF("%s\n", imu_buf);
-			}
+		/******************
+	 	* Fetch IMU data *
+	 	******************/
+		// if (sensor_sample_fetch(lsm6dsl_dev) < 0)
+		// {
+		// 	LOG_INF("IMU sensor sample update error\n");
+		// }
+		// else
+		// {
+		// 	/* Print IMU data */
+		// 	// /* lsm6dsl accel */
+		// 	sensor_channel_get(lsm6dsl_dev, SENSOR_CHAN_ACCEL_X, &accel_x_out);
+		// 	sensor_channel_get(lsm6dsl_dev, SENSOR_CHAN_ACCEL_Y, &accel_y_out);
+		// 	sensor_channel_get(lsm6dsl_dev, SENSOR_CHAN_ACCEL_Z, &accel_z_out);
+		// 	sprintf(imu_buf, "accel x = %f ms/2, accel = %f ms/2, accel = %f ms/2",
+		// 							out_ev(&accel_x_out),
+		// 							out_ev(&accel_y_out),
+		// 							out_ev(&accel_z_out));
+		// 	LOG_INF("%s\n", imu_buf);
+		// 	/* lsm6dsl gyro */
+		// 	sensor_channel_get(lsm6dsl_dev, SENSOR_CHAN_GYRO_X, &gyro_x_out);
+		// 	sensor_channel_get(lsm6dsl_dev, SENSOR_CHAN_GYRO_Y, &gyro_y_out);
+		// 	sensor_channel_get(lsm6dsl_dev, SENSOR_CHAN_GYRO_Z, &gyro_z_out);
+		// 	sprintf(imu_buf, "gyro x = %f dps, y = %f dps, z = %f dps",
+		// 							out_ev(&gyro_x_out),
+		// 							out_ev(&gyro_y_out),
+		// 							out_ev(&gyro_z_out));
+		// 	LOG_INF("%s\n", imu_buf);
+		// }
 			coap_activate_pump();
 			dk_set_led_on(LED1);
 			dk_set_led_on(WATER_PUMP);
@@ -93,6 +93,9 @@ static int8_t *on_data_request()
 	int err;
 	int32_t val_mv;
 	float temp_val = 0;
+
+	/* TURN ON SENSOR */
+	dk_set_led_on(SENSOR_EN);
 
 	/* READ TEMPERATURE */
 	for (size_t i = 0U; i < ARRAY_SIZE(adc_channels); i++)
@@ -128,6 +131,9 @@ static int8_t *on_data_request()
 	temp_val = 100 - temp_val;
 
 	ti_hdc_buf[0] = (uint8_t)temp_val;
+
+	/* TURN OFF SENSOR */
+	dk_set_led_off(SENSOR_EN);
 
 	/* READ BATTERY SOC */
 	err = fuel_gauge_get_prop(dev_fuelgauge, props_fuel_gauge, ARRAY_SIZE(props_fuel_gauge));
@@ -374,8 +380,37 @@ static void on_adc_timer_expiry(struct k_timer *timer_id)
 ██████   ██████     ██       ██     ██████  ██   ████ ███████     ██   ██ ██   ██ ██   ████ ██████  ███████ ███████ ██   ██ ███████
 */
 /* Called when S1 is pressed. */
-void on_usr_button_changed()
+void on_usr_button_changed(const struct device *dev, struct gpio_callback *cb, uint32_t pins)
 {
+	/******************
+	 * Fetch IMU data *
+	 ******************/
+	// if (sensor_sample_fetch(lsm6dsl_dev) < 0)
+	// {
+	// 	LOG_INF("IMU sensor sample update error\n");
+	// }
+	// else
+	// {
+	// 	/* Print IMU data */
+	// 	// /* lsm6dsl accel */
+	// 	sensor_channel_get(lsm6dsl_dev, SENSOR_CHAN_ACCEL_X, &accel_x_out);
+	// 	sensor_channel_get(lsm6dsl_dev, SENSOR_CHAN_ACCEL_Y, &accel_y_out);
+	// 	sensor_channel_get(lsm6dsl_dev, SENSOR_CHAN_ACCEL_Z, &accel_z_out);
+	// 	sprintf(imu_buf, "accel x = %f ms/2, accel = %f ms/2, accel = %f ms/2",
+	// 							out_ev(&accel_x_out),
+	// 							out_ev(&accel_y_out),
+	// 							out_ev(&accel_z_out));
+	// 	LOG_INF("%s\n", imu_buf);
+	// 	/* lsm6dsl gyro */
+	// 	sensor_channel_get(lsm6dsl_dev, SENSOR_CHAN_GYRO_X, &gyro_x_out);
+	// 	sensor_channel_get(lsm6dsl_dev, SENSOR_CHAN_GYRO_Y, &gyro_y_out);
+	// 	sensor_channel_get(lsm6dsl_dev, SENSOR_CHAN_GYRO_Z, &gyro_z_out);
+	// 	sprintf(imu_buf, "gyro x = %f dps, y = %f dps, z = %f dps",
+	// 							out_ev(&gyro_x_out),
+	// 							out_ev(&gyro_y_out),
+	// 							out_ev(&gyro_z_out));
+	// 	LOG_INF("%s\n", imu_buf);
+	// }
 	/* Active pump, buzzer user LED*/
 	coap_activate_pump(); // notify ot_coap_util.c that the pump is active
 	dk_set_led_on(LED1);
@@ -497,27 +532,27 @@ int main(void)
 	/**********************
 	 * Initialize buttons *
 	 **********************/
-	// if (!gpio_is_ready_dt(&usr_button)) {
-	// 	printk("Error: Device %s is not ready\n",
-	// 	       usr_button.port->name);
-	// 	goto end;
-	// }
-	// ret = gpio_pin_configure_dt(&usr_button, GPIO_INPUT);
-	// if (ret != 0) {
-	// 	printk("Error %d: failed to configure %s pin %d\n",
-	// 	       ret, usr_button.port->name, usr_button.pin);
-	// 	return 0;
-	// }
-	// ret = gpio_pin_interrupt_configure_dt(&usr_button,
-	// 				      GPIO_INT_EDGE_TO_ACTIVE);
-	// if (ret != 0) {
-	// 	printk("Error %d: failed to configure interrupt on %s pin %d\n",
-	// 		ret, usr_button.port->name, usr_button.pin);
-	// 	return 0;
-	// }
-	// gpio_init_callback(&usr_button_cb_data, on_usr_button_changed, BIT(usr_button.pin));
-	// gpio_add_callback(usr_button.port, &usr_button_cb_data);
-	// printk("Set up user button at %s pin %d\n", usr_button.port->name, usr_button.pin);
+	if (!gpio_is_ready_dt(&usr_button)) {
+		printk("Error: Device %s is not ready\n",
+		       usr_button.port->name);
+		goto end;
+	}
+	ret = gpio_pin_configure_dt(&usr_button, GPIO_INPUT);
+	if (ret != 0) {
+		printk("Error %d: failed to configure %s pin %d\n",
+		       ret, usr_button.port->name, usr_button.pin);
+		return 0;
+	}
+	ret = gpio_pin_interrupt_configure_dt(&usr_button,
+					      GPIO_INT_EDGE_TO_ACTIVE);
+	if (ret != 0) {
+		printk("Error %d: failed to configure interrupt on %s pin %d\n",
+			ret, usr_button.port->name, usr_button.pin);
+		return 0;
+	}
+	gpio_init_callback(&usr_button_cb_data, on_usr_button_changed, BIT(usr_button.pin));
+	gpio_add_callback(usr_button.port, &usr_button_cb_data);
+	printk("Set up user button at %s pin %d\n", usr_button.port->name, usr_button.pin);
 
 	/*
 	  _______ ____  ______        _____ ______ _   _  _____  ____  _____        _____ _   _ _____ _______
@@ -564,62 +599,62 @@ int main(void)
 	 _| |_| |  | | |__| |      _| |_| |\  |_| |_   | |
 	|_____|_|  |_|\____/      |_____|_| \_|_____|  |_|
 	*/
-	/*********************
-	 * IMU configuration *
-	 *********************/
-	if (!device_is_ready(lsm6dsl_dev))
-	{
-		LOG_ERR("\nError: Device \"%s\" is not ready\n");
-		goto end;
-	}
-	LOG_INF("Dev %p name %s is ready!\n", lsm6dsl_dev, lsm6dsl_dev->name);
-	odr_attr.val1 = 104;
-	odr_attr.val2 = 0;
-	/* set acceleration sampling frequency to 104 Hz*/
-	if (sensor_attr_set(lsm6dsl_dev, SENSOR_CHAN_ACCEL_XYZ,
-						SENSOR_ATTR_SAMPLING_FREQUENCY, &odr_attr) < 0)
-	{
-		LOG_ERR("Cannot set sampling frequency for accelerometer.\n");
-		goto end;
-	}
-	/* set gyro sampling frequency to 104 Hz*/
-	if (sensor_attr_set(lsm6dsl_dev, SENSOR_CHAN_GYRO_XYZ,
-						SENSOR_ATTR_SAMPLING_FREQUENCY, &odr_attr) < 0)
-	{
-		LOG_ERR("Cannot set sampling frequency for gyro.\n");
-		goto end;
-	}
-	/******************
-	 * Fetch IMU data *
-	 ******************/
-	if (sensor_sample_fetch(lsm6dsl_dev) < 0)
-	{
-		LOG_INF("IMU sensor sample update error\n");
-		goto end;
-	}
-	/******************
-	 * Print IMU data *
-	 ******************/
-	LOG_INF("LSM6DSL sensor data:\n");
-	
-	// /* lsm6dsl accel */
-	sensor_channel_get(lsm6dsl_dev, SENSOR_CHAN_ACCEL_X, &accel_x_out);
-	sensor_channel_get(lsm6dsl_dev, SENSOR_CHAN_ACCEL_Y, &accel_y_out);
-	sensor_channel_get(lsm6dsl_dev, SENSOR_CHAN_ACCEL_Z, &accel_z_out);
-	sprintf(imu_buf, "accel x = %f ms/2, accel = %f ms/2, accel = %f ms/2",
-							out_ev(&accel_x_out),
-							out_ev(&accel_y_out),
-							out_ev(&accel_z_out));
-	LOG_INF("%s\n", imu_buf);
-	/* lsm6dsl gyro */
-	sensor_channel_get(lsm6dsl_dev, SENSOR_CHAN_GYRO_X, &gyro_x_out);
-	sensor_channel_get(lsm6dsl_dev, SENSOR_CHAN_GYRO_Y, &gyro_y_out);
-	sensor_channel_get(lsm6dsl_dev, SENSOR_CHAN_GYRO_Z, &gyro_z_out);
-	sprintf(imu_buf, "gyro x = %f dps, y = %f dps, z = %f dps",
-							out_ev(&gyro_x_out),
-							out_ev(&gyro_y_out),
-							out_ev(&gyro_z_out));
-	LOG_INF("%s\n", imu_buf);
+	// /*********************
+	//  * IMU configuration *
+	//  *********************/
+	// if (!device_is_ready(lsm6dsl_dev))
+	// {
+	// 	LOG_ERR("\nError: Device \"%s\" is not ready\n");
+	// 	goto end;
+	// }
+	// LOG_INF("Dev %p name %s is ready!\n", lsm6dsl_dev, lsm6dsl_dev->name);
+	// odr_attr.val1 = 104;
+	// odr_attr.val2 = 0;
+	// /* set acceleration sampling frequency to 104 Hz*/
+	// if (sensor_attr_set(lsm6dsl_dev, SENSOR_CHAN_ACCEL_XYZ,
+	// 					SENSOR_ATTR_SAMPLING_FREQUENCY, &odr_attr) < 0)
+	// {
+	// 	LOG_ERR("Cannot set sampling frequency for accelerometer.\n");
+	// 	goto end;
+	// }
+	// /* set gyro sampling frequency to 104 Hz*/
+	// if (sensor_attr_set(lsm6dsl_dev, SENSOR_CHAN_GYRO_XYZ,
+	// 					SENSOR_ATTR_SAMPLING_FREQUENCY, &odr_attr) < 0)
+	// {
+	// 	LOG_ERR("Cannot set sampling frequency for gyro.\n");
+	// 	goto end;
+	// }
+	// /******************
+	//  * Fetch IMU data *
+	//  ******************/
+	// if (sensor_sample_fetch(lsm6dsl_dev) < 0)
+	// {
+	// 	LOG_INF("IMU sensor sample update error\n");
+	// 	goto end;
+	// }
+	// /******************
+	//  * Print IMU data *
+	//  ******************/
+	// LOG_INF("LSM6DSL sensor data:\n");
+	//
+	// // /* lsm6dsl accel */
+	// sensor_channel_get(lsm6dsl_dev, SENSOR_CHAN_ACCEL_X, &accel_x_out);
+	// sensor_channel_get(lsm6dsl_dev, SENSOR_CHAN_ACCEL_Y, &accel_y_out);
+	// sensor_channel_get(lsm6dsl_dev, SENSOR_CHAN_ACCEL_Z, &accel_z_out);
+	// sprintf(imu_buf, "accel x = %f ms/2, accel = %f ms/2, accel = %f ms/2",
+	// 						out_ev(&accel_x_out),
+	// 						out_ev(&accel_y_out),
+	// 						out_ev(&accel_z_out));
+	// LOG_INF("%s\n", imu_buf);
+	// /* lsm6dsl gyro */
+	// sensor_channel_get(lsm6dsl_dev, SENSOR_CHAN_GYRO_X, &gyro_x_out);
+	// sensor_channel_get(lsm6dsl_dev, SENSOR_CHAN_GYRO_Y, &gyro_y_out);
+	// sensor_channel_get(lsm6dsl_dev, SENSOR_CHAN_GYRO_Z, &gyro_z_out);
+	// sprintf(imu_buf, "gyro x = %f dps, y = %f dps, z = %f dps",
+	// 						out_ev(&gyro_x_out),
+	// 						out_ev(&gyro_y_out),
+	// 						out_ev(&gyro_z_out));
+	// LOG_INF("%s\n", imu_buf);
 
 	/*
 	 _    _ _____   _____        _____ ______ _   _  _____  ____  _____        _____ _   _ _____ _______
@@ -749,6 +784,49 @@ int main(void)
 			goto end;
 		}
 	}
+		/* TURN ON SENSOR */
+	dk_set_led_on(SENSOR_EN);
+	k_sleep(K_MSEC(5000));
+
+	/* READ TEMPERATURE */
+	int32_t val_mv;
+	float temp_val = 0;
+	for (size_t i = 0U; i < ARRAY_SIZE(adc_channels); i++)
+	{
+
+		(void)adc_sequence_init_dt(&adc_channels[i], &sequence);
+
+		ret = adc_read(adc_channels[i].dev, &sequence);
+		if (ret < 0)
+		{
+			LOG_ERR("Could not read (%d)\n", ret);
+			continue;
+		}
+
+		/* conversion to mV may not be supported, skip if not */
+		val_mv = buf;
+		ret = adc_raw_to_millivolts_dt(&adc_channels[i],
+									   &val_mv);
+		if (ret < 0)
+		{
+			LOG_ERR(" (value in mV not available)\n");
+		}
+	}
+	// converts from mV to humidity
+	temp_val = (float)val_mv;
+	if (temp_val < HUMIDITY_WET)
+		temp_val = HUMIDITY_WET;
+	else if (temp_val > HUMIDITY_DRY)
+		temp_val = HUMIDITY_DRY;
+	temp_val -= HUMIDITY_WET;
+	temp_val /= (HUMIDITY_DRY - HUMIDITY_WET);
+	temp_val *= 100;
+	temp_val = 100 - temp_val;
+
+	LOG_INF("soil_humidity = %d", (int)temp_val);
+
+	/* TURN OFF SENSOR */
+	dk_set_led_off(SENSOR_EN);
 
 	/*
 	  _______ _____ __  __ ______ _____   _____       _____ _   _ _____ _______
