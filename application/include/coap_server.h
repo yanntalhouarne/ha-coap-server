@@ -64,7 +64,7 @@ LOG_MODULE_REGISTER(coap_server, CONFIG_COAP_SERVER_LOG_LEVEL);
 #define WATER_PUMP 4 // IO 0_17
 #define TOF_EN 5     // IO 0_9
 #define SENSOR_EN 6 // IO 0_28
-#define SENSOR_PWR 7 // IO 1_15
+#define SENSOR_VCC_MCU 7 // IO 1_15
 
 /* Timing */
 #define PUMP_MAX_ACTIVE_TIME 4 // in seconds. Maximum time the water pump can be ON continuously.
@@ -74,8 +74,8 @@ LOG_MODULE_REGISTER(coap_server, CONFIG_COAP_SERVER_LOG_LEVEL);
 #define ADC_TIMER_PERIOD 1     // in seconds
 
 /* Calibration values*/
-#define HUMIDITY_DRY 2100 // in mV
-#define HUMIDITY_WET 800  // in mV
+#define HUMIDITY_DRY 2200 // in mV
+#define HUMIDITY_WET 980  // in mV
 
 /* ADC Timer */
 // #define ADC_TIMER_ENABLED // if this un-commented, then the adc_timer will periodically read ADC value.

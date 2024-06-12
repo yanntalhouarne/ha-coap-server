@@ -96,6 +96,7 @@ static int8_t *on_data_request()
 
 	/* TURN ON SENSOR */
 	dk_set_led_on(SENSOR_EN);
+	k_sleep(K_MSEC(200));
 
 	/* READ TEMPERATURE */
 	for (size_t i = 0U; i < ARRAY_SIZE(adc_channels); i++)
@@ -129,6 +130,8 @@ static int8_t *on_data_request()
 	temp_val /= (HUMIDITY_DRY - HUMIDITY_WET);
 	temp_val *= 100;
 	temp_val = 100 - temp_val;
+
+	LOG_INF("soil_humidity = %d", (int)temp_val);
 
 	ti_hdc_buf[0] = (uint8_t)temp_val;
 
@@ -785,8 +788,9 @@ int main(void)
 		}
 	}
 		/* TURN ON SENSOR */
+	dk_set_led_off(SENSOR_VCC_MCU); // set sensor rail to VCC (VBAT or V_USB)
 	dk_set_led_on(SENSOR_EN);
-	k_sleep(K_MSEC(5000));
+	k_sleep(K_MSEC(200));
 
 	/* READ TEMPERATURE */
 	int32_t val_mv;
@@ -810,6 +814,10 @@ int main(void)
 		if (ret < 0)
 		{
 			LOG_ERR(" (value in mV not available)\n");
+		}
+		else
+		{
+			LOG_INF("soil_voltage = %d", (int)val_mv);
 		}
 	}
 	// converts from mV to humidity
