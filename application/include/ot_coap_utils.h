@@ -11,6 +11,8 @@
 #ifndef __OT_COAP_UTILS_H__
 #define __OT_COAP_UTILS_H__
 
+#include <version.h>
+
 /*
 ███    ███  █████   ██████ ██████   ██████  ███████
 ████  ████ ██   ██ ██      ██   ██ ██    ██ ██
@@ -19,7 +21,7 @@
 ██      ██ ██   ██  ██████ ██   ██  ██████  ███████
 */
 /* Firmare version */
-#define FW_VERSION "v0.01-dev"
+#define FW_VERSION GIT_COMMIT_HASH
 /* Hardware version */
 #define HW_VERSION "v2.0"
 /* CoAp port */

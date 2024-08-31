@@ -486,7 +486,7 @@ otError info_response_send(otMessage *request_message, const otMessageInfo *mess
 		goto end;
 	}
 
-	otCoapMessageInit(response, OT_COAP_TYPE_NON_CONFIRMABLE,
+	otCoapMessageInitResponse(response, request_message, OT_COAP_TYPE_ACKNOWLEDGMENT,
 					  OT_COAP_CODE_CONTENT);
 
 	error = otCoapMessageSetToken(

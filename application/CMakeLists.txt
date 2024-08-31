@@ -16,3 +16,16 @@ target_sources(app PRIVATE ${app_sources})
 
 target_include_directories(app PRIVATE interface)
 # NORDIC SDK APP END
+
+# Add a custom target to generate the version header
+add_custom_target(
+    generate_version_header
+    COMMAND ${CMAKE_COMMAND} -P ${CMAKE_SOURCE_DIR}/scripts/generate_version.cmake
+    COMMENT "Generating version header file"
+)
+
+# Ensure the version header is generated before the build starts
+add_dependencies(app generate_version_header)
+
+# Include the directory where version.h will be generated
+include_directories(${CMAKE_BINARY_DIR}/include)
