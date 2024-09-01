@@ -68,8 +68,13 @@ LOG_MODULE_REGISTER(coap_server, CONFIG_COAP_SERVER_LOG_LEVEL);
 
 /* Timing */
 #define PUMP_MAX_ACTIVE_TIME 4 // in seconds. Maximum time the water pump can be ON continuously.
-#define OT_BUZZER_PERIOD 100   // in milli-seconds. The time between when we succsefully connect to the OT network (see below).
-#define OT_BUZZER_NBR_PULSES 6 // number of buzzer pulses when we succsefully connect to the OT network.
+#define PUMP_BUZZER_FREQUENCY 4 // in kHz
+#define OT_BUZZER_FREQUENCY 6 // in kHz
+#define OT_BUZZER_PERIOD 100   // in milli-seconds. The time between buzzer on/off when we succsefully connect to the OT network (see below).
+#define OT_BUZZER_NBR_PULSES 6 // number of buzzer pulses when we succesfully connect to the OT network.
+#define PING_BUZZER_FREQUENCY 10 // in kHz
+#define PING_BUZZER_PERIOD 50   // in milli-seconds. The time between buzzer on/off when we receive a CON PUT 'ping' request with payload '1'.
+#define PING_BUZZER_NBR_PULSES 12 // number of buzzer pulses when we receive a CON PUT 'ping' request with payload '1'.
 #define INIT_BUZZER_PERIOD 100 // in milli-seconds. Time between buzzer pulses upon initialization.
 #define ADC_TIMER_PERIOD 1     // in seconds
 
@@ -126,12 +131,11 @@ static struct gpio_callback usr_button_cb_data;
    ██    ██ ██  ██  ██ ██      ██   ██      ██
    ██    ██ ██      ██ ███████ ██   ██ ███████
 */
-
-/* Water pump timer */
 static struct k_timer pump_timer;      // turns off the water pump "PUMP_MAX_ACTIVE_TIME" seconds after it has been turned-on.
 static struct k_timer adc_timer;       // if "ADC_TIMER_ENABLED" is defined, then this timer will fetch the ADC value every "ADC_TIMER_PERIOD" seconds.
-static struct k_timer buzzer_timer;    // turns off the buzzer 1 second after timer_start() has been called.
+static struct k_timer pump_buzzer_timer;    // turns off the buzzer 1 second after timer_start() has been called.
 static struct k_timer ot_buzzer_timer; // pulses the buzzer "OT_BUZZER_NBR_PULSES" times with a period of "OT_BUZZER_PERIOD" upon connection to the OT network.
+static struct k_timer ping_buzzer_timer; // pulses the buzzer "PING_BUZZER_NBR_PULSES" times with a period of "PING_BUZZER_PERIOD" upon reception a a CON PUT 'ping' request with payload '1'.
 
 /*
  ██████  ██       ██████  ██████   █████  ██      ███████
@@ -175,6 +179,9 @@ struct info_data info = {
 
     .total_size = sizeof(fw_version)+sizeof(hw_version),
 };
+
+/* Buzzer */
+uint8_t buzzer_active = 0;
 
 /* ADC channel reading */
 #ifdef ADC_TIMER_ENABLED
@@ -264,9 +271,11 @@ static struct openthread_state_changed_cb ot_state_chaged_cb = {.state_changed_c
 /* Pump timer handler */
 static void on_pump_timer_expiry(struct k_timer *timer_id);
 /* Stops the buzzer one second after timer_start() has been called  */
-static void on_buzzer_timer_expiry(struct k_timer *timer_id);
+static void on_pump_buzzer_timer_expiry(struct k_timer *timer_id);
 /* Pulses the buzzer "OT_BUZZER_NBR_PULSES" times with a period of "OT_BUZZER_PERIOD" upon connection to the OT network. */
 static void on_ot_buzzer_timer_expiry(struct k_timer *timer_id);
+/* pulses the buzzer "PING_BUZZER_NBR_PULSES" times with a period of "PING_BUZZER_PERIOD" upon reception a a CON PUT 'ping' request with payload '1'. */
+static void on_opingbuzzer_timer_expiry(struct k_timer *timer_id);
 /* Fetches the ADC value every "ADC_TIMER_PERIOD" seconds.*/
 #ifdef ADC_TIMER_ENABLED
 static void on_adc_timer_expiry(struct k_timer *timer_id);

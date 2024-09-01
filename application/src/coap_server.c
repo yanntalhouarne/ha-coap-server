@@ -37,9 +37,12 @@ static void on_pump_request(uint8_t command)
 			coap_activate_pump();
 			dk_set_led_on(LED1);
 			dk_set_led_on(WATER_PUMP);
-			pwm_set_dt(&pwm_buzzer, PWM_KHZ(6), PWM_KHZ(6) / 2U);
+			pwm_set_dt(&pwm_buzzer, PWM_KHZ(PUMP_BUZZER_FREQUENCY), PWM_KHZ(PUMP_BUZZER_FREQUENCY) / 2U);
+			/* start pump */
 			k_timer_start(&pump_timer, K_SECONDS(PUMP_MAX_ACTIVE_TIME), K_NO_WAIT); // pump will be active for 5 seconds, unless a stop command is received
-			k_timer_start(&buzzer_timer, K_MSEC(OT_BUZZER_PERIOD), K_NO_WAIT);
+			/* start buzzer */
+			buzzer_active = 1;
+			k_timer_start(&pump_buzzer_timer, K_MSEC(OT_BUZZER_PERIOD), K_NO_WAIT);
 		}
 		break;
 
@@ -192,10 +195,10 @@ void on_ping_request(uint8_t command)
 	switch (command)
 	{
 		case THREAD_COAP_UTILS_PING_CMD_BUZZER:
-			if (coap_is_pump_active() == false)
+			if (!buzzer_active)
 			{
-				pwm_set_dt(&pwm_buzzer, PWM_KHZ(6), PWM_KHZ(6) / 2U);
-				k_timer_start(&buzzer_timer, K_MSEC(OT_BUZZER_PERIOD), K_NO_WAIT);
+				buzzer_active = 1;
+				k_timer_start(&ping_buzzer_timer, K_MSEC(1), K_NO_WAIT);
 			}
 			break;
 		case THREAD_COAP_UTILS_PING_CMD_QUIET:
@@ -219,6 +222,7 @@ void on_srp_client_updated(otError aError, const otSrpClientHostInfo *aHostInfo,
 	if (aError == OT_ERROR_NONE)
 	{
 		// start buzzer OT connection tune
+		buzzer_active = 1;
 		k_timer_start(&ot_buzzer_timer, K_MSEC(1), K_NO_WAIT);
 	}
 }
@@ -229,7 +233,6 @@ void on_srp_client_updated(otError aError, const otSrpClientHostInfo *aHostInfo,
 ██    ██    ██        ███████ ███████ ██ ██  ██ ██   ██ ██      █████   ██████
 ██    ██    ██        ██   ██ ██   ██ ██  ██ ██ ██   ██ ██      ██      ██   ██
  ██████     ██        ██   ██ ██   ██ ██   ████ ██████  ███████ ███████ ██   ██
-
 */
 /* Callback for OT network state change */
 static void on_thread_state_changed(otChangedFlags flags, struct openthread_context *ot_context,
@@ -323,13 +326,14 @@ static void on_pump_timer_expiry(struct k_timer *timer_id)
 }
 
 /* Stops the buzzer one second after timer_start() has been called  */
-static void on_buzzer_timer_expiry(struct k_timer *timer_id)
+static void on_pump_buzzer_timer_expiry(struct k_timer *timer_id)
 {
 	ARG_UNUSED(timer_id);
 
-	pwm_set_dt(&pwm_buzzer, PWM_KHZ(6), 0);
+	pwm_set_dt(&pwm_buzzer, PWM_KHZ(PUMP_BUZZER_FREQUENCY), 0);
 
-	k_timer_stop(&buzzer_timer);
+	k_timer_stop(&pump_buzzer_timer);
+	buzzer_active = 0;
 }
 
 /* Pulses the buzzer "OT_BUZZER_NBR_PULSES" times with a period of "OT_BUZZER_PERIOD" upon connection to the OT network. */
@@ -343,12 +347,12 @@ static void on_ot_buzzer_timer_expiry(struct k_timer *timer_id)
 	{
 		if (cnt % 2) // 1, 3, 5, ...
 		{
-			pwm_set_dt(&pwm_buzzer, PWM_KHZ(6), 0);
+			pwm_set_dt(&pwm_buzzer, PWM_KHZ(OT_BUZZER_FREQUENCY), 0);
 			k_timer_start(&ot_buzzer_timer, K_MSEC(OT_BUZZER_PERIOD), K_NO_WAIT);
 		}
 		else // 0, 2, 4, ...
 		{
-			pwm_set_dt(&pwm_buzzer, PWM_KHZ(6), PWM_KHZ(6) / 2U);
+			pwm_set_dt(&pwm_buzzer, PWM_KHZ(OT_BUZZER_FREQUENCY), PWM_KHZ(OT_BUZZER_FREQUENCY) / 2U);
 			k_timer_start(&ot_buzzer_timer, K_MSEC(OT_BUZZER_PERIOD), K_NO_WAIT);
 		}
 		cnt++;
@@ -357,6 +361,36 @@ static void on_ot_buzzer_timer_expiry(struct k_timer *timer_id)
 	{
 		cnt = 0;
 		k_timer_stop(&ot_buzzer_timer);
+		buzzer_active = 0;
+	}
+}
+
+/* Pulses the buzzer "PING_BUZZER_NBR_PULSES" times with a period of "PING_BUZZER_PERIOD" upon PING CON PUT request with payload '1' */
+static void on_ping_buzzer_timer_expiry(struct k_timer *timer_id)
+{
+	ARG_UNUSED(timer_id);
+
+	static uint8_t cnt = 0;
+
+	if (cnt < PING_BUZZER_NBR_PULSES)
+	{
+		if (cnt % 2) // 1, 3, 5, ...
+		{
+			pwm_set_dt(&pwm_buzzer, PWM_KHZ(PING_BUZZER_FREQUENCY), 0);
+			k_timer_start(&ping_buzzer_timer, K_MSEC(PING_BUZZER_PERIOD), K_NO_WAIT);
+		}
+		else // 0, 2, 4, ...
+		{
+			pwm_set_dt(&pwm_buzzer, PWM_KHZ(PING_BUZZER_FREQUENCY), PWM_KHZ(PING_BUZZER_FREQUENCY) / 2U);
+			k_timer_start(&ping_buzzer_timer, K_MSEC(PING_BUZZER_PERIOD), K_NO_WAIT);
+		}
+		cnt++;
+	}
+	else
+	{
+		cnt = 0;
+		k_timer_stop(&ping_buzzer_timer);
+		buzzer_active = 0;
 	}
 }
 
@@ -404,43 +438,16 @@ static void on_adc_timer_expiry(struct k_timer *timer_id)
 /* Called when S1 is pressed. */
 void on_usr_button_changed(const struct device *dev, struct gpio_callback *cb, uint32_t pins)
 {
-	/******************
-	 * Fetch IMU data *
-	 ******************/
-	// if (sensor_sample_fetch(lsm6dsl_dev) < 0)
-	// {
-	// 	LOG_INF("IMU sensor sample update error\n");
-	// }
-	// else
-	// {
-	// 	/* Print IMU data */
-	// 	// /* lsm6dsl accel */
-	// 	sensor_channel_get(lsm6dsl_dev, SENSOR_CHAN_ACCEL_X, &accel_x_out);
-	// 	sensor_channel_get(lsm6dsl_dev, SENSOR_CHAN_ACCEL_Y, &accel_y_out);
-	// 	sensor_channel_get(lsm6dsl_dev, SENSOR_CHAN_ACCEL_Z, &accel_z_out);
-	// 	sprintf(imu_buf, "accel x = %f ms/2, accel = %f ms/2, accel = %f ms/2",
-	// 							out_ev(&accel_x_out),
-	// 							out_ev(&accel_y_out),
-	// 							out_ev(&accel_z_out));
-	// 	LOG_INF("%s\n", imu_buf);
-	// 	/* lsm6dsl gyro */
-	// 	sensor_channel_get(lsm6dsl_dev, SENSOR_CHAN_GYRO_X, &gyro_x_out);
-	// 	sensor_channel_get(lsm6dsl_dev, SENSOR_CHAN_GYRO_Y, &gyro_y_out);
-	// 	sensor_channel_get(lsm6dsl_dev, SENSOR_CHAN_GYRO_Z, &gyro_z_out);
-	// 	sprintf(imu_buf, "gyro x = %f dps, y = %f dps, z = %f dps",
-	// 							out_ev(&gyro_x_out),
-	// 							out_ev(&gyro_y_out),
-	// 							out_ev(&gyro_z_out));
-	// 	LOG_INF("%s\n", imu_buf);
-	// }
 	/* Active pump, buzzer user LED*/
 	coap_activate_pump(); // notify ot_coap_util.c that the pump is active
 	dk_set_led_on(LED1);
 	dk_set_led_on(WATER_PUMP);
-	pwm_set_dt(&pwm_buzzer, PWM_KHZ(6), PWM_KHZ(6) / 2U);
-	/*  Start pump and buzzer shutoff timers */
+	pwm_set_dt(&pwm_buzzer, PWM_KHZ(PUMP_BUZZER_FREQUENCY), PWM_KHZ(PUMP_BUZZER_FREQUENCY) / 2U);
+	/*  Start pump timer */
 	k_timer_start(&pump_timer, K_SECONDS(PUMP_MAX_ACTIVE_TIME), K_NO_WAIT); // pump will be active for 5 seconds, unless a stop command is received
-	k_timer_start(&buzzer_timer, K_MSEC(OT_BUZZER_PERIOD), K_NO_WAIT);
+	/*  Start pump buzzer timer */
+	buzzer_active = 1;
+	k_timer_start(&pump_buzzer_timer, K_MSEC(OT_BUZZER_PERIOD), K_NO_WAIT);
 }
 
 /*
@@ -867,8 +874,9 @@ int main(void)
 	 * Timers initialization *
 	 *************************/
 	k_timer_init(&pump_timer, on_pump_timer_expiry, NULL);
-	k_timer_init(&buzzer_timer, on_buzzer_timer_expiry, NULL);
+	k_timer_init(&pump_buzzer_timer, on_pump_buzzer_timer_expiry, NULL);
 	k_timer_init(&ot_buzzer_timer, on_ot_buzzer_timer_expiry, NULL);
+	k_timer_init(&ping_buzzer_timer, on_ping_buzzer_timer_expiry, NULL);
 // If we want to read the ADC periodically, start the timer. Otherwise, the ADC will be check only upon a 'data' GET request
 #ifdef ADC_TIMER_ENABLED
 	k_timer_init(&adc_timer, on_adc_timer_expiry, NULL);
