@@ -263,8 +263,7 @@ void info_request_handler(void *context, otMessage *message, const otMessageInfo
 
 	LOG_DBG("Received 'info' request");
 
-	if ((otCoapMessageGetType(message) == OT_COAP_TYPE_CONFIRMABLE) &&
-		(otCoapMessageGetCode(message) == OT_COAP_CODE_GET))
+	if (((otCoapMessageGetType(message) == OT_COAP_TYPE_CONFIRMABLE) || (otCoapMessageGetType(message) == OT_COAP_TYPE_CONFIRMABLE)) && (otCoapMessageGetCode(message) == OT_COAP_CODE_GET))
 	{
 		msg_info = *message_info;
 		memset(&msg_info.mSockAddr, 0, sizeof(msg_info.mSockAddr));
@@ -553,10 +552,10 @@ otError info_response_send(otMessage *request_message, const otMessageInfo *mess
 		goto end;
 	}
 
-	//if (otCoapMessageGetType(request_message) == OT_COAP_TYPE_CONFIRMABLE)
-	otCoapMessageInitResponse(response, request_message, OT_COAP_TYPE_ACKNOWLEDGMENT, OT_COAP_CODE_CONTENT);
-	//else
-	//	otCoapMessageInitResponse(response, request_message, OT_COAP_TYPE_NON_CONFIRMABLE, OT_COAP_CODE_CONTENT);
+	if (otCoapMessageGetType(request_message) == OT_COAP_TYPE_CONFIRMABLE)
+		otCoapMessageInitResponse(response, request_message, OT_COAP_TYPE_ACKNOWLEDGMENT, OT_COAP_CODE_CONTENT);
+	else
+		otCoapMessageInitResponse(response, request_message, OT_COAP_TYPE_NON_CONFIRMABLE, OT_COAP_CODE_CONTENT);
 
 	error = otCoapMessageSetToken(
 		response, otCoapMessageGetToken(request_message),
@@ -572,17 +571,10 @@ otError info_response_send(otMessage *request_message, const otMessageInfo *mess
 		goto end;
 	}
 
-
-//    char * info_output = (char*)malloc(_info.total_size);
 	char info_output[50] = {0};
-	// if (info_output = NULL)
-	// 	LOG_INF("Could not allocate memory for Info Data buffer.");
-	// else
-	// {
 		snprintf(info_output, _info.total_size, "%s,%s", _info.fw_version_buf, _info.hw_version_buf);
 		payload = &info_output;
 		payload_size = _info.total_size;
-	//}
 	
 	error = otMessageAppend(response, payload, payload_size);
 	if (error != OT_ERROR_NONE)
