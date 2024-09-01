@@ -37,6 +37,12 @@ enum pump_command
     THREAD_COAP_UTILS_PUMP_CMD_OFF = '0',
     THREAD_COAP_UTILS_PUMP_CMD_ON = '1'
 };
+/* Enumeration describing PING commands. */
+enum ping_command
+{
+    THREAD_COAP_UTILS_PING_CMD_QUIET = '0',
+    THREAD_COAP_UTILS_PING_CMD_BUZZER = '1'
+};
 
 /*
 ██████  ███████ ███████  ██████  ██    ██ ██████   ██████ ███████      ██████ ██████      ██████  ███████ ███████ ██ ███    ██ ██ ████████ ██  ██████  ███    ██ ███████

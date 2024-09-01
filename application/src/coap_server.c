@@ -158,7 +158,7 @@ struct info_data on_info_request()
 }
 
 /* PING GET REQUEST */
-void on_ping_request()
+void on_ping_request(uint8_t command)
 {
 	    /******************
 	 	* Fetch IMU data *
@@ -189,8 +189,20 @@ void on_ping_request()
 		// 							out_ev(&gyro_z_out));
 		// 	LOG_INF("%s\n", imu_buf);
 		// }
-	pwm_set_dt(&pwm_buzzer, PWM_KHZ(6), PWM_KHZ(6) / 2U);
-	k_timer_start(&buzzer_timer, K_MSEC(OT_BUZZER_PERIOD), K_NO_WAIT);
+	switch (command)
+	{
+		case THREAD_COAP_UTILS_PING_CMD_BUZZER:
+			if (coap_is_pump_active() == false)
+			{
+				pwm_set_dt(&pwm_buzzer, PWM_KHZ(6), PWM_KHZ(6) / 2U);
+				k_timer_start(&buzzer_timer, K_MSEC(OT_BUZZER_PERIOD), K_NO_WAIT);
+			}
+			break;
+		case THREAD_COAP_UTILS_PING_CMD_QUIET:
+			break;
+		default:
+			break;
+	}
 }
 
 /*

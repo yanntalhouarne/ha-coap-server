@@ -228,6 +228,8 @@ static void on_pump_request(uint8_t command);
 static int8_t *on_data_request();
 /* INFO GET REQUEST */
 struct info_data on_info_request();
+/* PING PUT REQUEST */
+static void on_ping_request(uint8_t command);
 
 /*
 ███████ ██████  ██████      ██   ██  █████  ███    ██ ██████  ██      ███████ ██████

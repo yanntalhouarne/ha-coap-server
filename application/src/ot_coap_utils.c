@@ -294,17 +294,25 @@ void ping_request_handler(void *context, otMessage *message, const otMessageInfo
 	otError error;
 	otMessageInfo msg_info;
 
+	uint8_t command;
+
 	ARG_UNUSED(context);
 
 	LOG_INF("Received 'ping' request");
 
 	if ((otCoapMessageGetType(message) == OT_COAP_TYPE_NON_CONFIRMABLE) &&
-		(otCoapMessageGetCode(message) == OT_COAP_CODE_GET))
+		(otCoapMessageGetCode(message) == OT_COAP_CODE_PUT))
 	{
 		msg_info = *message_info;
 		memset(&msg_info.mSockAddr, 0, sizeof(msg_info.mSockAddr));
 
-		srv_context.on_ping_request(); // update 'pump' in coap_server.c
+		if (otMessageRead(message, otMessageGetOffset(message), &command, 1) != 1)
+		{
+			LOG_ERR("'ping' handler - Missing 'ping' command");
+			goto end;
+		}
+
+		srv_context.on_ping_request(command); // update 'pump' in coap_server.c
 
 		ping_response_send(message, &msg_info);
 	}
@@ -312,6 +320,8 @@ void ping_request_handler(void *context, otMessage *message, const otMessageInfo
 	{
 		LOG_INF("Bad 'ping' request type or code.");
 	}
+	end:
+		return;
 }
 
 /*
@@ -644,7 +654,7 @@ otError ping_response_send(otMessage *request_message, const otMessageInfo *mess
 
 	error = otCoapSendResponse(srv_context.ot, response, message_info);
 
-	LOG_INF("Ping paylod is: %s", ping_data);
+	LOG_INF("Ping payload is: %s", ping_data);
 
 end:
 	if (error != OT_ERROR_NONE && response != NULL)
