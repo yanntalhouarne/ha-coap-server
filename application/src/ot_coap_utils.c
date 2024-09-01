@@ -300,7 +300,7 @@ void ping_request_handler(void *context, otMessage *message, const otMessageInfo
 
 	LOG_INF("Received 'ping' request");
 
-	if ((otCoapMessageGetType(message) == OT_COAP_TYPE_NON_CONFIRMABLE) &&
+	if ((otCoapMessageGetType(message) == OT_COAP_TYPE_CONFIRMABLE) &&
 		(otCoapMessageGetCode(message) == OT_COAP_CODE_PUT))
 	{
 		msg_info = *message_info;
@@ -625,7 +625,7 @@ otError ping_response_send(otMessage *request_message, const otMessageInfo *mess
 		goto end;
 	}
 
-	otCoapMessageInitResponse(response, request_message, OT_COAP_TYPE_NON_CONFIRMABLE,
+	otCoapMessageInitResponse(response, request_message, OT_COAP_TYPE_ACKNOWLEDGMENT,
 					  OT_COAP_CODE_CHANGED);
 
 	error = otCoapMessageSetToken(
