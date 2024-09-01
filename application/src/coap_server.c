@@ -41,8 +41,11 @@ static void on_pump_request(uint8_t command)
 			/* start pump */
 			k_timer_start(&pump_timer, K_SECONDS(PUMP_MAX_ACTIVE_TIME), K_NO_WAIT); // pump will be active for 5 seconds, unless a stop command is received
 			/* start buzzer */
-			buzzer_active = 1;
-			k_timer_start(&pump_buzzer_timer, K_MSEC(OT_BUZZER_PERIOD), K_NO_WAIT);
+			if (!buzzer_active)
+			{
+				buzzer_active = 1;
+				k_timer_start(&pump_buzzer_timer, K_MSEC(OT_BUZZER_PERIOD), K_NO_WAIT);
+			}
 		}
 		break;
 
@@ -197,8 +200,11 @@ void on_ping_request(uint8_t command)
 		case THREAD_COAP_UTILS_PING_CMD_BUZZER:
 			if (!buzzer_active)
 			{
-				buzzer_active = 1;
-				k_timer_start(&ping_buzzer_timer, K_MSEC(1), K_NO_WAIT);
+				if (!buzzer_active)
+				{
+					buzzer_active = 1;
+					k_timer_start(&ping_buzzer_timer, K_MSEC(1), K_NO_WAIT);
+				}
 			}
 			break;
 		case THREAD_COAP_UTILS_PING_CMD_QUIET:
@@ -222,8 +228,11 @@ void on_srp_client_updated(otError aError, const otSrpClientHostInfo *aHostInfo,
 	if (aError == OT_ERROR_NONE)
 	{
 		// start buzzer OT connection tune
-		buzzer_active = 1;
-		k_timer_start(&ot_buzzer_timer, K_MSEC(1), K_NO_WAIT);
+		if (!buzzer_active)
+		{
+			buzzer_active = 1;
+			k_timer_start(&ot_buzzer_timer, K_MSEC(1), K_NO_WAIT);
+		}
 	}
 }
 
@@ -446,8 +455,11 @@ void on_usr_button_changed(const struct device *dev, struct gpio_callback *cb, u
 	/*  Start pump timer */
 	k_timer_start(&pump_timer, K_SECONDS(PUMP_MAX_ACTIVE_TIME), K_NO_WAIT); // pump will be active for 5 seconds, unless a stop command is received
 	/*  Start pump buzzer timer */
-	buzzer_active = 1;
-	k_timer_start(&pump_buzzer_timer, K_MSEC(OT_BUZZER_PERIOD), K_NO_WAIT);
+	if (!buzzer_active)
+	{
+		buzzer_active = 1;
+		k_timer_start(&pump_buzzer_timer, K_MSEC(OT_BUZZER_PERIOD), K_NO_WAIT);
+	}
 }
 
 /*

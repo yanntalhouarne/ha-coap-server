@@ -73,7 +73,7 @@ LOG_MODULE_REGISTER(coap_server, CONFIG_COAP_SERVER_LOG_LEVEL);
 #define OT_BUZZER_PERIOD 100   // in milli-seconds. The time between buzzer on/off when we succsefully connect to the OT network (see below).
 #define OT_BUZZER_NBR_PULSES 6 // number of buzzer pulses when we succesfully connect to the OT network.
 #define PING_BUZZER_FREQUENCY 10 // in kHz
-#define PING_BUZZER_PERIOD 50   // in milli-seconds. The time between buzzer on/off when we receive a CON PUT 'ping' request with payload '1'.
+#define PING_BUZZER_PERIOD 75   // in milli-seconds. The time between buzzer on/off when we receive a CON PUT 'ping' request with payload '1'.
 #define PING_BUZZER_NBR_PULSES 12 // number of buzzer pulses when we receive a CON PUT 'ping' request with payload '1'.
 #define INIT_BUZZER_PERIOD 100 // in milli-seconds. Time between buzzer pulses upon initialization.
 #define ADC_TIMER_PERIOD 1     // in seconds
