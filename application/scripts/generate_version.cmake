@@ -13,6 +13,9 @@ if(GIT_RESULT)
     message(FATAL_ERROR "Failed to get Git commit hash. Ensure you are in a Git repository and Git is installed.")
 endif()
 
+# Print out the Git commit hash for debugging purposes
+message(STATUS "Git commit hash: ${GIT_COMMIT_HASH}")
+
 # Define the output file
 set(HEADER_FILE "${CMAKE_BINARY_DIR}/include/version.h")
 
