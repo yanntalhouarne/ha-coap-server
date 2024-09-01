@@ -293,7 +293,7 @@ otError pump_put_response_send(otMessage *request_message, const otMessageInfo *
 
 	// init response message
 	otCoapMessageInitResponse(response, request_message, OT_COAP_TYPE_ACKNOWLEDGMENT,
-							  OT_COAP_CODE_CHANGED);
+							  OT_COAP_CODE_CONTENT);
 
 	// set message payload marker
 	error = otCoapMessageSetPayloadMarker(response);
