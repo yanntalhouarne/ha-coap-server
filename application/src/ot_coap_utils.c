@@ -626,7 +626,7 @@ otError ping_response_send(otMessage *request_message, const otMessageInfo *mess
 	}
 
 	otCoapMessageInitResponse(response, request_message, OT_COAP_TYPE_NON_CONFIRMABLE,
-					  OT_COAP_CODE_CONTENT);
+					  OT_COAP_CODE_CHANGED);
 
 	error = otCoapMessageSetToken(
 		response, otCoapMessageGetToken(request_message),
@@ -642,19 +642,19 @@ otError ping_response_send(otMessage *request_message, const otMessageInfo *mess
 		goto end;
 	}
 
-	char ping_data = '1';
-	payload = &ping_data;
-	payload_size = sizeof(ping_data);
+	// char ping_data = '1';
+	// payload = &ping_data;
+	// payload_size = sizeof(ping_data);
 	
-	error = otMessageAppend(response, payload, payload_size);
-	if (error != OT_ERROR_NONE)
-	{
-		goto end;
-	}
+	// error = otMessageAppend(response, payload, payload_size);
+	// if (error != OT_ERROR_NONE)
+	// {
+	// 	goto end;
+	// }
 
 	error = otCoapSendResponse(srv_context.ot, response, message_info);
 
-	LOG_INF("Ping payload is: %s", ping_data);
+	//LOG_INF("Ping payload is: %s", ping_data);
 
 end:
 	if (error != OT_ERROR_NONE && response != NULL)
