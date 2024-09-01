@@ -30,7 +30,8 @@
 #define PUMP_URI_PATH "light"
 #define DATA_URI_PATH "temperature"
 #define INFO_URI_PATH "info"
-/* Enumeration describing light commands. */
+#define PING_URI_PATH "ping"
+/* Enumeration describing PUMP commands. */
 enum pump_command
 {
     THREAD_COAP_UTILS_PUMP_CMD_OFF = '0',
@@ -47,6 +48,7 @@ enum pump_command
 typedef void (*pump_request_callback_t)(uint8_t cmd);
 typedef int8_t *(*data_request_callback_t)();
 typedef struct info_data (*info_request_callback_t)();
+typedef void (*ping_request_callback_t)();
 
 /*
 ███████ ████████ ██████  ██    ██  ██████ ████████ ███████
@@ -63,6 +65,7 @@ struct server_context
     pump_request_callback_t on_pump_request;
     data_request_callback_t on_data_request;
     info_request_callback_t on_info_request;
+    ping_request_callback_t on_ping_request;
 };
 
 /* FW version data struct */
@@ -95,6 +98,8 @@ void pump_request_handler(void *context, otMessage *message, const otMessageInfo
 void data_request_handler(void *context, otMessage *message, const otMessageInfo *message_info);
 /**@brief Info request handler (GET) */
 void info_request_handler(void *context, otMessage *message, const otMessageInfo *message_info);
+/**@brief Ping request handler (GET) */
+void ping_request_handler(void *context, otMessage *message, const otMessageInfo *message_info);
 
 /*
 ██████  ███████ ███████ ██████   ██████  ███    ██ ███████ ███████     ██   ██  █████  ███    ██ ██████  ██      ███████ ██████  ███████
@@ -109,7 +114,10 @@ otError pump_put_response_send(otMessage *request_message, const otMessageInfo *
 otError pump_get_response_send(otMessage *request_message, const otMessageInfo *message_info);
 /**@brief CoAp response with all sensors' data. */
 otError data_response_send(otMessage *request_message, const otMessageInfo *message_info);
+/**@brief CoAp response with device info data. */
 otError info_response_send(otMessage *request_message, const otMessageInfo *message_info);
+/**@brief CoAp response for a ping request */
+otError ping_response_send(otMessage *request_message, const otMessageInfo *message_info);
 
 /*
 ███████ ██   ██ ████████ ███████ ██████  ███    ██  █████  ██          ███████ ██    ██ ███    ██  ██████ ████████ ██  ██████  ███    ██ ███████
@@ -133,7 +141,7 @@ bool coap_is_pump_active(void);
  ██████  ██████  ██   ██ ██          ███████ ███████ ██   ██   ████   ███████ ██   ██     ██ ██   ████ ██    ██
 */
 /**@brief CoAp server initialization. */
-int ot_coap_init(pump_request_callback_t on_pump_request, data_request_callback_t on_data_request, info_request_callback_t on_info_request);
+int ot_coap_init(pump_request_callback_t on_pump_request, data_request_callback_t on_data_request, info_request_callback_t on_info_request, ping_request_callback_t on_ping_request);
 
 
 #endif // __OT_COAP_UTILS_H__

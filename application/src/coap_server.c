@@ -34,35 +34,6 @@ static void on_pump_request(uint8_t command)
 	case THREAD_COAP_UTILS_PUMP_CMD_ON:
 		if (coap_is_pump_active() == false)
 		{
-		/******************
-	 	* Fetch IMU data *
-	 	******************/
-		// if (sensor_sample_fetch(lsm6dsl_dev) < 0)
-		// {
-		// 	LOG_INF("IMU sensor sample update error\n");
-		// }
-		// else
-		// {
-		// 	/* Print IMU data */
-		// 	// /* lsm6dsl accel */
-		// 	sensor_channel_get(lsm6dsl_dev, SENSOR_CHAN_ACCEL_X, &accel_x_out);
-		// 	sensor_channel_get(lsm6dsl_dev, SENSOR_CHAN_ACCEL_Y, &accel_y_out);
-		// 	sensor_channel_get(lsm6dsl_dev, SENSOR_CHAN_ACCEL_Z, &accel_z_out);
-		// 	sprintf(imu_buf, "accel x = %f ms/2, accel = %f ms/2, accel = %f ms/2",
-		// 							out_ev(&accel_x_out),
-		// 							out_ev(&accel_y_out),
-		// 							out_ev(&accel_z_out));
-		// 	LOG_INF("%s\n", imu_buf);
-		// 	/* lsm6dsl gyro */
-		// 	sensor_channel_get(lsm6dsl_dev, SENSOR_CHAN_GYRO_X, &gyro_x_out);
-		// 	sensor_channel_get(lsm6dsl_dev, SENSOR_CHAN_GYRO_Y, &gyro_y_out);
-		// 	sensor_channel_get(lsm6dsl_dev, SENSOR_CHAN_GYRO_Z, &gyro_z_out);
-		// 	sprintf(imu_buf, "gyro x = %f dps, y = %f dps, z = %f dps",
-		// 							out_ev(&gyro_x_out),
-		// 							out_ev(&gyro_y_out),
-		// 							out_ev(&gyro_z_out));
-		// 	LOG_INF("%s\n", imu_buf);
-		// }
 			coap_activate_pump();
 			dk_set_led_on(LED1);
 			dk_set_led_on(WATER_PUMP);
@@ -98,7 +69,7 @@ static int8_t *on_data_request()
 	dk_set_led_on(SENSOR_EN);
 	k_sleep(K_MSEC(200));
 
-	/* READ TEMPERATURE */
+	/* READ ADC (SOIL HUMIDITY) */
 	for (size_t i = 0U; i < ARRAY_SIZE(adc_channels); i++)
 	{
 
@@ -184,6 +155,42 @@ static int8_t *on_data_request()
 struct info_data on_info_request()
 {
 	return info;
+}
+
+/* PING GET REQUEST */
+void on_ping_request()
+{
+	    /******************
+	 	* Fetch IMU data *
+	 	******************/
+		// if (sensor_sample_fetch(lsm6dsl_dev) < 0)
+		// {
+		// 	LOG_INF("IMU sensor sample update error\n");
+		// }
+		// else
+		// {
+		// 	/* Print IMU data */
+		// 	// /* lsm6dsl accel */
+		// 	sensor_channel_get(lsm6dsl_dev, SENSOR_CHAN_ACCEL_X, &accel_x_out);
+		// 	sensor_channel_get(lsm6dsl_dev, SENSOR_CHAN_ACCEL_Y, &accel_y_out);
+		// 	sensor_channel_get(lsm6dsl_dev, SENSOR_CHAN_ACCEL_Z, &accel_z_out);
+		// 	sprintf(imu_buf, "accel x = %f ms/2, accel = %f ms/2, accel = %f ms/2",
+		// 							out_ev(&accel_x_out),
+		// 							out_ev(&accel_y_out),
+		// 							out_ev(&accel_z_out));
+		// 	LOG_INF("%s\n", imu_buf);
+		// 	/* lsm6dsl gyro */
+		// 	sensor_channel_get(lsm6dsl_dev, SENSOR_CHAN_GYRO_X, &gyro_x_out);
+		// 	sensor_channel_get(lsm6dsl_dev, SENSOR_CHAN_GYRO_Y, &gyro_y_out);
+		// 	sensor_channel_get(lsm6dsl_dev, SENSOR_CHAN_GYRO_Z, &gyro_z_out);
+		// 	sprintf(imu_buf, "gyro x = %f dps, y = %f dps, z = %f dps",
+		// 							out_ev(&gyro_x_out),
+		// 							out_ev(&gyro_y_out),
+		// 							out_ev(&gyro_z_out));
+		// 	LOG_INF("%s\n", imu_buf);
+		// }
+	pwm_set_dt(&pwm_buzzer, PWM_KHZ(6), PWM_KHZ(6) / 2U);
+	k_timer_start(&buzzer_timer, K_MSEC(OT_BUZZER_PERIOD), K_NO_WAIT);
 }
 
 /*
@@ -792,7 +799,7 @@ int main(void)
 	dk_set_led_on(SENSOR_EN);
 	k_sleep(K_MSEC(200));
 
-	/* READ TEMPERATURE */
+	/* READ ADC (SOIL HUMIDITY) */
 	int32_t val_mv;
 	float temp_val = 0;
 	for (size_t i = 0U; i < ARRAY_SIZE(adc_channels); i++)
@@ -850,7 +857,7 @@ int main(void)
 	k_timer_init(&pump_timer, on_pump_timer_expiry, NULL);
 	k_timer_init(&buzzer_timer, on_buzzer_timer_expiry, NULL);
 	k_timer_init(&ot_buzzer_timer, on_ot_buzzer_timer_expiry, NULL);
-// If we want to get the temperature value periodically, start the timer. Otherwise, the ADC will be check only upon a tempereature GET request
+// If we want to read the ADC periodically, start the timer. Otherwise, the ADC will be check only upon a 'data' GET request
 #ifdef ADC_TIMER_ENABLED
 	k_timer_init(&adc_timer, on_adc_timer_expiry, NULL);
 	k_timer_start(&adc_timer, K_SECONDS(ADC_TIMER_PERIOD), K_SECONDS(ADC_TIMER_PERIOD));
@@ -868,7 +875,7 @@ int main(void)
 	 * COAP Server initialization *
 	 *******************************/
 	LOG_INF("Start CoAP-server sample");
-	ret = ot_coap_init(&on_pump_request, &on_data_request, &on_info_request);
+	ret = ot_coap_init(&on_pump_request, &on_data_request, &on_info_request, &on_ping_request);
 	if (ret)
 	{
 		LOG_ERR("Could not initialize OpenThread CoAP");

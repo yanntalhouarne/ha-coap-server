@@ -56,6 +56,7 @@ struct server_context srv_context = {
 	.pump_active = false,
 	.on_pump_request = NULL,
 	.on_data_request = NULL,
+	.on_ping_request = NULL,
 };
 
 /*
@@ -74,7 +75,7 @@ struct server_context srv_context = {
  | |                   | |
  |_|                   |_|
 */
-/**@brief Definition of CoAP resources for light. */
+/**@brief Definition of CoAP resources for 'pump'. */
 otCoapResource pump_resource = {
 	.mUriPath = PUMP_URI_PATH,
 	.mHandler = NULL,
@@ -90,7 +91,7 @@ otCoapResource pump_resource = {
  | |__| | (_| | || (_| |
  |_____/ \__,_|\__\__,_|
 */
-/**@brief Definition of CoAP resources for temperature. */
+/**@brief Definition of CoAP resource 'data'. */
 otCoapResource data_resource = {
 	.mUriPath = DATA_URI_PATH,
 	.mHandler = NULL,
@@ -106,9 +107,27 @@ otCoapResource data_resource = {
  | | | | | || (_) |
  |_|_| |_|_| \___/
 */
-/**@brief Definition of CoAP resources for temperature. */
+/**@brief Definition of CoAP resource 'info'. */
 otCoapResource info_resource = {
 	.mUriPath = INFO_URI_PATH,
+	.mHandler = NULL,
+	.mContext = NULL,
+	.mNext = NULL,
+};
+
+/*
+        _             
+       (_)            
+  _ __  _ _ __   __ _ 
+ | '_ \| | '_ \ / _` |
+ | |_) | | | | | (_| |
+ | .__/|_|_| |_|\__, |
+ | |             __/ |
+ |_|            |___/ 
+*/
+/**@brief Definition of CoAP resource 'ping'. */
+otCoapResource ping_resource = {
+	.mUriPath = PING_URI_PATH,
 	.mHandler = NULL,
 	.mContext = NULL,
 	.mNext = NULL,
@@ -167,7 +186,7 @@ void pump_request_handler(void *context, otMessage *message, const otMessageInfo
 	}
 	else
 	{
-		LOG_INF("Bad light request type/code.");
+		LOG_INF("Bad 'pump' request type/code.");
 		goto end;
 	}
 
@@ -178,16 +197,16 @@ void pump_request_handler(void *context, otMessage *message, const otMessageInfo
 	{
 		if (otMessageRead(message, otMessageGetOffset(message), &command, 1) != 1)
 		{
-			LOG_ERR("Light handler - Missing light command");
+			LOG_ERR("'pump' handler - Missing 'pump' command");
 			goto end;
 		}
-		srv_context.on_pump_request(command); // update light in coap_server.c
-		LOG_INF("Received light PUT request: %c", command);
+		srv_context.on_pump_request(command); // update 'pump' in coap_server.c
+		LOG_INF("Received 'pump' PUT request: %c", command);
 		pump_put_response_send(message, &msg_info);
 	}
 	else
 	{
-		LOG_INF("Received light GET request");
+		LOG_INF("Received 'pump' GET request");
 		pump_get_response_send(message, &msg_info);
 	}
 
@@ -211,7 +230,7 @@ void data_request_handler(void *context, otMessage *message, const otMessageInfo
 
 	ARG_UNUSED(context);
 
-	LOG_INF("Received temperature request");
+	LOG_INF("Received 'data' request");
 
 	if ((otCoapMessageGetType(message) == OT_COAP_TYPE_NON_CONFIRMABLE) &&
 		(otCoapMessageGetCode(message) == OT_COAP_CODE_GET))
@@ -223,7 +242,7 @@ void data_request_handler(void *context, otMessage *message, const otMessageInfo
 	}
 	else
 	{
-		LOG_INF("Bad temperature request type or code.");
+		LOG_INF("Bad 'data' request type or code.");
 	}
 }
 
@@ -243,7 +262,7 @@ void info_request_handler(void *context, otMessage *message, const otMessageInfo
 
 	ARG_UNUSED(context);
 
-	LOG_DBG("Received info request");
+	LOG_DBG("Received 'info' request");
 
 	if ((otCoapMessageGetType(message) == OT_COAP_TYPE_CONFIRMABLE) &&
 		(otCoapMessageGetCode(message) == OT_COAP_CODE_GET))
@@ -255,7 +274,43 @@ void info_request_handler(void *context, otMessage *message, const otMessageInfo
 	}
 	else
 	{
-		LOG_INF("Bad info request type or code.");
+		LOG_INF("Bad 'info' request type or code.");
+	}
+}
+
+/* 	
+		_             
+       (_)            
+  _ __  _ _ __   __ _ 
+ | '_ \| | '_ \ / _` |
+ | |_) | | | | | (_| |
+ | .__/|_|_| |_|\__, |
+ | |             __/ |
+ |_|            |___/ 
+*/
+/**@brief Ping request handler (GET) */
+void ping_request_handler(void *context, otMessage *message, const otMessageInfo *message_info)
+{
+	otError error;
+	otMessageInfo msg_info;
+
+	ARG_UNUSED(context);
+
+	LOG_INF("Received 'ping' request");
+
+	if ((otCoapMessageGetType(message) == OT_COAP_TYPE_NON_CONFIRMABLE) &&
+		(otCoapMessageGetCode(message) == OT_COAP_CODE_GET))
+	{
+		msg_info = *message_info;
+		memset(&msg_info.mSockAddr, 0, sizeof(msg_info.mSockAddr));
+
+		srv_context.on_ping_request(); // update 'pump' in coap_server.c
+
+		ping_response_send(message, &msg_info);
+	}
+	else
+	{
+		LOG_INF("Bad 'ping' request type or code.");
 	}
 }
 
@@ -281,7 +336,7 @@ otError pump_put_response_send(otMessage *request_message, const otMessageInfo *
 	otMessage *response;
 	const void *payload;
 	uint16_t payload_size;
-	uint8_t light_status = 0;
+	uint8_t pump_status = 0;
 
 	// create response message
 	response = otCoapNewMessage(srv_context.ot, NULL);
@@ -305,10 +360,10 @@ otError pump_put_response_send(otMessage *request_message, const otMessageInfo *
 
 	// update payload
 	if (coap_is_pump_active())
-		light_status = 1;
+		pump_status = 1;
 
-	payload = &light_status;
-	payload_size = sizeof(light_status);
+	payload = &pump_status;
+	payload_size = sizeof(pump_status);
 
 	error = otMessageAppend(response, payload, payload_size);
 	if (error != OT_ERROR_NONE)
@@ -324,12 +379,12 @@ otError pump_put_response_send(otMessage *request_message, const otMessageInfo *
 		goto end;
 	}
 
-	LOG_DBG("Light PUT response sent: %d", light_status);
+	LOG_DBG("'pump' PUT response sent: %d", pump_status);
 
 end:
 	if (error != OT_ERROR_NONE && response != NULL)
 	{
-		LOG_INF("Couldn't send Light response");
+		LOG_INF("Couldn't send 'pump' response");
 		otMessageFree(response);
 	}
 
@@ -386,13 +441,13 @@ otError pump_get_response_send(otMessage *request_message, const otMessageInfo *
 		goto end;
 	}
 
-	LOG_INF("Light GET response sent: %d", val);
+	LOG_INF("'pump' GET response sent: %d", val);
 
 end:
 	if (error != OT_ERROR_NONE && response != NULL)
 	{
 		otMessageFree(response);
-		LOG_INF("Couldn't send Light GET response");
+		LOG_INF("Couldn't send 'pump'' GET response");
 	}
 
 	return error;
@@ -415,7 +470,7 @@ otError data_response_send(otMessage *request_message, const otMessageInfo *mess
 	uint16_t payload_size;
 	int8_t *data_buf = {0};
 
-	data_buf = srv_context.on_data_request(); // get temperature from coap_server.c
+	data_buf = srv_context.on_data_request(); // get 'data' buffer from coap_server.c
 
 	response = otCoapNewMessage(srv_context.ot, NULL);
 	if (response == NULL)
@@ -451,7 +506,7 @@ otError data_response_send(otMessage *request_message, const otMessageInfo *mess
 
 	error = otCoapSendResponse(srv_context.ot, response, message_info);
 
-	LOG_DBG("Temperature response sent: %d degC", data_buf);
+	LOG_DBG("'data' response sent.");
 
 end:
 	if (error != OT_ERROR_NONE && response != NULL)
@@ -478,7 +533,7 @@ otError info_response_send(otMessage *request_message, const otMessageInfo *mess
 	const void *payload;
 	uint16_t payload_size;
 	struct info_data _info;
-	_info = srv_context.on_info_request(); // get temperature from coap_server.c
+	_info = srv_context.on_info_request(); // get 'info' buffer from coap_server.c
 
 	response = otCoapNewMessage(srv_context.ot, NULL);
 	if (response == NULL)
@@ -535,6 +590,72 @@ end:
 }
 
 /*
+        _             
+       (_)            
+  _ __  _ _ __   __ _ 
+ | '_ \| | '_ \ / _` |
+ | |_) | | | | | (_| |
+ | .__/|_|_| |_|\__, |
+ | |             __/ |
+ |_|            |___/ 
+*/
+/**@brief Ping GET response with firmware and hardware date. */
+otError ping_response_send(otMessage *request_message, const otMessageInfo *message_info)
+{
+	otError error = OT_ERROR_NO_BUFS;
+	otMessage *response;
+	const void *payload;
+	uint16_t payload_size;
+	struct info_data _info;
+	_info = srv_context.on_info_request(); // get 'info' buffer from coap_server.c
+
+	response = otCoapNewMessage(srv_context.ot, NULL);
+	if (response == NULL)
+	{
+		goto end;
+	}
+
+	otCoapMessageInitResponse(response, request_message, OT_COAP_TYPE_NON_CONFIRMABLE,
+					  OT_COAP_CODE_CONTENT);
+
+	error = otCoapMessageSetToken(
+		response, otCoapMessageGetToken(request_message),
+		otCoapMessageGetTokenLength(request_message));
+	if (error != OT_ERROR_NONE)
+	{
+		goto end;
+	}
+
+	error = otCoapMessageSetPayloadMarker(response);
+	if (error != OT_ERROR_NONE)
+	{
+		goto end;
+	}
+
+	char ping_data = '1';
+	payload = &ping_data;
+	payload_size = sizeof(ping_data);
+	
+	error = otMessageAppend(response, payload, payload_size);
+	if (error != OT_ERROR_NONE)
+	{
+		goto end;
+	}
+
+	error = otCoapSendResponse(srv_context.ot, response, message_info);
+
+	LOG_INF("Ping paylod is: %s", ping_data);
+
+end:
+	if (error != OT_ERROR_NONE && response != NULL)
+	{
+		otMessageFree(response);
+	}
+
+	return error;
+}
+
+/*
 ███████ ██   ██ ████████ ███████ ██████  ███    ██  █████  ██          ███████ ██    ██ ███    ██  ██████ ████████ ██  ██████  ███    ██ ███████
 ██       ██ ██     ██    ██      ██   ██ ████   ██ ██   ██ ██          ██      ██    ██ ████   ██ ██         ██    ██ ██    ██ ████   ██ ██
 █████     ███      ██    █████   ██████  ██ ██  ██ ███████ ██          █████   ██    ██ ██ ██  ██ ██         ██    ██ ██    ██ ██ ██  ██ ███████
@@ -564,7 +685,7 @@ void coap_diactivate_pump(void)
  ██████  ██████  ██   ██ ██          ███████ ███████ ██   ██   ████   ███████ ██   ██     ██ ██   ████ ██    ██
 */
 /**@brief CoAp server initialization. */
-int ot_coap_init(pump_request_callback_t on_pump_request, data_request_callback_t on_data_request, info_request_callback_t on_info_request)
+int ot_coap_init(pump_request_callback_t on_pump_request, data_request_callback_t on_data_request, info_request_callback_t on_info_request, ping_request_callback_t on_ping_request)
 {
 	otError error;
 
@@ -572,6 +693,7 @@ int ot_coap_init(pump_request_callback_t on_pump_request, data_request_callback_
 	srv_context.on_pump_request = on_pump_request;
 	srv_context.on_data_request = on_data_request;
 	srv_context.on_info_request = on_info_request;
+	srv_context.on_ping_request = on_ping_request;
 
 	/* Get OpenThread instance. */
 	srv_context.ot = openthread_get_default_instance();
@@ -583,15 +705,18 @@ int ot_coap_init(pump_request_callback_t on_pump_request, data_request_callback_
 	}
 
 	/* Initialize CoAp Resources */
-	// pump resource
+	// 'pump' resource
 	pump_resource.mContext = srv_context.ot;
 	pump_resource.mHandler = pump_request_handler;
-	// data resource
+	// 'data' resource
 	data_resource.mContext = srv_context.ot;
 	data_resource.mHandler = data_request_handler;
-	// info resource
+	// 'info' resource
 	info_resource.mContext = srv_context.ot;
 	info_resource.mHandler = info_request_handler;
+	// 'ping' resource
+	ping_resource.mContext = srv_context.ot;
+	ping_resource.mHandler = ping_request_handler;
 
 	/* Set CoAp default handler */
 	otCoapSetDefaultHandler(srv_context.ot, coap_default_handler, NULL);
@@ -600,6 +725,7 @@ int ot_coap_init(pump_request_callback_t on_pump_request, data_request_callback_
 	otCoapAddResource(srv_context.ot, &pump_resource);
 	otCoapAddResource(srv_context.ot, &data_resource);
 	otCoapAddResource(srv_context.ot, &info_resource);
+	otCoapAddResource(srv_context.ot, &ping_resource);
 
 	/* Start CoAp server */
 	error = otCoapStart(srv_context.ot, COAP_PORT);
