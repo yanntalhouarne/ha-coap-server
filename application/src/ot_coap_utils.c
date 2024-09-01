@@ -180,7 +180,7 @@ void pump_request_handler(void *context, otMessage *message, const otMessageInfo
 	{
 		isTypePut = 1;
 	}
-	else if ((otCoapMessageGetType(message) == OT_COAP_TYPE_NON_CONFIRMABLE) && (otCoapMessageGetCode(message) == OT_COAP_CODE_GET))
+	else if (((otCoapMessageGetType(message) == OT_COAP_TYPE_NON_CONFIRMABLE) || (otCoapMessageGetType(message) == OT_COAP_TYPE_CONFIRMABLE)) && (otCoapMessageGetCode(message) == OT_COAP_CODE_GET))
 	{
 		isTypePut = 0;
 	}
@@ -232,8 +232,7 @@ void data_request_handler(void *context, otMessage *message, const otMessageInfo
 
 	LOG_INF("Received 'data' request");
 
-	if ((otCoapMessageGetType(message) == OT_COAP_TYPE_NON_CONFIRMABLE) &&
-		(otCoapMessageGetCode(message) == OT_COAP_CODE_GET))
+	if (((otCoapMessageGetType(message) == OT_COAP_TYPE_NON_CONFIRMABLE) || (otCoapMessageGetType(message) == OT_COAP_TYPE_CONFIRMABLE)) && (otCoapMessageGetCode(message) == OT_COAP_CODE_GET))
 	{
 		msg_info = *message_info;
 		memset(&msg_info.mSockAddr, 0, sizeof(msg_info.mSockAddr));
@@ -300,8 +299,7 @@ void ping_request_handler(void *context, otMessage *message, const otMessageInfo
 
 	LOG_INF("Received 'ping' request");
 
-	if ((otCoapMessageGetType(message) == OT_COAP_TYPE_CONFIRMABLE) &&
-		(otCoapMessageGetCode(message) == OT_COAP_CODE_PUT))
+	if (((otCoapMessageGetType(message) == OT_COAP_TYPE_CONFIRMABLE) || (otCoapMessageGetType(message) == OT_COAP_TYPE_NON_CONFIRMABLE)) && (otCoapMessageGetCode(message) == OT_COAP_CODE_PUT))
 	{
 		msg_info = *message_info;
 		memset(&msg_info.mSockAddr, 0, sizeof(msg_info.mSockAddr));
@@ -415,8 +413,10 @@ otError pump_get_response_send(otMessage *request_message, const otMessageInfo *
 		goto end;
 	}
 
-	otCoapMessageInit(response, OT_COAP_TYPE_NON_CONFIRMABLE,
-					  OT_COAP_CODE_CONTENT);
+	if (otCoapMessageGetType(request_message) == OT_COAP_TYPE_CONFIRMABLE)
+		otCoapMessageInitResponse(response, request_message, OT_COAP_TYPE_ACKNOWLEDGMENT, OT_COAP_CODE_CONTENT);
+	else
+		otCoapMessageInitResponse(response, request_message, OT_COAP_TYPE_NON_CONFIRMABLE, OT_COAP_CODE_CONTENT);
 
 	error = otCoapMessageSetToken(
 		response, otCoapMessageGetToken(request_message),
@@ -488,8 +488,10 @@ otError data_response_send(otMessage *request_message, const otMessageInfo *mess
 		goto end;
 	}
 
-	otCoapMessageInit(response, OT_COAP_TYPE_NON_CONFIRMABLE,
-					  OT_COAP_CODE_CONTENT);
+	if (otCoapMessageGetType(request_message) == OT_COAP_TYPE_CONFIRMABLE)
+		otCoapMessageInitResponse(response, request_message, OT_COAP_TYPE_ACKNOWLEDGMENT, OT_COAP_CODE_CONTENT);
+	else
+		otCoapMessageInitResponse(response, request_message, OT_COAP_TYPE_NON_CONFIRMABLE, OT_COAP_CODE_CONTENT);
 
 	error = otCoapMessageSetToken(
 		response, otCoapMessageGetToken(request_message),
@@ -551,8 +553,10 @@ otError info_response_send(otMessage *request_message, const otMessageInfo *mess
 		goto end;
 	}
 
-	otCoapMessageInitResponse(response, request_message, OT_COAP_TYPE_ACKNOWLEDGMENT,
-					  OT_COAP_CODE_CONTENT);
+	//if (otCoapMessageGetType(request_message) == OT_COAP_TYPE_CONFIRMABLE)
+	otCoapMessageInitResponse(response, request_message, OT_COAP_TYPE_ACKNOWLEDGMENT, OT_COAP_CODE_CONTENT);
+	//else
+	//	otCoapMessageInitResponse(response, request_message, OT_COAP_TYPE_NON_CONFIRMABLE, OT_COAP_CODE_CONTENT);
 
 	error = otCoapMessageSetToken(
 		response, otCoapMessageGetToken(request_message),
@@ -609,7 +613,7 @@ end:
  | |             __/ |
  |_|            |___/ 
 */
-/**@brief Ping GET response with firmware and hardware date. */
+/**@brief Ping PUT response with no payload. */
 otError ping_response_send(otMessage *request_message, const otMessageInfo *message_info)
 {
 	otError error = OT_ERROR_NO_BUFS;
@@ -625,8 +629,10 @@ otError ping_response_send(otMessage *request_message, const otMessageInfo *mess
 		goto end;
 	}
 
-	otCoapMessageInitResponse(response, request_message, OT_COAP_TYPE_ACKNOWLEDGMENT,
-					  OT_COAP_CODE_CHANGED);
+	if (otCoapMessageGetType(request_message) == OT_COAP_TYPE_CONFIRMABLE)
+		otCoapMessageInitResponse(response, request_message, OT_COAP_TYPE_ACKNOWLEDGMENT, OT_COAP_CODE_CHANGED);
+	else
+		otCoapMessageInitResponse(response, request_message, OT_COAP_TYPE_NON_CONFIRMABLE, OT_COAP_CODE_CHANGED);
 
 	error = otCoapMessageSetToken(
 		response, otCoapMessageGetToken(request_message),
