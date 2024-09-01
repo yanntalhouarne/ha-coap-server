@@ -27,8 +27,8 @@
 /* CoAp port */
 #define COAP_PORT 5683
 /* CoAp resources*/
-#define PUMP_URI_PATH "light"
-#define DATA_URI_PATH "temperature"
+#define PUMP_URI_PATH "pump"
+#define DATA_URI_PATH "data"
 #define INFO_URI_PATH "info"
 #define PING_URI_PATH "ping"
 /* Enumeration describing PUMP commands. */
