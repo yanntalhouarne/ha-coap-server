@@ -262,14 +262,14 @@ static void on_thread_state_changed(otChangedFlags flags, struct openthread_cont
 		case OT_DEVICE_ROLE_CHILD:
 		case OT_DEVICE_ROLE_ROUTER:
 		case OT_DEVICE_ROLE_LEADER:
-			dk_set_led_on(RADIO_RED_LED);
-			dk_set_led_off(RADIO_GREEN_LED);
-			dk_set_led_off(RADIO_BLUE_LED);
 			otSrpClientBuffersServiceEntry *entry = NULL;
 			uint16_t size;
 			char *string;
 			if (!oneTime)
 			{
+				dk_set_led_off(RADIO_RED_LED);
+				dk_set_led_off(RADIO_GREEN_LED);
+				dk_set_led_on(RADIO_BLUE_LED);
 				// only do this once
 				oneTime = 1;
 				// generate a unique hostname and servie name for the SRP node
