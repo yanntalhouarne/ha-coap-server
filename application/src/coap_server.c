@@ -559,6 +559,7 @@ int main(void)
 	if (ret)
 	{
 		LOG_ERR("Could not initialize leds (error: %d", ret);
+		dk_set_led_on(RADIO_RED_LED);
 		goto end;
 	}
 
@@ -576,6 +577,7 @@ int main(void)
 	if (!gpio_is_ready_dt(&usr_button)) {
 		printk("Error: Device %s is not ready\n",
 		       usr_button.port->name);
+		dk_set_led_on(RADIO_RED_LED);
 		goto end;
 	}
 	ret = gpio_pin_configure_dt(&usr_button, GPIO_INPUT);
@@ -711,6 +713,14 @@ int main(void)
 	if (!device_is_ready(dev_hdc))
 	{
 		LOG_ERR("\nError: Device \"%s\" is not ready\n");
+		for (int i = 0; i < 2; i++)
+		{
+			dk_set_led_on(RADIO_RED_LED);
+			k_sleep(K_MSEC(500));
+			dk_set_led_off(RADIO_RED_LED);
+			k_sleep(K_MSEC(500));
+		}
+		dk_set_led_on(RADIO_RED_LED);
 		goto end;
 	}
 	LOG_INF("Dev %p name %s is ready!\n", dev_hdc, dev_hdc->name);
@@ -741,6 +751,14 @@ int main(void)
 	if (!device_is_ready(dev_fuelgauge))
 	{
 		LOG_ERR("\nError: Device \"%s\" is not ready\n");
+		for (int i = 0; i < 3; i++)
+		{
+			dk_set_led_on(RADIO_RED_LED);
+			k_sleep(K_MSEC(500));
+			dk_set_led_off(RADIO_RED_LED);
+			k_sleep(K_MSEC(500));
+		}
+		dk_set_led_on(RADIO_RED_LED);
 		goto end;
 	}
 	LOG_INF("Dev %p name %s is ready!\n", dev_fuelgauge, dev_fuelgauge->name);
@@ -816,12 +834,14 @@ int main(void)
 		if (!device_is_ready(adc_channels[i].dev))
 		{
 			LOG_ERR("ADC controller device not ready\n");
+			dk_set_led_on(RADIO_RED_LED);
 			goto end;
 		}
 		ret = adc_channel_setup_dt(&adc_channels[i]);
 		if (ret < 0)
 		{
 			LOG_ERR("Could not setup channel #%d (%d)\n", i, ret);
+			dk_set_led_on(RADIO_RED_LED);
 			goto end;
 		}
 	}
@@ -911,6 +931,7 @@ int main(void)
 	if (ret)
 	{
 		LOG_ERR("Could not initialize OpenThread CoAP");
+		dk_set_led_on(RADIO_RED_LED);
 		goto end;
 	}
 
@@ -955,6 +976,5 @@ int main(void)
 	openthread_start(openthread_get_default_context());
 
 end:
-	dk_set_led_on(RADIO_RED_LED);
 	return 0;
 }
