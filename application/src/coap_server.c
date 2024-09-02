@@ -955,5 +955,6 @@ int main(void)
 	openthread_start(openthread_get_default_context());
 
 end:
+	dk_set_led_on(RADIO_RED_LED);
 	return 0;
 }
