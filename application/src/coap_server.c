@@ -239,7 +239,7 @@ void on_srp_client_updated(otError aError, const otSrpClientHostInfo *aHostInfo,
 	}
 	else 
 	{
-		dk_set_led_oo(RADIO_RED_LED);
+		//dk_set_led_on(RADIO_RED_LED);
 	}
 }
 
@@ -905,7 +905,7 @@ int main(void)
 	LOG_INF("soil_humidity = %d", (int)temp_val);
 
 	/* TURN OFF SENSOR */
-	dk_set_led_off(SENSOR_EN);
+	//dk_set_led_off(SENSOR_EN);
 
 	/*
 	  _______ _____ __  __ ______ _____   _____       _____ _   _ _____ _______
