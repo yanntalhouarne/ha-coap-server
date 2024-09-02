@@ -908,7 +908,7 @@ int main(void)
 	LOG_INF("soil_humidity = %d", (int)temp_val);
 
 	/* TURN OFF SENSOR */
-	//dk_set_led_off(SENSOR_EN);
+	dk_set_led_off(SENSOR_EN);
 
 	/*
 	  _______ _____ __  __ ______ _____   _____       _____ _   _ _____ _______
