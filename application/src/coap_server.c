@@ -230,9 +230,16 @@ void on_srp_client_updated(otError aError, const otSrpClientHostInfo *aHostInfo,
 		// start buzzer OT connection tune
 		if (!buzzer_active)
 		{
+			dk_set_led_off(RADIO_RED_LED);
+			dk_set_led_off(RADIO_GREEN_LED);
+			dk_set_led_off(RADIO_BLUE_LED);
 			buzzer_active = 1;
 			k_timer_start(&ot_buzzer_timer, K_MSEC(1), K_NO_WAIT);
 		}
+	}
+	else 
+	{
+		dk_set_led_oo(RADIO_RED_LED);
 	}
 }
 
@@ -255,7 +262,9 @@ static void on_thread_state_changed(otChangedFlags flags, struct openthread_cont
 		case OT_DEVICE_ROLE_CHILD:
 		case OT_DEVICE_ROLE_ROUTER:
 		case OT_DEVICE_ROLE_LEADER:
-			// dk_set_led_on(RADIO_GREEN_LED);
+			dk_set_led_on(RADIO_RED_LED);
+			dk_set_led_off(RADIO_GREEN_LED);
+			dk_set_led_off(RADIO_BLUE_LED);
 			otSrpClientBuffersServiceEntry *entry = NULL;
 			uint16_t size;
 			char *string;
@@ -307,6 +316,10 @@ static void on_thread_state_changed(otChangedFlags flags, struct openthread_cont
 
 		case OT_DEVICE_ROLE_DISABLED:
 		case OT_DEVICE_ROLE_DETACHED:
+			dk_set_led_on(RADIO_RED_LED);
+			dk_set_led_on(RADIO_GREEN_LED);
+			dk_set_led_off(RADIO_BLUE_LED);
+			break;
 		default:
 			dk_set_led_off(RADIO_GREEN_LED);
 			break;
