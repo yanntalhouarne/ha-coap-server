@@ -265,6 +265,9 @@ static void on_thread_state_changed(otChangedFlags flags, struct openthread_cont
 			otSrpClientBuffersServiceEntry *entry = NULL;
 			uint16_t size;
 			char *string;
+			dk_set_led_off(RADIO_RED_LED);
+			dk_set_led_off(RADIO_GREEN_LED);
+			dk_set_led_off(RADIO_BLUE_LED);
 			if (!oneTime)
 			{
 				dk_set_led_off(RADIO_RED_LED);
