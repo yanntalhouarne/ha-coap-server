@@ -976,6 +976,9 @@ int main(void)
 	dk_set_led_off(RADIO_GREEN_LED);
 	pwm_set_dt(&pwm_buzzer, PWM_KHZ(6), 0);
 
+	dk_set_led_on(RADIO_RED_LED);
+	dk_set_led_on(RADIO_GREEN_LED);
+	dk_set_led_on(RADIO_BLUE_LED);
 
 	/*
 	  ____  _____  ______ _   _ _______ _    _ _____  ______          _____        _____ _   _ _____ _______
