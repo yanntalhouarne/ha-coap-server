@@ -67,7 +67,9 @@ LOG_MODULE_REGISTER(coap_server, CONFIG_COAP_SERVER_LOG_LEVEL);
 #define SENSOR_VCC_MCU 7 // IO 1_15
 
 /* Timing */
-#define PUMP_MAX_ACTIVE_TIME 4 // in seconds. Maximum time the water pump can be ON continuously.
+#define PUMP_DEFAULT_ACTIVE_TIME 1 // in seconds. Default time the water pump is ON continuously.
+#define PUMP_MIN_ACTIVE_TIME 1 // in seconds. Minimum time the water pump can be ON continuously.
+#define PUMP_MAX_ACTIVE_TIME 10 // in seconds. Maximum time the water pump can be ON continuously.
 #define PUMP_BUZZER_FREQUENCY 4 // in kHz
 #define OT_BUZZER_FREQUENCY 6 // in kHz
 #define OT_BUZZER_PERIOD 100   // in milli-seconds. The time between buzzer on/off when we succsefully connect to the OT network (see below).
@@ -179,6 +181,9 @@ struct info_data info = {
 
     .total_size = sizeof(fw_version)+sizeof(hw_version),
 };
+
+/* Pump */
+uint8_t pump_dc = PUMP_MIN_ACTIVE_TIME;
 
 /* Buzzer */
 uint8_t buzzer_active = 0;

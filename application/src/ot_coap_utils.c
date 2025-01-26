@@ -54,6 +54,7 @@ LOG_MODULE_REGISTER(ot_coap_utils, CONFIG_OT_COAP_UTILS_LOG_LEVEL);
 struct server_context srv_context = {
 	.ot = NULL,
 	.pump_active = false,
+	.on_pumpdc_request = NULL,
 	.on_pump_request = NULL,
 	.on_data_request = NULL,
 	.on_ping_request = NULL,
@@ -66,6 +67,24 @@ struct server_context srv_context = {
 ██      ██    ██ ██   ██ ██          ██   ██ ██           ██ ██    ██ ██    ██ ██   ██ ██      ██           ██
  ██████  ██████  ██   ██ ██          ██   ██ ███████ ███████  ██████   ██████  ██   ██  ██████ ███████ ███████
 */
+
+/*
+                                  _      
+                                 | |     
+  _ __  _   _ _ __ ___  _ __   __| | ___ 
+ | '_ \| | | | '_ ` _ \| '_ \ / _` |/ __|
+ | |_) | |_| | | | | | | |_) | (_| | (__ 
+ | .__/ \__,_|_| |_| |_| .__/ \__,_|\___|
+ | |                   | |               
+ |_|                   |_|              
+*/
+/**@brief Definition of CoAP resources for 'pumpdc'. */
+otCoapResource pumpdc_resource = {
+	.mUriPath = PUMPDC_URI_PATH,
+	.mHandler = NULL,
+	.mContext = NULL,
+	.mNext = NULL,
+};
 
 /*
   _ __  _   _ _ __ ___  _ __
@@ -158,6 +177,44 @@ void coap_default_handler(void *context, otMessage *message,
 
 	LOG_INF("Received CoAP message that does not match any request "
 			"or resource");
+}
+/*
+                                  _      
+                                 | |     
+  _ __  _   _ _ __ ___  _ __   __| | ___ 
+ | '_ \| | | | '_ ` _ \| '_ \ / _` |/ __|
+ | |_) | |_| | | | | | | |_) | (_| | (__ 
+ | .__/ \__,_|_| |_| |_| .__/ \__,_|\___|
+ | |                   | |               
+ |_|                   |_|              
+*/
+/**@brief Pump request handler (GET/PUT) */
+void pumpdc_request_handler(void *context, otMessage *message, const otMessageInfo *message_info)
+{
+	uint8_t data;
+	otMessageInfo msg_info;
+
+	ARG_UNUSED(context);
+	if ((otCoapMessageGetType(message) != OT_COAP_TYPE_CONFIRMABLE) || (otCoapMessageGetCode(message) != OT_COAP_CODE_PUT))
+	{
+		LOG_INF("Bad 'pumpdc' request type/code.");
+		goto end;
+	}
+
+	msg_info = *message_info;
+	memset(&msg_info.mSockAddr, 0, sizeof(msg_info.mSockAddr));
+
+	if (otMessageRead(message, otMessageGetOffset(message), &data, 1) != 1)
+	{
+		LOG_ERR("'pumpdc' handler - Missing 'pumpdc' data");
+		goto end;
+	}
+	srv_context.on_pumpdc_request(data); // update 'pump' in coap_server.c
+	LOG_INF("Received 'pumpdc' PUT request: %c seconds", data);
+	pumpdc_put_response_send(message, &msg_info);
+
+end:
+	return;
 }
 /*
   _ __  _   _ _ __ ___  _ __
@@ -328,6 +385,73 @@ void ping_request_handler(void *context, otMessage *message, const otMessageInfo
 ██   ██ ██           ██ ██      ██    ██ ██  ██ ██      ██ ██          ██   ██ ██   ██ ██  ██ ██ ██   ██ ██      ██      ██   ██      ██
 ██   ██ ███████ ███████ ██       ██████  ██   ████ ███████ ███████     ██   ██ ██   ██ ██   ████ ██████  ███████ ███████ ██   ██ ███████
 */
+/*
+                                  _      
+                                 | |     
+  _ __  _   _ _ __ ___  _ __   __| | ___ 
+ | '_ \| | | | '_ ` _ \| '_ \ / _` |/ __|
+ | |_) | |_| | | | | | | |_) | (_| | (__ 
+ | .__/ \__,_|_| |_| |_| .__/ \__,_|\___|
+ | |                   | |               
+ |_|                   |_|              
+*/
+/**@brief Pumpdc PUT response with pump duty-cycle value in seconds. */
+otError pumpdc_put_response_send(otMessage *request_message, const otMessageInfo *message_info)
+{
+	otError error = OT_ERROR_NO_BUFS;
+	otMessage *response;
+	const void *payload;
+	uint16_t payload_size;
+	uint8_t pump_dutycycle = 0;
+
+	// create response message
+	response = otCoapNewMessage(srv_context.ot, NULL);
+	if (response == NULL)
+	{
+		LOG_INF("Error in otCoapNewMessage()");
+		goto end;
+	}
+
+	// init response message
+	otCoapMessageInitResponse(response, request_message, OT_COAP_TYPE_ACKNOWLEDGMENT,
+							  OT_COAP_CODE_CONTENT);
+
+	// set message payload marker
+	error = otCoapMessageSetPayloadMarker(response);
+	if (error != OT_ERROR_NONE)
+	{
+		LOG_INF("Error in otCoapMessageSetPayloadMarker()");
+		goto end;
+	}
+
+	payload = &pump_dutycycle;
+	payload_size = sizeof(pump_dutycycle);
+
+	error = otMessageAppend(response, payload, payload_size);
+	if (error != OT_ERROR_NONE)
+	{
+		LOG_INF("Error in otMessageAppend()");
+		goto end;
+	}
+
+	error = otCoapSendResponse(srv_context.ot, response, message_info);
+	if (error != OT_ERROR_NONE)
+	{
+		LOG_INF("Error in otCoapSendResponse()");
+		goto end;
+	}
+
+	LOG_DBG("'pumpdc' PUT response sent: %d", pump_dutycycle);
+
+end:
+	if (error != OT_ERROR_NONE && response != NULL)
+	{
+		LOG_INF("Couldn't send 'pumpdc' response");
+		otMessageFree(response);
+	}
+
+	return error;
+}
 /*
   _ __  _   _ _ __ ___  _ __
  | '_ \| | | | '_ ` _ \| '_ \
@@ -693,11 +817,12 @@ void coap_diactivate_pump(void)
  ██████  ██████  ██   ██ ██          ███████ ███████ ██   ██   ████   ███████ ██   ██     ██ ██   ████ ██    ██
 */
 /**@brief CoAp server initialization. */
-int ot_coap_init(pump_request_callback_t on_pump_request, data_request_callback_t on_data_request, info_request_callback_t on_info_request, ping_request_callback_t on_ping_request)
+int ot_coap_init(pumpdc_request_callback_t on_pumpdc_request, pump_request_callback_t on_pump_request, data_request_callback_t on_data_request, info_request_callback_t on_info_request, ping_request_callback_t on_ping_request)
 {
 	otError error;
 
 	/* Attach CoAp resources to server context. */
+	srv_context.on_pumpdc_request = on_pumpdc_request;
 	srv_context.on_pump_request = on_pump_request;
 	srv_context.on_data_request = on_data_request;
 	srv_context.on_info_request = on_info_request;
@@ -713,6 +838,9 @@ int ot_coap_init(pump_request_callback_t on_pump_request, data_request_callback_
 	}
 
 	/* Initialize CoAp Resources */
+	// 'pumpdc' resource
+	pumpdc_resource.mContext = srv_context.ot;
+	pumpdc_resource.mHandler = pumpdc_request_handler;
 	// 'pump' resource
 	pump_resource.mContext = srv_context.ot;
 	pump_resource.mHandler = pump_request_handler;
@@ -730,6 +858,7 @@ int ot_coap_init(pump_request_callback_t on_pump_request, data_request_callback_
 	otCoapSetDefaultHandler(srv_context.ot, coap_default_handler, NULL);
 
 	/* Add resources to the CoAp server */
+	otCoapAddResource(srv_context.ot, &pumpdc_resource);
 	otCoapAddResource(srv_context.ot, &pump_resource);
 	otCoapAddResource(srv_context.ot, &data_resource);
 	otCoapAddResource(srv_context.ot, &info_resource);

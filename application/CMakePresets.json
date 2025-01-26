@@ -25,14 +25,12 @@
             "name": "build_mtd_lp",
             "displayName": "Build for hacoap",
             "generator": "Ninja",
-            "binaryDir": "${sourceDir}/build_1",
+            "binaryDir": "${sourceDir}/build_3",
             "cacheVariables": {
                 "NCS_TOOLCHAIN_VERSION": "NONE",
                 "BOARD": "hacoap",
-                "BOARD_ROOT": "/home/yann/openthread_coap_server/application;${sourceDir}/",
-                "OVERLAY_CONFIG": "${sourceDir}/overlay-mtd.conf",
-                "CONFIG_DEBUG_THREAD_INFO": "y",
-                "CACHED_CONF_FILE": "${sourceDir}/prj.conf"
+                "BOARD_ROOT": "${sourceDir}/",
+                "EXTRA_CONF_FILE": "overlay-mtd.conf"
             }
         }
     ]

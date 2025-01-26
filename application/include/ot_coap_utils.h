@@ -27,6 +27,7 @@
 /* CoAp port */
 #define COAP_PORT 5683
 /* CoAp resources*/
+#define PUMPDC_URI_PATH "pumpdc"
 #define PUMP_URI_PATH "pump"
 #define DATA_URI_PATH "data"
 #define INFO_URI_PATH "info"
@@ -51,6 +52,7 @@ enum ping_command
 ██   ██ ██           ██ ██    ██ ██    ██ ██   ██ ██      ██          ██      ██   ██     ██   ██ ██      ██      ██ ██  ██ ██ ██    ██    ██ ██    ██ ██  ██ ██      ██
 ██   ██ ███████ ███████  ██████   ██████  ██   ██  ██████ ███████      ██████ ██████      ██████  ███████ ██      ██ ██   ████ ██    ██    ██  ██████  ██   ████ ███████
 */
+typedef void (*pumpdc_request_callback_t)(uint8_t data);
 typedef void (*pump_request_callback_t)(uint8_t cmd);
 typedef int8_t *(*data_request_callback_t)();
 typedef struct info_data (*info_request_callback_t)();
@@ -68,6 +70,7 @@ struct server_context
 {
     struct otInstance *ot;
     bool pump_active;
+    pumpdc_request_callback_t on_pumpdc_request;
     pump_request_callback_t on_pump_request;
     data_request_callback_t on_data_request;
     info_request_callback_t on_info_request;
@@ -98,6 +101,8 @@ struct info_data
 */
 /**@brief Default request handler (GET/PUT) */
 void coap_default_handler(void *context, otMessage *message, const otMessageInfo *message_info);
+/**@brief Pumpdc request handler (GET/PUT) */
+void pumpdc_request_handler(void *context, otMessage *message, const otMessageInfo *message_info);
 /**@brief Pump request handler (GET/PUT) */
 void pump_request_handler(void *context, otMessage *message, const otMessageInfo *message_info);
 /**@brief Data request handler (GET) */
@@ -114,6 +119,8 @@ void ping_request_handler(void *context, otMessage *message, const otMessageInfo
 ██   ██ ██           ██ ██      ██    ██ ██  ██ ██      ██ ██          ██   ██ ██   ██ ██  ██ ██ ██   ██ ██      ██      ██   ██      ██
 ██   ██ ███████ ███████ ██       ██████  ██   ████ ███████ ███████     ██   ██ ██   ██ ██   ████ ██████  ███████ ███████ ██   ██ ███████
 */
+/**@brief Pumpdc PUT response with pump state date. */
+otError pumpdc_put_response_send(otMessage *request_message, const otMessageInfo *message_info);
 /**@brief Pump PUT response with pump state date. */
 otError pump_put_response_send(otMessage *request_message, const otMessageInfo *message_info);
 /**@brief Pump GET response with pump state date. */
@@ -147,7 +154,7 @@ bool coap_is_pump_active(void);
  ██████  ██████  ██   ██ ██          ███████ ███████ ██   ██   ████   ███████ ██   ██     ██ ██   ████ ██    ██
 */
 /**@brief CoAp server initialization. */
-int ot_coap_init(pump_request_callback_t on_pump_request, data_request_callback_t on_data_request, info_request_callback_t on_info_request, ping_request_callback_t on_ping_request);
+int ot_coap_init(pumpdc_request_callback_t on_pumpdc_request, pump_request_callback_t on_pump_request, data_request_callback_t on_data_request, info_request_callback_t on_info_request, ping_request_callback_t on_ping_request);
 
 
 #endif // __OT_COAP_UTILS_H__

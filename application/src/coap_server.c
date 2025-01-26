@@ -26,6 +26,18 @@
  ██████  ██████  ██   ██ ██          ██   ██ ██   ██ ██   ████ ██████  ███████ ███████ ██   ██ ███████
 
 */
+/* PUMPDC PUT REQUEST */
+static void on_pumpdc_request(int seconds)
+{
+	if ((seconds >= 48) && (seconds <= 57)) 
+	{
+		uint8_t iseconds = seconds - 48; // convert from ASCII to integer (max is value of 'iseconds' is 9 with this hack, since 10 doesn't exist in ASCII)
+		if ((iseconds >= PUMP_MIN_ACTIVE_TIME) && (iseconds < PUMP_MAX_ACTIVE_TIME))
+		{
+			pump_dc = iseconds;
+		}
+	}
+}
 /* PUMP PUT REQUEST */
 static void on_pump_request(uint8_t command)
 {
@@ -39,7 +51,7 @@ static void on_pump_request(uint8_t command)
 			dk_set_led_on(WATER_PUMP);
 			pwm_set_dt(&pwm_buzzer, PWM_KHZ(PUMP_BUZZER_FREQUENCY), PWM_KHZ(PUMP_BUZZER_FREQUENCY) / 2U);
 			/* start pump */
-			k_timer_start(&pump_timer, K_SECONDS(PUMP_MAX_ACTIVE_TIME), K_NO_WAIT); // pump will be active for 5 seconds, unless a stop command is received
+			k_timer_start(&pump_timer, K_SECONDS(pump_dc), K_NO_WAIT); // pump will be active for 5 seconds, unless a stop command is received
 			/* start buzzer */
 			if (!buzzer_active)
 			{
@@ -227,9 +239,11 @@ void on_srp_client_updated(otError aError, const otSrpClientHostInfo *aHostInfo,
 	LOG_INF("SRP callback: %s", otThreadErrorToString(aError));
 	if (aError == OT_ERROR_NONE)
 	{
+		static uint8_t one_time = 1;
 		// start buzzer OT connection tune
-		if (!buzzer_active)
+		if ((!buzzer_active) && (one_time))
 		{
+			one_time = 0;
 			dk_set_led_off(RADIO_RED_LED);
 			dk_set_led_off(RADIO_GREEN_LED);
 			dk_set_led_off(RADIO_BLUE_LED);
@@ -469,7 +483,7 @@ void on_usr_button_changed(const struct device *dev, struct gpio_callback *cb, u
 	dk_set_led_on(WATER_PUMP);
 	pwm_set_dt(&pwm_buzzer, PWM_KHZ(PUMP_BUZZER_FREQUENCY), PWM_KHZ(PUMP_BUZZER_FREQUENCY) / 2U);
 	/*  Start pump timer */
-	k_timer_start(&pump_timer, K_SECONDS(PUMP_MAX_ACTIVE_TIME), K_NO_WAIT); // pump will be active for 5 seconds, unless a stop command is received
+	k_timer_start(&pump_timer, K_SECONDS(pump_dc), K_NO_WAIT); // pump will be active for 5 seconds, unless a stop command is received
 	/*  Start pump buzzer timer */
 	if (!buzzer_active)
 	{
@@ -943,7 +957,7 @@ int main(void)
 	 * COAP Server initialization *
 	 *******************************/
 	LOG_INF("Start CoAP-server sample");
-	ret = ot_coap_init(&on_pump_request, &on_data_request, &on_info_request, &on_ping_request);
+	ret = ot_coap_init(&on_pumpdc_request, &on_pump_request, &on_data_request, &on_info_request, &on_ping_request);
 	if (ret)
 	{
 		LOG_ERR("Could not initialize OpenThread CoAP");
