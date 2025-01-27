@@ -53,6 +53,7 @@ LOG_MODULE_REGISTER(ot_coap_utils, CONFIG_OT_COAP_UTILS_LOG_LEVEL);
 /* *@brief Server instance struct */
 struct server_context srv_context = {
 	.ot = NULL,
+	.pump_dc = 1,
 	.pump_active = false,
 	.on_pumpdc_request = NULL,
 	.on_pump_request = NULL,
@@ -188,14 +189,24 @@ void coap_default_handler(void *context, otMessage *message,
  | |                   | |               
  |_|                   |_|              
 */
-/**@brief Pump request handler (GET/PUT) */
+/**@brief Pumpdc request handler (GET/PUT) */
 void pumpdc_request_handler(void *context, otMessage *message, const otMessageInfo *message_info)
 {
 	uint8_t data;
 	otMessageInfo msg_info;
 
+	uint8_t isTypePut = 0;
+
 	ARG_UNUSED(context);
-	if ((otCoapMessageGetType(message) != OT_COAP_TYPE_CONFIRMABLE) || (otCoapMessageGetCode(message) != OT_COAP_CODE_PUT))
+	if ((otCoapMessageGetType(message) == OT_COAP_TYPE_CONFIRMABLE) && (otCoapMessageGetCode(message) == OT_COAP_CODE_PUT))
+	{
+		isTypePut = 1;
+	}
+	else if (((otCoapMessageGetType(message) == OT_COAP_TYPE_NON_CONFIRMABLE) || (otCoapMessageGetType(message) == OT_COAP_TYPE_CONFIRMABLE)) && (otCoapMessageGetCode(message) == OT_COAP_CODE_GET))
+	{
+		isTypePut = 0;
+	}
+	else
 	{
 		LOG_INF("Bad 'pumpdc' request type/code.");
 		goto end;
@@ -204,14 +215,22 @@ void pumpdc_request_handler(void *context, otMessage *message, const otMessageIn
 	msg_info = *message_info;
 	memset(&msg_info.mSockAddr, 0, sizeof(msg_info.mSockAddr));
 
-	if (otMessageRead(message, otMessageGetOffset(message), &data, 1) != 1)
+	if (isTypePut)
 	{
-		LOG_ERR("'pumpdc' handler - Missing 'pumpdc' data");
-		goto end;
+		if (otMessageRead(message, otMessageGetOffset(message), &data, 1) != 1)
+		{
+			LOG_ERR("'pumpdc' handler - Missing 'pumpdc' data");
+			goto end;
+		}
+		srv_context.on_pumpdc_request(data); // update 'pump' in coap_server.c
+		LOG_INF("Received 'pumpdc' PUT request: %c seconds", data);
+		pumpdc_put_response_send(message, &msg_info);
 	}
-	srv_context.on_pumpdc_request(data); // update 'pump' in coap_server.c
-	LOG_INF("Received 'pumpdc' PUT request: %c seconds", data);
-	pumpdc_put_response_send(message, &msg_info);
+	else
+	{
+		LOG_INF("Received 'pumpdc' GET request");
+		pumpdc_get_response_send(message, &msg_info);
+	}
 
 end:
 	return;
@@ -448,6 +467,69 @@ end:
 	{
 		LOG_INF("Couldn't send 'pumpdc' response");
 		otMessageFree(response);
+	}
+	return error;
+}
+/**@brief Pump GET response with pump state date. */
+otError pumpdc_get_response_send(otMessage *request_message, const otMessageInfo *message_info)
+{
+	otError error = OT_ERROR_NO_BUFS;
+	otMessage *response;
+	const void *payload;
+	uint16_t payload_size;
+	uint8_t val = coap_get_pumpdc();
+
+	response = otCoapNewMessage(srv_context.ot, NULL);
+	if (response == NULL)
+	{
+		goto end;
+	}
+
+	if (otCoapMessageGetType(request_message) == OT_COAP_TYPE_CONFIRMABLE)
+		otCoapMessageInitResponse(response, request_message, OT_COAP_TYPE_ACKNOWLEDGMENT, OT_COAP_CODE_CONTENT);
+	else
+		otCoapMessageInitResponse(response, request_message, OT_COAP_TYPE_NON_CONFIRMABLE, OT_COAP_CODE_CONTENT);
+
+	error = otCoapMessageSetToken(
+		response, otCoapMessageGetToken(request_message),
+		otCoapMessageGetTokenLength(request_message));
+	if (error != OT_ERROR_NONE)
+	{
+		LOG_INF("Error in otCoapMessageSetToken()");
+		goto end;
+	}
+
+	error = otCoapMessageSetPayloadMarker(response);
+	if (error != OT_ERROR_NONE)
+	{
+		LOG_INF("Error in otCoapMessageSetPayloadMarker()");
+		goto end;
+	}
+
+	payload = &val;
+	payload_size = sizeof(val);
+
+	error = otMessageAppend(response, payload, payload_size);
+	if (error != OT_ERROR_NONE)
+	{
+		LOG_INF("Error in otMessageAppend()");
+		goto end;
+	}
+
+	error = otCoapSendResponse(srv_context.ot, response, message_info);
+	if (error != OT_ERROR_NONE)
+	{
+		LOG_INF("Error in otCoapSendResponse()");
+		goto end;
+	}
+
+	LOG_INF("'pumpdc' GET response sent: %d", val);
+
+end:
+	if (error != OT_ERROR_NONE && response != NULL)
+	{
+		otMessageFree(response);
+		LOG_INF("Couldn't send 'pumpdc'' GET response");
 	}
 
 	return error;
@@ -797,6 +879,16 @@ end:
 void coap_activate_pump(void)
 {
 	srv_context.pump_active = true;
+}
+
+void coap_set_pumpdc(uint8_t data)
+{
+	srv_context.pump_dc = data;
+}
+
+uint8_t coap_get_pumpdc(void)
+{
+	return srv_context.pump_dc;
 }
 
 bool coap_is_pump_active(void)

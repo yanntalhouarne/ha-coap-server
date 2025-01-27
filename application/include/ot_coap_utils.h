@@ -69,6 +69,7 @@ typedef void (*ping_request_callback_t)();
 struct server_context
 {
     struct otInstance *ot;
+    uint8_t pump_dc;
     bool pump_active;
     pumpdc_request_callback_t on_pumpdc_request;
     pump_request_callback_t on_pump_request;
@@ -121,6 +122,8 @@ void ping_request_handler(void *context, otMessage *message, const otMessageInfo
 */
 /**@brief Pumpdc PUT response with pump state date. */
 otError pumpdc_put_response_send(otMessage *request_message, const otMessageInfo *message_info);
+/**@brief Pumpdc GET response with pump state date. */
+otError pumpdc_get_response_send(otMessage *request_message, const otMessageInfo *message_info);
 /**@brief Pump PUT response with pump state date. */
 otError pump_put_response_send(otMessage *request_message, const otMessageInfo *message_info);
 /**@brief Pump GET response with pump state date. */
@@ -145,6 +148,10 @@ void coap_activate_pump(void);
 void coap_diactivate_pump(void);
 /**@brief Get the CoAp server pump state. */
 bool coap_is_pump_active(void);
+/**@brief Get the CoAp server pump duty-cycle value. */
+uint8_t coap_get_pumpdc(void);
+/**@brief Get the CoAp server pump duty-cycle value. */
+void coap_set_pumpdc(uint8_t data);
 
 /*
  ██████  ██████   █████  ██████      ███████ ███████ ██████  ██    ██ ███████ ██████      ██ ███    ██ ██ ████████

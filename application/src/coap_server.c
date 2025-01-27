@@ -35,6 +35,7 @@ static void on_pumpdc_request(int seconds)
 		if ((iseconds >= PUMP_MIN_ACTIVE_TIME) && (iseconds < PUMP_MAX_ACTIVE_TIME))
 		{
 			pump_dc = iseconds;
+			coap_set_pumpdc(pump_dc);
 		}
 	}
 }
