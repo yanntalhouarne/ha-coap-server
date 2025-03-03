@@ -340,7 +340,7 @@ void info_request_handler(void *context, otMessage *message, const otMessageInfo
 
 	LOG_DBG("Received 'info' request");
 
-	if (((otCoapMessageGetType(message) == OT_COAP_TYPE_CONFIRMABLE) || (otCoapMessageGetType(message) == OT_COAP_TYPE_CONFIRMABLE)) && (otCoapMessageGetCode(message) == OT_COAP_CODE_GET))
+	if (((otCoapMessageGetType(message) == OT_COAP_TYPE_CONFIRMABLE) || (otCoapMessageGetType(message) == OT_COAP_TYPE_NON_CONFIRMABLE)) && (otCoapMessageGetCode(message) == OT_COAP_CODE_GET))
 	{
 		msg_info = *message_info;
 		memset(&msg_info.mSockAddr, 0, sizeof(msg_info.mSockAddr));
