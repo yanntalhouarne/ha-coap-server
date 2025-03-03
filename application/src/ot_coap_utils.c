@@ -196,6 +196,7 @@ void pumpdc_request_handler(void *context, otMessage *message, const otMessageIn
 	otMessageInfo msg_info;
 
 	uint8_t isTypePut = 0;
+	uint8_t new_pumdc = 0;
 
 	ARG_UNUSED(context);
 	if ((otCoapMessageGetType(message) == OT_COAP_TYPE_CONFIRMABLE) && (otCoapMessageGetCode(message) == OT_COAP_CODE_PUT))
@@ -222,9 +223,9 @@ void pumpdc_request_handler(void *context, otMessage *message, const otMessageIn
 			LOG_ERR("'pumpdc' handler - Missing 'pumpdc' data");
 			goto end;
 		}
-		srv_context.on_pumpdc_request(data); // update 'pump' in coap_server.c
+		new_pumdc = srv_context.on_pumpdc_request(data); // update 'pump' in coap_server.c
 		LOG_INF("Received 'pumpdc' PUT request: %c seconds", data);
-		pumpdc_put_response_send(message, &msg_info);
+		pumpdc_put_response_send(message, &msg_info, new_pumdc);
 	}
 	else
 	{
@@ -415,13 +416,13 @@ void ping_request_handler(void *context, otMessage *message, const otMessageInfo
  |_|                   |_|              
 */
 /**@brief Pumpdc PUT response with pump duty-cycle value in seconds. */
-otError pumpdc_put_response_send(otMessage *request_message, const otMessageInfo *message_info)
+otError pumpdc_put_response_send(otMessage *request_message, const otMessageInfo *message_info, uint8_t pumpc_dc)
 {
 	otError error = OT_ERROR_NO_BUFS;
 	otMessage *response;
 	const void *payload;
 	uint16_t payload_size;
-	uint8_t pump_dutycycle = 0;
+	uint8_t pump_dutycycle = pumpc_dc;
 
 	// create response message
 	response = otCoapNewMessage(srv_context.ot, NULL);

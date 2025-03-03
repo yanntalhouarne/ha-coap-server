@@ -52,7 +52,7 @@ enum ping_command
 ██   ██ ██           ██ ██    ██ ██    ██ ██   ██ ██      ██          ██      ██   ██     ██   ██ ██      ██      ██ ██  ██ ██ ██    ██    ██ ██    ██ ██  ██ ██      ██
 ██   ██ ███████ ███████  ██████   ██████  ██   ██  ██████ ███████      ██████ ██████      ██████  ███████ ██      ██ ██   ████ ██    ██    ██  ██████  ██   ████ ███████
 */
-typedef void (*pumpdc_request_callback_t)(uint8_t data);
+typedef uint8_t (*pumpdc_request_callback_t)(uint8_t data);
 typedef void (*pump_request_callback_t)(uint8_t cmd);
 typedef int8_t *(*data_request_callback_t)();
 typedef struct info_data (*info_request_callback_t)();
@@ -121,7 +121,7 @@ void ping_request_handler(void *context, otMessage *message, const otMessageInfo
 ██   ██ ███████ ███████ ██       ██████  ██   ████ ███████ ███████     ██   ██ ██   ██ ██   ████ ██████  ███████ ███████ ██   ██ ███████
 */
 /**@brief Pumpdc PUT response with pump state date. */
-otError pumpdc_put_response_send(otMessage *request_message, const otMessageInfo *message_info);
+otError pumpdc_put_response_send(otMessage *request_message, const otMessageInfo *message_info, uint8_t new_pumpdc);
 /**@brief Pumpdc GET response with pump state date. */
 otError pumpdc_get_response_send(otMessage *request_message, const otMessageInfo *message_info);
 /**@brief Pump PUT response with pump state date. */

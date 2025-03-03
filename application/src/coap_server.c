@@ -27,7 +27,7 @@
 
 */
 /* PUMPDC PUT REQUEST */
-static void on_pumpdc_request(int seconds)
+static uint8_t on_pumpdc_request(int seconds)
 {
 	if ((seconds >= 48) && (seconds <= 57)) 
 	{
@@ -38,6 +38,8 @@ static void on_pumpdc_request(int seconds)
 			coap_set_pumpdc(pump_dc);
 		}
 	}
+
+	return pump_dc;
 }
 /* PUMP PUT REQUEST */
 static void on_pump_request(uint8_t command)
