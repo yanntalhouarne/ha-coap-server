@@ -146,6 +146,9 @@ static struct k_timer ping_buzzer_timer; // pulses the buzzer "PING_BUZZER_NBR_P
 ██    ██ ██      ██    ██ ██   ██ ██   ██ ██           ██
  ██████  ███████  ██████  ██████  ██   ██ ███████ ███████
 */
+/* Data resource buffer */
+uint8_t data_buf[4] = {0};
+
 /* ADC data buffer */
 static const struct adc_dt_spec adc_channels[] = {
     DT_FOREACH_PROP_ELEM(DT_PATH(zephyr_user), io_channels,
@@ -159,7 +162,7 @@ char imu_buf[100];
 
 /* HDC sensor global */
 struct sensor_value temp, humidity;
-uint8_t ti_hdc_buf[4] = {0};
+
 
 /* ADC globals */
 uint16_t buf;
@@ -172,6 +175,7 @@ struct adc_sequence sequence = {
 /* FW version */
 const char fw_version[] = FW_VERSION;
 const char hw_version[] = HW_VERSION;
+char device_id_buf[SRP_CLIENT_UNIQUE_SIZE] = {0};
 struct info_data info = {
     .fw_version_buf = fw_version,
     .fw_version_size = sizeof(fw_version),
@@ -179,7 +183,10 @@ struct info_data info = {
     .hw_version_buf = hw_version,
     .hw_version_size = sizeof(hw_version),
 
-    .total_size = sizeof(fw_version)+sizeof(hw_version),
+    .device_id_buf = device_id_buf,
+    .device_id_size = sizeof(device_id_buf),
+
+    .total_size = sizeof(fw_version)+sizeof(hw_version)+sizeof(device_id_buf),
 };
 
 /* Pump */

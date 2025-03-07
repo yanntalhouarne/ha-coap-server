@@ -125,7 +125,7 @@ static int8_t *on_data_request()
 
 	LOG_INF("soil_humidity = %d", (int)temp_val);
 
-	ti_hdc_buf[0] = (uint8_t)temp_val;
+	data_buf[0] = (uint8_t)temp_val;
 
 	/* TURN OFF SENSOR */
 	dk_set_led_off(SENSOR_EN);
@@ -144,14 +144,14 @@ static int8_t *on_data_request()
 		}
 		if (props_fuel_gauge[2].status == 0)
 		{
-			ti_hdc_buf[1] = (uint8_t)props_fuel_gauge[2].value.state_of_charge;
+			data_buf[1] = (uint8_t)props_fuel_gauge[2].value.state_of_charge;
 		}
 		else
 		{
 			LOG_INF(
 				"SOC error %d\n",
 				props_fuel_gauge[2].status);
-			ti_hdc_buf[1] = 0;
+			data_buf[1] = 0;
 		}
 	}
 
@@ -160,16 +160,15 @@ static int8_t *on_data_request()
 	sensor_sample_fetch(dev_hdc);
 	sensor_channel_get(dev_hdc, SENSOR_CHAN_AMBIENT_TEMP, &temp);
 	sensor_channel_get(dev_hdc, SENSOR_CHAN_HUMIDITY, &humidity);
-	ti_hdc_buf[2] = humidity.val1;
-	ti_hdc_buf[3] = temp.val1;
+	data_buf[2] = humidity.val1;
+	data_buf[3] = temp.val1;
 
 	/* print the result */
-	LOG_INF("Temp = %d.%06d C, RH = %d.%06d %%\n",
-			temp.val1, temp.val2, humidity.val1, humidity.val2);
+	LOG_INF("soil_humidity = %d, battery = %d, air_humidity = %d, temperature = %d\n", data_buf[0], data_buf[1], data_buf[2], data_buf[3]);
+	LOG_INF(" temp = %d.%06d C, RH = %d.%06d %%\n",
+		temp.val1, temp.val2, humidity.val1, humidity.val2);
 
-	LOG_INF("soil_humidity = %d, battery = %d, air_humidity = %d, temperature = %d\n", ti_hdc_buf[0], ti_hdc_buf[1]);
-
-	return ti_hdc_buf;
+	return data_buf;
 }
 
 /* INFO GET REQUEST */
@@ -512,6 +511,7 @@ void srp_client_generate_name()
 	memcpy(realinstance, service_instance, sizeof(service_instance));
 	// get a device ID
 	uint32_t device_id = NRF_FICR->DEVICEID[0];
+	snprintf(info.device_id_buf, SRP_CLIENT_UNIQUE_SIZE, "%x", device_id);
 	// append the random number as a string to the hostname and service_instance buffers (numbe of digits is defined by SRP_CLIENT_RAND_SIZE)
 	snprintf(realhostname + sizeof(hostname) - 1, SRP_CLIENT_UNIQUE_SIZE + 2, "-%x", device_id);
 	snprintf(realinstance + sizeof(service_instance) - 1, SRP_CLIENT_UNIQUE_SIZE + 2, "-%x", device_id);

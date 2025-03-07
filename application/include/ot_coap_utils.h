@@ -89,6 +89,10 @@ struct info_data
     const char *hw_version_buf;
     uint8_t hw_version_size;
 
+    // Device ID
+    const char *device_id_buf;
+    uint8_t device_id_size;
+
     // Total string length
     uint8_t total_size;
 };

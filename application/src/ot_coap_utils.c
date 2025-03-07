@@ -779,7 +779,8 @@ otError info_response_send(otMessage *request_message, const otMessageInfo *mess
 	}
 
 	char info_output[50] = {0};
-		snprintf(info_output, _info.total_size, "%s,%s", _info.fw_version_buf, _info.hw_version_buf);
+		snprintf(info_output, _info.total_size, "%s,%s,%s", _info.fw_version_buf, _info.hw_version_buf, _info.device_id_buf);
+		
 		payload = &info_output;
 		payload_size = _info.total_size;
 	
@@ -791,7 +792,7 @@ otError info_response_send(otMessage *request_message, const otMessageInfo *mess
 
 	error = otCoapSendResponse(srv_context.ot, response, message_info);
 
-	LOG_INF("Firmware version is: %s", info_output);
+	LOG_INF("Device info is: %s", info_output);
 
 end:
 	if (error != OT_ERROR_NONE && response != NULL)
