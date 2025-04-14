@@ -336,10 +336,11 @@ static void on_thread_state_changed(otChangedFlags flags, struct openthread_cont
 		case OT_DEVICE_ROLE_DISABLED:
 		case OT_DEVICE_ROLE_DETACHED:
 			dk_set_led_on(RADIO_RED_LED);
-			dk_set_led_on(RADIO_GREEN_LED);
+			dk_set_led_off(RADIO_GREEN_LED);
 			dk_set_led_off(RADIO_BLUE_LED);
 			break;
 		default:
+			dk_set_led_on(RADIO_RED_LED);
 			dk_set_led_off(RADIO_GREEN_LED);
 			break;
 		}
@@ -584,9 +585,6 @@ int main(void)
 			dk_set_led_on(RADIO_RED_LED);
 			goto end;
 		}
-		else {
-			dk_set_led_on(RADIO_GREEN_LED);
-		}	
 	}
 
 	/*
@@ -1005,9 +1003,9 @@ int main(void)
 	dk_set_led_off(RADIO_GREEN_LED);
 	pwm_set_dt(&pwm_buzzer, PWM_KHZ(6), 0);
 
-	dk_set_led_on(RADIO_RED_LED);
-	dk_set_led_on(RADIO_GREEN_LED);
-	dk_set_led_on(RADIO_BLUE_LED);
+	// dk_set_led_on(RADIO_RED_LED);
+	// dk_set_led_on(RADIO_GREEN_LED);
+	// dk_set_led_on(RADIO_BLUE_LED);
 
 	/*
 	  ____  _____  ______ _   _ _______ _    _ _____  ______          _____        _____ _   _ _____ _______

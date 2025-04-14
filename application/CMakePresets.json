@@ -30,7 +30,8 @@
                 "NCS_TOOLCHAIN_VERSION": "NONE",
                 "BOARD": "hacoap",
                 "BOARD_ROOT": "${sourceDir}/",
-                "EXTRA_CONF_FILE": "overlay-mtd.conf"
+                "EXTRA_CONF_FILE": "overlay-mtd.conf",
+                "DTC_OVERLAY_FILE": "${sourceDir}/boards/usb.overlay"
             }
         }
     ]
