@@ -3,14 +3,20 @@
 *Using nRF SDK Connect v2.4*
 
 ## 1. nRF Connect Build Configuration
-
+- **SDK**
+  * `nRF Connect SDK v2.4.3`
+- **Toolchain**
+  * `nRF Connect SDK Toolchain v2.4.3`
+- **Board target**
+  * `hacoap`
 - **Configuration:**
   * `prj.conf`
 - **Kconfig fragments:**
-  * `overlay-usb.conf`
-  * `overlay-logging.conf` (optional)
+  * `overlay-mtd.conf`
+- **Base Devicetree overlays:**
+  * `boards/usb.overlay`
 - **Extra CMake arguments:**
-  * `-DDTC_OVERLAY_FILE:STRING=usb.overlay`
+  * `-DBOARD_ROOT="c:\Users\talho\Documents\Smargit\repos\ha-coap-server\application\"`
 
 ## 2. SRP Client Service Registering
 
@@ -20,11 +26,13 @@
 
 ## 3. Ping the Device
 
-- `ping -6 SRP_CLIENT_HOSTNAME.local`
-- `coap-client -m get coap://[SRP_CLIENT_HOSTNAME.local]/temperature -N`
-- Examples:
-  * `ping -6 nrf52840dongle.local`
-  * `coap-client -m get coap://nrf52840dongle.local/temperature -N -v 9`
+- Browse ha-coap nodes IPv6 addresses
+  * `avahi-browse -r _ot._udp`
+- Ping device
+  * `ping -6 fd49:969:3c3c:1:88a2:4c28:69ec:34f7`
+- CoAP communication
+  * Example: get `pumpdc` resource   
+    * `coap-client -m get coap://[fd49:969:3c3c:1:88a2:4c28:69ec:34f7]/pumpdc -v 6`
 
 ## 4. Flash nRF52840 Dongle
 
