@@ -4,31 +4,47 @@
 
 1. nRF Connect Build Configuration
    - Configuration:
-      * prj.conf
+      * ```prj.conf```
    - Kconfig fragments:
-      * overlay-usb.conf
-      * overlay-logging.conf (optional)
+      * ```overlay-usb.conf```
+      * ```overlay-logging.conf (optional)```
    - Extra CMake arguments:
-      * -DDTC_OVERLAY_FILE:STRING=usb.overlay
+      * ```-DDTC_OVERLAY_FILE:STRING=usb.overlay```
 
 2. SRP Client Service Registering
    - For each new device flashed, a unique hostname and service instance but be set in "ot_srp_config.h"
    - If hostname is not unique, the SRP server (on the border router dongle) will reject the registering of the service
    - Openthread saves the SRP key to non-volatile memory. If the device is erased (e.g. ot factoryreset), the key will erased and the SRP client on the device will have issues updating its service with the SRP server
 
-3. Remaining work
-   - Set a different SRP client hostname if it is already taken (the SRP Client callback in coap_server.c will be called with aError = DUPLICATE)
-   - Move the SRP stuff out of coap_server.c
-
-4. Ping the device
+3. Ping the device
    - ping -6 SRP_CLIENT_HOSTNAME.local
    - coap-client -m get coap://[SRP_CLIENT_HOSTNAME.local]/temperature -N
    - example: 
-      * ping -6 nrf52840dongle.local
-      * coap-client -m get coap://nrf52840dongle.local/temperature -N -v 9
+      * ```ping -6 nrf52840dongle.local```
+      * ```coap-client -m get coap://nrf52840dongle.local/temperature -N -v 9```
 
-5. To flash nRF52840 Dongle:
+4. Flash nRF52840 Dongle
    - generate DFU package from .hex file
-      $ nrfutil pkg generate --hw-version 52 --sd-req 0x00 --application-version 1 --application /PATH_TO_THIS_REPO/build_1/zephyr/zephyr.hex nrfDongle_dfu_package.zip
+      ```nrfutil pkg generate --hw-version 52 --sd-req 0x00 --application-version 1 --application /PATH_TO_THIS_REPO/build_1/zephyr/zephyr.hex nrfDongle_dfu_package.zip```
    - flash Dongle (make sure it is set in bootloader mode by holding the side switch while connecting it to the USB port):
-      $ nrfutil dfu usb-serial -pkg nrfDongle_dfu_package.zip -p /dev/ttyACM0
+      ````nrfutil dfu usb-serial -pkg nrfDongle_dfu_package.zip -p /dev/ttyACM0```
+
+5. Flashing firmware with with USB
+   - create connection to MCUGMR target:
+   ```mcumgr conn add testDK type="serial" connstring="COM7,baud=115200,mtu=512"```
+   (where COM7 is the COM port shown in Device Manager (Windows) or /dev/tty* (Linux))
+   - list slots and images:
+   ```mcumgr -c testDK image list```
+   - ```test``` new image:
+   ```mcumgr -c testDK image upload zephyr/app_update.bin```
+   - ```confirm``` new image:
+      - confirm new image
+      ```mcumgr -c testDK image confirm <NEW_HASH>```
+      - flash new image (must be in ```build_*``` folder (e.g. ```ha-coap-server\application\build_mtd_lp```))
+      ```mcumgr -c testDK image upload build/zephyr/app_update.bin```
+
+
+6. Remaining work
+   - Set a different SRP client hostname if it is already taken (the SRP Client callback in coap_server.c will be called with aError = DUPLICATE)
+   - Move the SRP stuff out of coap_server.c
+   - FOTA over OpenThread (see https://devzone.nordicsemi.com/f/nordic-q-a/96148/mcumgr-over-openthread-udp-error-8)
