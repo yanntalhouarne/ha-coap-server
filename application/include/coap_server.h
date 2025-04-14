@@ -33,6 +33,7 @@
 #include <zephyr/drivers/pwm.h>
 #include <zephyr/drivers/uart.h>
 #include <zephyr/drivers/gpio.h>
+#include <zephyr/usb/usb_device.h>
 /* OPENTHREAD */
 #include <openthread/thread.h>
 #include <openthread/srp_client.h>

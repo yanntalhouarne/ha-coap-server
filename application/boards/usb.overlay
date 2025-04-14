@@ -6,8 +6,7 @@
 
  / {
 	chosen {
-		zephyr,shell-uart = &cdc_acm_uart0;
-        zephyr,console = &cdc_acm_uart0;
+		zephyr,uart-mcumgr = &cdc_acm_uart0;
 	};
 };
 
@@ -17,5 +16,6 @@
  
  	cdc_acm_uart0: cdc_acm_uart0 {
  		compatible = "zephyr,cdc-acm-uart";
+		current-speed = <115200>;
  	};
  };

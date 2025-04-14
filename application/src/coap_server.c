@@ -252,10 +252,10 @@ void on_srp_client_updated(otError aError, const otSrpClientHostInfo *aHostInfo,
 			buzzer_active = 1;
 			k_timer_start(&ot_buzzer_timer, K_MSEC(1), K_NO_WAIT);
 		}
-	}
+	} 
 	else 
 	{
-		dk_set_led_on(RADIO_RED_LED);
+		//dk_set_led_on(RADIO_RED_LED);
 	}
 }
 
@@ -567,6 +567,7 @@ int main(void)
 
 	k_sleep(K_MSEC(3000));
 
+	
 	/*
 	 _      ____   _____          _       _____       _____ _   _ _____ _______
 	| |    / __ \ / ____|   /\   | |     / ____|     |_   _| \ | |_   _|__   __|
@@ -576,6 +577,17 @@ int main(void)
 	|______\____/ \_____/_/    \_\______|_____/      |_____|_| \_|_____|  |_|
 	*/
 	int ret;
+
+	if (IS_ENABLED(CONFIG_USB_DEVICE_STACK)) {
+		ret = usb_enable(NULL);
+		if (ret) {
+			dk_set_led_on(RADIO_RED_LED);
+			goto end;
+		}
+		else {
+			dk_set_led_on(RADIO_GREEN_LED);
+		}	
+	}
 
 	/*
 	 _      ______ _____   _____       _____ _   _ _____ _______
