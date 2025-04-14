@@ -8,6 +8,7 @@
 ## 📋 Overview
 
 This project implements a CoAP server using OpenThread on Nordic Semiconductor's nRF hardware. It enables IoT devices to communicate using the CoAP protocol over Thread network.
+This project is meant to be run on a custom board (ha-coap, rev-2.0), along with the [Home Assistant custom integration ha-coap](https://github.com/yanntalhouarne/ha-coap-integration).
 
 ## 🛠️ Build Configuration
 
