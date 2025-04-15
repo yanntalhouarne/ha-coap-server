@@ -107,6 +107,7 @@ coap-client -m get coap://[fd49:969:3c3c:1:88a2:4c28:69ec:34f7]/pumpdc -v 6
 - [ ] Refactor SRP functionality out of `coap_server.c`
 - [ ] Add FOTA support over OpenThread
   - See [mcumgr over OpenThread UDP discussion](https://devzone.nordicsemi.com/f/nordic-q-a/96148/mcumgr-over-openthread-udp-error-8)
+- [ ] If the SRP service is already registered (i.e. callback returns DUPLICATED error), delete the SRP service and hostname from the client 
 
 ## 📚 References
 
