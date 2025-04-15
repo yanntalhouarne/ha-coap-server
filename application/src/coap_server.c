@@ -255,7 +255,7 @@ void on_srp_client_updated(otError aError, const otSrpClientHostInfo *aHostInfo,
 	} 
 	else 
 	{
-		//dk_set_led_on(RADIO_RED_LED);
+		dk_set_led_on(RADIO_RED_LED);
 	}
 }
 
@@ -336,12 +336,13 @@ static void on_thread_state_changed(otChangedFlags flags, struct openthread_cont
 		case OT_DEVICE_ROLE_DISABLED:
 		case OT_DEVICE_ROLE_DETACHED:
 			dk_set_led_on(RADIO_RED_LED);
-			dk_set_led_off(RADIO_GREEN_LED);
+			dk_set_led_on(RADIO_GREEN_LED);
 			dk_set_led_off(RADIO_BLUE_LED);
 			break;
 		default:
 			dk_set_led_on(RADIO_RED_LED);
 			dk_set_led_off(RADIO_GREEN_LED);
+			dk_set_led_off(RADIO_BLUE_LED);
 			break;
 		}
 	}
@@ -888,7 +889,7 @@ int main(void)
 			goto end;
 		}
 	}
-		/* TURN ON SENSOR */
+	/* TURN ON SENSOR */
 	dk_set_led_off(SENSOR_VCC_MCU); // set sensor rail to VCC (VBAT or V_USB)
 	dk_set_led_on(SENSOR_EN);
 	k_sleep(K_MSEC(200));
@@ -1018,9 +1019,20 @@ int main(void)
 	/*****************************
 	 * Openthread Initialization *
 	 *****************************/
-	openthread_state_changed_cb_register(openthread_get_default_context(), &ot_state_chaged_cb);
-	openthread_start(openthread_get_default_context());
-
+	ret = openthread_state_changed_cb_register(openthread_get_default_context(), &ot_state_chaged_cb);
+	if (ret)
+	{
+		LOG_ERR("Could register OpenThread callback");
+		dk_set_led_on(RADIO_RED_LED);
+		goto end;
+	}
+	ret = openthread_start(openthread_get_default_context());
+	if (ret)
+	{
+		LOG_ERR("Could not stat OpenThread");
+		dk_set_led_on(RADIO_RED_LED);
+		goto end;
+	}
 end:
 	return 0;
 }
