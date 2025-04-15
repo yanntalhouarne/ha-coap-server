@@ -255,7 +255,7 @@ void on_srp_client_updated(otError aError, const otSrpClientHostInfo *aHostInfo,
 	} 
 	else 
 	{
-		dk_set_led_on(RADIO_RED_LED);
+		//dk_set_led_on(RADIO_RED_LED);
 	}
 }
 
