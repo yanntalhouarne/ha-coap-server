@@ -246,9 +246,9 @@ void on_srp_client_updated(otError aError, const otSrpClientHostInfo *aHostInfo,
 		if ((!buzzer_active) && (one_time))
 		{
 			one_time = 0;
-			dk_set_led_off(RADIO_RED_LED);
-			dk_set_led_off(RADIO_GREEN_LED);
-			dk_set_led_off(RADIO_BLUE_LED);
+			// dk_set_led_off(RADIO_RED_LED);
+			// dk_set_led_off(RADIO_GREEN_LED);
+			// dk_set_led_off(RADIO_BLUE_LED);
 			buzzer_active = 1;
 			k_timer_start(&ot_buzzer_timer, K_MSEC(1), K_NO_WAIT);
 		}
@@ -281,14 +281,14 @@ static void on_thread_state_changed(otChangedFlags flags, struct openthread_cont
 			otSrpClientBuffersServiceEntry *entry = NULL;
 			uint16_t size;
 			char *string;
-			dk_set_led_off(RADIO_RED_LED);
-			dk_set_led_off(RADIO_GREEN_LED);
-			dk_set_led_off(RADIO_BLUE_LED);
+			// dk_set_led_off(RADIO_RED_LED);
+			// dk_set_led_off(RADIO_GREEN_LED);
+			// dk_set_led_off(RADIO_BLUE_LED);
 			if (!oneTime)
 			{
-				dk_set_led_off(RADIO_RED_LED);
-				dk_set_led_off(RADIO_GREEN_LED);
-				dk_set_led_on(RADIO_BLUE_LED);
+				// dk_set_led_off(RADIO_RED_LED);
+				// dk_set_led_off(RADIO_GREEN_LED);
+				// dk_set_led_on(RADIO_BLUE_LED);
 				// only do this once
 				oneTime = 1;
 				// generate a unique hostname and servie name for the SRP node
@@ -335,14 +335,14 @@ static void on_thread_state_changed(otChangedFlags flags, struct openthread_cont
 
 		case OT_DEVICE_ROLE_DISABLED:
 		case OT_DEVICE_ROLE_DETACHED:
-			dk_set_led_on(RADIO_RED_LED);
-			dk_set_led_on(RADIO_GREEN_LED);
-			dk_set_led_off(RADIO_BLUE_LED);
+			// dk_set_led_on(RADIO_RED_LED);
+			// dk_set_led_on(RADIO_GREEN_LED);
+			// dk_set_led_off(RADIO_BLUE_LED);
 			break;
 		default:
-			dk_set_led_on(RADIO_RED_LED);
-			dk_set_led_off(RADIO_GREEN_LED);
-			dk_set_led_off(RADIO_BLUE_LED);
+			// dk_set_led_on(RADIO_RED_LED);
+			// dk_set_led_off(RADIO_GREEN_LED);
+			// dk_set_led_off(RADIO_BLUE_LED);
 			break;
 		}
 	}
@@ -493,6 +493,76 @@ void on_usr_button_changed(const struct device *dev, struct gpio_callback *cb, u
 	{
 		buzzer_active = 1;
 		k_timer_start(&pump_buzzer_timer, K_MSEC(OT_BUZZER_PERIOD), K_NO_WAIT);
+	}
+}
+
+/*
+██    ██ ██████  ██████   █████  ████████ ███████ ██   ██ ██    ██ ██████      ██   ██  █████  ███    ██ ██████  ██      ███████ ██████  ███████ 
+██    ██ ██   ██ ██   ██ ██   ██    ██    ██      ██   ██ ██    ██ ██   ██     ██   ██ ██   ██ ████   ██ ██   ██ ██      ██      ██   ██ ██      
+██    ██ ██████  ██   ██ ███████    ██    █████   ███████ ██    ██ ██████      ███████ ███████ ██ ██  ██ ██   ██ ██      █████   ██████  ███████ 
+██    ██ ██      ██   ██ ██   ██    ██    ██      ██   ██ ██    ██ ██   ██     ██   ██ ██   ██ ██  ██ ██ ██   ██ ██      ██      ██   ██      ██ 
+ ██████  ██      ██████  ██   ██    ██    ███████ ██   ██  ██████  ██████      ██   ██ ██   ██ ██   ████ ██████  ███████ ███████ ██   ██ ███████
+*/
+static struct net_mgmt_event_callback mgmt_cb;
+
+void start_updatehub(void)
+{
+#if defined(CONFIG_UPDATEHUB_SAMPLE_POLLING)
+	LOG_INF("Starting UpdateHub polling mode");
+	updatehub_autohandler();
+#endif
+
+#if defined(CONFIG_UPDATEHUB_SAMPLE_MANUAL)
+	LOG_INF("Starting UpdateHub manual mode");
+
+	switch (updatehub_probe()) {
+	case UPDATEHUB_HAS_UPDATE:
+		switch (updatehub_update()) {
+		case UPDATEHUB_OK:
+			ret = 0;
+			updatehub_reboot();
+			break;
+
+		default:
+			LOG_ERR("Error installing update.");
+			break;
+		}
+
+	case UPDATEHUB_NO_UPDATE:
+		LOG_INF("No update found");
+		ret = 0;
+		break;
+
+	default:
+		LOG_ERR("Invalid response");
+		break;
+	}
+#endif
+}
+
+static void event_handler(struct net_mgmt_event_callback *cb,
+			  uint32_t mgmt_event, struct net_if *iface)
+{
+	//dk_set_led_off(RADIO_GREEN_LED);
+	if ((mgmt_event & EVENT_MASK) != mgmt_event) {
+		return;
+	}
+
+	if (mgmt_event == NET_EVENT_L4_CONNECTED) {
+		LOG_INF("Network connected");
+		dk_set_led_off(RADIO_RED_LED);
+		dk_set_led_on(RADIO_GREEN_LED);
+		dk_set_led_off(RADIO_BLUE_LED);
+		start_updatehub();
+		return;
+	}
+
+	if (mgmt_event == NET_EVENT_L4_DISCONNECTED) {
+		LOG_INF("Network disconnected");
+		dk_set_led_on(RADIO_RED_LED);
+		dk_set_led_off(RADIO_GREEN_LED);
+		dk_set_led_off(RADIO_BLUE_LED);
+		return;
 	}
 }
 
@@ -1033,6 +1103,38 @@ int main(void)
 		dk_set_led_on(RADIO_RED_LED);
 		goto end;
 	}
+	/*
+	_    _ _____  _____       _______ ______ _    _ _    _ ____    _____ _   _ _____ _______ 
+	| |  | |  __ \|  __ \   /\|__   __|  ____| |  | | |  | |  _ \  |_   _| \ | |_   _|__   __|
+	| |  | | |__) | |  | | /  \  | |  | |__  | |__| | |  | | |_) |   | | |  \| | | |    | |   
+	| |  | |  ___/| |  | |/ /\ \ | |  |  __| |  __  | |  | |  _ <    | | | . ` | | |    | |   
+	| |__| | |    | |__| / ____ \| |  | |____| |  | | |__| | |_) |  _| |_| |\  |_| |_   | |   
+	 \____/|_|    |_____/_/    \_\_|  |______|_|  |_|\____/|____/  |_____|_| \_|_____|  |_|   
+	*/			
+	/***************************
+	 * UpdateHub confirm image *
+	 ***************************/
+	/* The image of application needed be confirmed */
+	LOG_INF("Confirming the boot image");
+	ret = updatehub_confirm();
+	if (ret < 0) {
+		LOG_ERR("Error to confirm the image");
+		dk_set_led_on(RADIO_RED_LED);
+		goto end;
+	}
+	
+	/**********************
+	 * Network Management *
+	 **********************/						
+	// Register the network init callback
+	net_mgmt_init_event_callback(&mgmt_cb, event_handler, EVENT_MASK);
+	// Register the callback to receive network events.
+	net_mgmt_add_event_callback(&mgmt_cb);
+	// Resend either NET_L4_CONNECTED or NET_L4_DISCONNECTED depending on whether connectivity is currently available.
+	conn_mgr_resend_status();
+	dk_set_led_on(RADIO_GREEN_LED);
+	k_sleep(K_MSEC(2000));
+
 end:
 	return 0;
 }

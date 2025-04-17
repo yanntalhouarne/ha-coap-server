@@ -42,6 +42,14 @@
 #include <dk_buttons_and_leds.h>
 #include "ot_coap_utils.h"
 #include "ot_srp_config.h"
+/* UPDATEHUB */
+#include <zephyr/mgmt/updatehub.h>
+#include <zephyr/net/net_mgmt.h>
+#include <zephyr/net/net_event.h>
+#include <zephyr/net/conn_mgr.h>
+// #include <zephyr/net/wifi_mgmt.h>
+#define EVENT_MASK (NET_EVENT_L4_CONNECTED | \
+    NET_EVENT_L4_DISCONNECTED)
 /* OTHERS */
 #include <stdio.h>
 
@@ -84,6 +92,10 @@ LOG_MODULE_REGISTER(coap_server, CONFIG_COAP_SERVER_LOG_LEVEL);
 /* Calibration values*/
 #define HUMIDITY_DRY 2200 // in mV
 #define HUMIDITY_WET 980  // in mV
+
+/* UpdateHub */
+#define CONFIG_UPDATEHUB_SAMPLE_POLLING 1
+//#define CONFIG_UPDATEHUB_SAMPLE_MANUAL 1
 
 /* ADC Timer */
 // #define ADC_TIMER_ENABLED // if this un-commented, then the adc_timer will periodically read ADC value.
