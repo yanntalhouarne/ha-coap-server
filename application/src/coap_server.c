@@ -509,6 +509,9 @@ void start_updatehub(void)
 {
 #if defined(CONFIG_UPDATEHUB_SAMPLE_POLLING)
 	LOG_INF("Starting UpdateHub polling mode");
+	dk_set_led_off(RADIO_RED_LED);
+	dk_set_led_off(RADIO_GREEN_LED);
+	dk_set_led_on(RADIO_BLUE_LED);
 	updatehub_autohandler();
 #endif
 
@@ -636,8 +639,29 @@ static inline float out_ev(struct sensor_value *val)
 */
 int main(void)
 {
+	int ret;
 
-	k_sleep(K_MSEC(3000));
+	k_sleep(K_MSEC(10000)); // wait for USB to be ready
+
+	/*
+	_    _ _____  _____       _______ ______ _    _ _    _ ____    _____ _   _ _____ _______ 
+	| |  | |  __ \|  __ \   /\|__   __|  ____| |  | | |  | |  _ \  |_   _| \ | |_   _|__   __|
+	| |  | | |__) | |  | | /  \  | |  | |__  | |__| | |  | | |_) |   | | |  \| | | |    | |   
+	| |  | |  ___/| |  | |/ /\ \ | |  |  __| |  __  | |  | |  _ <    | | | . ` | | |    | |   
+	| |__| | |    | |__| / ____ \| |  | |____| |  | | |__| | |_) |  _| |_| |\  |_| |_   | |   
+	 \____/|_|    |_____/_/    \_\_|  |______|_|  |_|\____/|____/  |_____|_| \_|_____|  |_|   
+	*/			
+	/***************************
+	 * UpdateHub confirm image *
+	 ***************************/
+	/* The image of application needed be confirmed */
+	LOG_INF("Confirming the boot image");
+	ret = updatehub_confirm();
+	if (ret < 0) {
+		LOG_ERR("Error to confirm the image");
+		dk_set_led_on(RADIO_RED_LED);
+		goto end;
+	}
 
 	
 	/*
@@ -648,7 +672,6 @@ int main(void)
 	| |___| |__| | |____ / ____ \| |____ ____) |      _| |_| |\  |_| |_   | |
 	|______\____/ \_____/_/    \_\______|_____/      |_____|_| \_|_____|  |_|
 	*/
-	int ret;
 
 	if (IS_ENABLED(CONFIG_USB_DEVICE_STACK)) {
 		ret = usb_enable(NULL);
@@ -1103,26 +1126,7 @@ int main(void)
 		dk_set_led_on(RADIO_RED_LED);
 		goto end;
 	}
-	/*
-	_    _ _____  _____       _______ ______ _    _ _    _ ____    _____ _   _ _____ _______ 
-	| |  | |  __ \|  __ \   /\|__   __|  ____| |  | | |  | |  _ \  |_   _| \ | |_   _|__   __|
-	| |  | | |__) | |  | | /  \  | |  | |__  | |__| | |  | | |_) |   | | |  \| | | |    | |   
-	| |  | |  ___/| |  | |/ /\ \ | |  |  __| |  __  | |  | |  _ <    | | | . ` | | |    | |   
-	| |__| | |    | |__| / ____ \| |  | |____| |  | | |__| | |_) |  _| |_| |\  |_| |_   | |   
-	 \____/|_|    |_____/_/    \_\_|  |______|_|  |_|\____/|____/  |_____|_| \_|_____|  |_|   
-	*/			
-	/***************************
-	 * UpdateHub confirm image *
-	 ***************************/
-	/* The image of application needed be confirmed */
-	LOG_INF("Confirming the boot image");
-	ret = updatehub_confirm();
-	if (ret < 0) {
-		LOG_ERR("Error to confirm the image");
-		dk_set_led_on(RADIO_RED_LED);
-		goto end;
-	}
-	
+
 	/**********************
 	 * Network Management *
 	 **********************/						
@@ -1132,8 +1136,9 @@ int main(void)
 	net_mgmt_add_event_callback(&mgmt_cb);
 	// Resend either NET_L4_CONNECTED or NET_L4_DISCONNECTED depending on whether connectivity is currently available.
 	conn_mgr_resend_status();
-	dk_set_led_on(RADIO_GREEN_LED);
-	k_sleep(K_MSEC(2000));
+
+	LOG_INF("Hello");
+	//dk_set_led_on(RADIO_GREEN_LED);
 
 end:
 	return 0;

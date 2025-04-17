@@ -15,5 +15,9 @@
         "coap_server_client_interface.h": "c",
         "srp_client_buffers.h": "c",
         "net_mgmt.h": "c"
+    },
+    "nrf-connect.debugging.bindings": {
+        "${workspaceFolder}/application/build_mtd_lp": "Launch the active build configuration",
+        "${workspaceFolder}/application/build_mtd_lp/mcuboot": "Launch the active build configuration"
     }
 }
