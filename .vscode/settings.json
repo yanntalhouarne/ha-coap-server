@@ -13,6 +13,7 @@
         "thread.h": "c",
         "srp_client.h": "c",
         "coap_server_client_interface.h": "c",
-        "srp_client_buffers.h": "c"
+        "srp_client_buffers.h": "c",
+        "stat_mgmt.h": "c"
     }
 }
