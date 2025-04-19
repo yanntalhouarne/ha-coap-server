@@ -75,14 +75,24 @@ coap-client -m get coap://[fd49:969:3c3c:1:88a2:4c28:69ec:34f7]/pumpdc -v 6
 ### Firmware Updates via USB
 
 1. **Create MCUMGR connection**:
-   ```bash
-   mcumgr conn add testDK type="serial" connstring="COM7,baud=115200,mtu=512"
-   ```
-   > Replace COM7 with the appropriate port on your system
+   - USB-CDC: 
+     ```bash
+     mcumgr conn add serial type="serial" connstring="COM7,baud=115200,mtu=512"
+     ```
+     > Replace COM7 with the appropriate port on your system
+   
+   - UDP: 
+     ```bash
+     mcumgr conn add ota type="udp" connstring="[fd49:969:3c3c:1:8c6a:5db:a6ef:178f]:1337"
+     ```
+     > Replace IPV6 IP address with the address of the device
+
+
+*Note: if using UDP, replace "serial" with "udp" in the following commands.*
 
 2. **View current firmware**:
    ```bash
-   mcumgr -c testDK image list
+   mcumgr -c serial image list
    ```
 
 3. **Upload new image**:
