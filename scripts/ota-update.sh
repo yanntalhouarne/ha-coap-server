@@ -1,13 +1,40 @@
 #!/bin/bash
 
-# Script to list ha-coap devices and flash them using mcumgr
+# ===================================================
+# HA-CoAP Device Manager
+# A tool to find and flash Thread-based IoT devices
+# ===================================================
+
+# Terminal colors for better visual experience
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[0;33m'
+BLUE='\033[0;34m'
+PURPLE='\033[0;35m'
+CYAN='\033[0;36m'
+NC='\033[0m' # No Color
+
+# Print banner
+function print_banner() {
+    clear
+    echo -e "${BLUE}╔════════════════════════════════════════════════════════╗${NC}"
+    echo -e "${BLUE}║                                                        ║${NC}"
+    echo -e "${BLUE}║${CYAN}              HA-CoAP Device Manager                   ${BLUE}║${NC}"
+    echo -e "${BLUE}║${CYAN}            Thread Device Flashing Tool                ${BLUE}║${NC}"
+    echo -e "${BLUE}║                                                        ║${NC}"
+    echo -e "${BLUE}╚════════════════════════════════════════════════════════╝${NC}"
+    echo ""
+}
 
 # Function to extract ha-coap devices and their IPv6 addresses
 function get_devices() {
-    echo "Scanning for ha-coap devices (this will take a few seconds)..."
+    print_banner
+    echo -e "${YELLOW}⟳ Scanning for ha-coap devices...${NC}"
+    echo -e "${CYAN}   This will take a few seconds...${NC}"
+    echo ""
     
     # Run avahi-browse with a timeout to ensure it doesn't run indefinitely
-    output=$(timeout 2s avahi-browse -r _ot._udp)
+    output=$(timeout 3s avahi-browse -r _ot._udp 2>/dev/null)
     
     # Initialize arrays to store device names and addresses
     declare -a devices=()
@@ -36,45 +63,55 @@ function get_devices() {
             # Extract the IPv6 address
             ipv6_address=$(echo "$address_line" | grep -o '\[fd[^]]*\]' | tr -d '[]')
             
-            # Add to our arrays
-            devices+=("$device_name")
-            addresses+=("$ipv6_address")
+            # Add to our arrays if we got an address
+            if [[ -n "$ipv6_address" ]]; then
+                devices+=("$device_name")
+                addresses+=("$ipv6_address")
+            fi
         fi
     done < <(echo "$output")
     
     # Check if we found any devices
     if [ ${#devices[@]} -eq 0 ]; then
-        echo "No ha-coap devices found. Try increasing the timeout value in the script if you know devices are available."
+        echo -e "${RED}✗ No ha-coap devices found.${NC}"
+        echo -e "${CYAN}ℹ Try these troubleshooting steps:${NC}"
+        echo -e "  • Make sure your devices are powered on and connected"
+        echo -e "  • Verify Thread network is properly set up"
+        echo -e "  • Increase the timeout value in the script (currently 3s)"
+        echo ""
+        read -n 1 -s -r -p "Press any key to exit..."
         exit 1
     fi
     
     # Display the numbered list of devices
-    echo "Available ha-coap devices:"
+    echo -e "${GREEN}✓ Found ${#devices[@]} ha-coap device(s):${NC}"
     for i in "${!devices[@]}"; do
-        echo "  $((i+1)). ${devices[$i]}"
+        echo -e "  ${CYAN}$((i+1)).${NC} ${devices[$i]} ${YELLOW}(${addresses[$i]})${NC}"
     done
     
     # Get user selection
-    echo
-    echo "Enter the number of the device to select (or 'q' to quit):"
+    echo ""
+    echo -e "${YELLOW}? Enter the device number to select [1-${#devices[@]}] (or 'q' to quit):${NC} "
     read -r choice
     
     # Process user selection
     if [[ "$choice" == "q" ]]; then
-        echo "Exiting."
+        echo -e "${BLUE}Goodbye!${NC}"
         exit 0
     elif [[ "$choice" =~ ^[0-9]+$ ]] && [ "$choice" -ge 1 ] && [ "$choice" -le "${#devices[@]}" ]; then
         device_name="${devices[$((choice-1))]}"
         device_address="${addresses[$((choice-1))]}"
-        echo
-        echo "Selected device: $device_name"
-        echo "IPv6 Address: $device_address"
+        echo ""
+        echo -e "${GREEN}✓ Selected device: ${CYAN}$device_name${NC}"
+        echo -e "${GREEN}✓ IPv6 Address: ${YELLOW}$device_address${NC}"
         
         # Call the handle_device function with the selected device
         handle_device "$device_name" "$device_address"
     else
-        echo "Invalid selection. Please try again."
-        exit 1
+        echo -e "${RED}✗ Invalid selection.${NC}"
+        echo ""
+        read -n 1 -s -r -p "Press any key to try again..."
+        get_devices
     fi
 }
 
@@ -84,79 +121,128 @@ function handle_device() {
     local device_address="$2"
     
     # Prompt for transport method
-    echo
-    echo "Select transport method:"
-    echo "  1. USB-CDC"
-    echo "  2. UDP"
+    echo ""
+    echo -e "${BLUE}╔════════════════════════════════════════╗${NC}"
+    echo -e "${BLUE}║          Connection Method             ║${NC}"
+    echo -e "${BLUE}╚════════════════════════════════════════╝${NC}"
+    echo -e "  ${CYAN}1.${NC} Connect via USB-CDC Serial"
+    echo -e "  ${CYAN}2.${NC} Connect via UDP (Thread network)"
+    echo ""
+    echo -e "${YELLOW}? Select connection method [1-2]:${NC} "
     read -r transport_choice
     
     # Set variables based on transport choice
     if [[ "$transport_choice" == "1" ]]; then
         transport="serial"
         
-        # Find all available serial ports using ls command
-        echo "Looking for available serial ports..."
+        # Find all available serial ports
+        echo -e "${YELLOW}⟳ Looking for available serial ports...${NC}"
         port_output=$(ls /dev/ttyACM* 2>/dev/null)
         
         # Check if any ports were found
         if [ -z "$port_output" ]; then
-            echo "No serial ports found matching /dev/ttyACM*"
-            echo "Enter serial port path manually:"
+            echo -e "${RED}✗ No serial ports found matching /dev/ttyACM*${NC}"
+            echo -e "${YELLOW}? Enter serial port path manually:${NC} "
             read -r com_port
         else
             # Create an array of ports from the ls output
             IFS=$'\n' read -rd '' -a serial_ports <<< "$port_output"
             
             # List available ports
-            echo "Available serial ports:"
+            echo -e "${GREEN}✓ Available serial ports:${NC}"
             for i in "${!serial_ports[@]}"; do
-                echo "  $((i+1)). ${serial_ports[$i]}"
+                echo -e "  ${CYAN}$((i+1)).${NC} ${serial_ports[$i]}"
             done
             
             # Let user choose a port
-            echo "Select a serial port number (or enter 'c' to enter custom port):"
+            echo ""
+            echo -e "${YELLOW}? Select a serial port number [1-${#serial_ports[@]}] (or 'c' for custom):${NC} "
             read -r port_choice
             
             if [[ "$port_choice" == "c" ]]; then
-                echo "Enter serial port path:"
+                echo -e "${YELLOW}? Enter serial port path:${NC} "
                 read -r com_port
             elif [[ "$port_choice" =~ ^[0-9]+$ ]] && [ "$port_choice" -ge 1 ] && [ "$port_choice" -le "${#serial_ports[@]}" ]; then
                 com_port="${serial_ports[$((port_choice-1))]}"
             else
-                echo "Invalid port selection. Exiting."
-                exit 1
+                echo -e "${RED}✗ Invalid port selection. Try again.${NC}"
+                handle_device "$device_name" "$device_address"
+                return
             fi
         fi
         
         # Add the serial connection
-        echo "Adding serial connection using port $com_port..."
+        echo -e "${YELLOW}⟳ Connecting via serial port ${CYAN}$com_port${NC}..."
         mcumgr conn add serial type="serial" connstring="$com_port,baud=115200,mtu=512"
+        
+        if [ $? -ne 0 ]; then
+            echo -e "${RED}✗ Failed to establish serial connection!${NC}"
+            echo ""
+            read -n 1 -s -r -p "Press any key to try again..."
+            handle_device "$device_name" "$device_address"
+            return
+        fi
+        
+        echo -e "${GREEN}✓ Serial connection established!${NC}"
+        
     elif [[ "$transport_choice" == "2" ]]; then
         transport="udp"
         # Add the UDP connection
-        echo "Adding UDP connection..."
+        echo -e "${YELLOW}⟳ Connecting via UDP to ${CYAN}[$device_address]:1337${NC}..."
         mcumgr conn add udp type="udp" connstring="[$device_address]:1337"
+        
+        if [ $? -ne 0 ]; then
+            echo -e "${RED}✗ Failed to establish UDP connection!${NC}"
+            echo ""
+            read -n 1 -s -r -p "Press any key to try again..."
+            handle_device "$device_name" "$device_address"
+            return
+        fi
+        
+        echo -e "${GREEN}✓ UDP connection established!${NC}"
     else
-        echo "Invalid transport selection."
-        exit 1
+        echo -e "${RED}✗ Invalid selection.${NC}"
+        echo ""
+        read -n 1 -s -r -p "Press any key to try again..."
+        handle_device "$device_name" "$device_address"
+        return
     fi
     
     # Prompt for operation
-    echo
-    echo "Select operation:"
-    echo "  1. Upload image"
-    echo "  2. List images"
+    echo ""
+    echo -e "${BLUE}╔════════════════════════════════════════╗${NC}"
+    echo -e "${BLUE}║          Device Operation              ║${NC}"
+    echo -e "${BLUE}╚════════════════════════════════════════╝${NC}"
+    echo -e "  ${CYAN}1.${NC} Upload and flash new firmware image"
+    echo -e "  ${CYAN}2.${NC} List current firmware images"
+    echo -e "  ${CYAN}3.${NC} Return to device selection"
+    echo ""
+    echo -e "${YELLOW}? Select operation [1-3]:${NC} "
     read -r operation_choice
     
     if [[ "$operation_choice" == "1" ]]; then
         upload_and_process_image "$transport"
     elif [[ "$operation_choice" == "2" ]]; then
         # Just list the images
-        echo "Listing images..."
+        echo -e "${YELLOW}⟳ Listing firmware images...${NC}"
+        echo ""
         mcumgr -c "$transport" image list
+        echo ""
+        read -n 1 -s -r -p "Press any key to return to operations menu..."
+        # Clean up connection
+        mcumgr conn remove "$transport" >/dev/null 2>&1
+        handle_device "$device_name" "$device_address"
+    elif [[ "$operation_choice" == "3" ]]; then
+        # Clean up connection
+        mcumgr conn remove "$transport" >/dev/null 2>&1
+        get_devices
     else
-        echo "Invalid operation selection."
-        exit 1
+        echo -e "${RED}✗ Invalid selection.${NC}"
+        echo ""
+        read -n 1 -s -r -p "Press any key to try again..."
+        # Clean up connection
+        mcumgr conn remove "$transport" >/dev/null 2>&1
+        handle_device "$device_name" "$device_address"
     fi
 }
 
@@ -164,31 +250,77 @@ function handle_device() {
 function upload_and_process_image() {
     local transport="$1"
     
-    # Change to the build directory
-    echo "Changing to build directory..."
-    cd ../application/build || { echo "Failed to change to build directory"; exit 1; }
+    # Check for build directory
+    if [ -d "../application/build" ]; then
+        # Change to the build directory
+        echo -e "${YELLOW}⟳ Changing to build directory...${NC}"
+        cd ../application/build || { 
+            echo -e "${RED}✗ Failed to change to build directory${NC}"
+            read -n 1 -s -r -p "Press any key to return..."
+            return
+        }
+    else
+        echo -e "${RED}✗ Build directory not found!${NC}"
+        echo -e "${CYAN}ℹ Expected path: ${YELLOW}../application/build${NC}"
+        echo -e "${CYAN}ℹ Current directory: ${YELLOW}$(pwd)${NC}"
+        echo ""
+        echo -e "${YELLOW}? Do you want to specify a different path? (y/n):${NC} "
+        read -r custom_path_choice
+        
+        if [[ "$custom_path_choice" == "y" ]]; then
+            echo -e "${YELLOW}? Enter full path to the build directory:${NC} "
+            read -r build_path
+            cd "$build_path" || {
+                echo -e "${RED}✗ Failed to change to specified directory${NC}"
+                read -n 1 -s -r -p "Press any key to return..."
+                return
+            }
+        else
+            read -n 1 -s -r -p "Press any key to return..."
+            return
+        fi
+    fi
+    
+    # Check if firmware image exists
+    if [ ! -f "zephyr/app_update.bin" ]; then
+        echo -e "${RED}✗ Firmware image not found!${NC}"
+        echo -e "${CYAN}ℹ Expected file: ${YELLOW}zephyr/app_update.bin${NC}"
+        echo ""
+        read -n 1 -s -r -p "Press any key to return..."
+        return
+    fi
     
     # Prompt for test or confirm before uploading
-    echo
-    echo "After uploading, do you want to test or confirm the image?"
-    echo "  1. Test (can be reverted if problems occur)"
-    echo "  2. Confirm (permanent)"
+    echo ""
+    echo -e "${BLUE}╔═══════════════════════════════════════════════════╗${NC}"
+    echo -e "${BLUE}║          Firmware Update Configuration            ║${NC}"
+    echo -e "${BLUE}╚═══════════════════════════════════════════════════╝${NC}"
+    echo -e "  ${CYAN}1.${NC} Test mode ${YELLOW}(can be reverted if problems occur)${NC}"
+    echo -e "  ${CYAN}2.${NC} Confirm immediately ${RED}(permanent, no going back)${NC}"
+    echo ""
+    echo -e "${YELLOW}? Select update mode [1-2]:${NC} "
     read -r test_confirm_choice
     
     # Upload the new image
-    echo "Uploading image..."
+    echo ""
+    echo -e "${YELLOW}⟳ Uploading firmware image...${NC}"
+    echo -e "${CYAN}   This may take a while depending on connection speed...${NC}"
+    echo ""
+    
     mcumgr -c "$transport" image upload zephyr/app_update.bin
     
     # Check if the upload was successful
     if [ $? -ne 0 ]; then
-        echo "Image upload failed!"
-        exit 1
+        echo -e "${RED}✗ Image upload failed!${NC}"
+        echo ""
+        read -n 1 -s -r -p "Press any key to return..."
+        return
     fi
     
-    echo "Upload completed successfully."
+    echo -e "${GREEN}✓ Upload completed successfully.${NC}"
     
     # Get the image list to find the new hash
-    echo "Getting image list..."
+    echo -e "${YELLOW}⟳ Getting image list...${NC}"
     image_list_output=$(mcumgr -c "$transport" image list)
     echo "$image_list_output"
     
@@ -196,31 +328,60 @@ function upload_and_process_image() {
     new_hash=$(echo "$image_list_output" | awk '/image=0 slot=1/{found=1} found && /hash:/{print $2; exit}')
     
     if [ -z "$new_hash" ]; then
-        echo "Failed to get new image hash!"
-        exit 1
+        echo -e "${RED}✗ Failed to get new image hash!${NC}"
+        echo ""
+        read -n 1 -s -r -p "Press any key to return..."
+        return
     fi
     
-    echo "New image hash: $new_hash"
+    echo -e "${GREEN}✓ New image hash: ${CYAN}$new_hash${NC}"
     
     # Test or confirm based on earlier choice
     if [[ "$test_confirm_choice" == "1" ]]; then
-        echo "Testing image..."
+        echo -e "${YELLOW}⟳ Testing image...${NC}"
         mcumgr -c "$transport" image test "$new_hash"
+        echo -e "${GREEN}✓ Image marked for testing. It will run once after reset.${NC}"
+        echo -e "${CYAN}ℹ If the device doesn't boot properly, it will revert to the previous image.${NC}"
     elif [[ "$test_confirm_choice" == "2" ]]; then
-        echo "Confirming image..."
+        echo -e "${YELLOW}⟳ Confirming image...${NC}"
         mcumgr -c "$transport" image confirm "$new_hash"
+        echo -e "${GREEN}✓ Image confirmed permanently.${NC}"
     else
-        echo "Invalid choice. Exiting without testing or confirming."
-        exit 1
+        echo -e "${RED}✗ Invalid choice. No changes made to boot configuration.${NC}"
+        echo ""
+        read -n 1 -s -r -p "Press any key to return..."
+        return
     fi
     
-    # Automatically reset the device after test/confirm
-    echo "Resetting device..."
+    # Automatically reset the device
+    echo ""
+    echo -e "${YELLOW}⟳ Resetting device automatically...${NC}"
     mcumgr -c "$transport" reset
-    echo "Device reset initiated."
+    echo -e "${GREEN}✓ Device reset initiated.${NC}"
     
-    echo "Flash process completed."
+    # Clean up connection
+    mcumgr conn remove "$transport" >/dev/null 2>&1
+    
+    echo ""
+    echo -e "${GREEN}✓ Flash process completed.${NC}"
+    echo ""
+    read -n 1 -s -r -p "Press any key to return to main menu..."
+    get_devices
 }
+
+# Check for required dependencies
+echo -e "${YELLOW}⟳ Checking for required dependencies...${NC}"
+if ! command -v mcumgr &> /dev/null; then
+    echo -e "${RED}✗ mcumgr not found. Please install it before running this script.${NC}"
+    echo -e "${CYAN}ℹ Installation instructions: https://docs.zephyrproject.org/latest/services/device_mgmt/mcumgr.html${NC}"
+    exit 1
+fi
+
+if ! command -v avahi-browse &> /dev/null; then
+    echo -e "${RED}✗ avahi-browse not found. Please install avahi-utils before running this script.${NC}"
+    echo -e "${CYAN}ℹ Installation: sudo apt install avahi-utils${NC}"
+    exit 1
+fi
 
 # Run the main function
 get_devices
