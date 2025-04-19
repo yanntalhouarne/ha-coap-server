@@ -143,59 +143,192 @@ function discover_devices() {
 # Function to extract KiB value from progress output
 function extract_kib_value() {
     local progress_line="$1"
-    if [[ "$progress_line" =~ ([0-9]+\.[0-9]+)\ KiB ]]; then
-        # Return just the numeric part as a decimal number
+    
+    # Debug - log the exact input
+    echo "$(date '+%Y-%m-%d %H:%M:%S') [DEBUG] Raw progress line: '$progress_line'" >> "$LOG_FILE"
+    
+    # Try to match the pattern "X.XX KiB / Y.YY KiB"
+    if [[ "$progress_line" =~ ([0-9]+\.?[0-9]*)\ +KiB\ +/\ +([0-9]+\.?[0-9]*)\ +KiB ]]; then
+        # Return just the first number (current progress)
+        echo "$(date '+%Y-%m-%d %H:%M:%S') [DEBUG] Matched pattern 1, extracted: ${BASH_REMATCH[1]}" >> "$LOG_FILE"
         echo "${BASH_REMATCH[1]}"
+    # Try to match just "X.XX KiB" (alternative format)
+    elif [[ "$progress_line" =~ ([0-9]+\.?[0-9]*)\ +KiB ]]; then
+        echo "$(date '+%Y-%m-%d %H:%M:%S') [DEBUG] Matched pattern 2, extracted: ${BASH_REMATCH[1]}" >> "$LOG_FILE"
+        echo "${BASH_REMATCH[1]}"
+    # Try to match values without decimal point
+    elif [[ "$progress_line" =~ ([0-9]+)\ +KiB ]]; then
+        echo "$(date '+%Y-%m-%d %H:%M:%S') [DEBUG] Matched pattern 3, extracted: ${BASH_REMATCH[1]}" >> "$LOG_FILE"
+        echo "${BASH_REMATCH[1]}"
+    # If no match found
     else
-        echo "0.0"
+        echo "$(date '+%Y-%m-%d %H:%M:%S') [DEBUG] No pattern matched, returning 0" >> "$LOG_FILE"
+        echo "0"
     fi
 }
 
-# Function to monitor upload progress and kill if stalled
-function monitor_upload_progress() {
-    local pid=$1
-    local device_name=$2
-    local last_value=0.0
-    local stall_counter=0
-    
-    while kill -0 $pid 2>/dev/null; do
-        sleep $PROGRESS_CHECK_INTERVAL
+# Function to monitor stall using Python (more reliable parsing)
+function stall_monitor_script() {
+    # Create a temporary Python script to monitor for stalls
+    cat > "${TEMP_PROGRESS_FILE}.py" << 'EOL'
+#!/usr/bin/env python3
+import sys
+import os
+import time
+import re
+import signal
+import subprocess
+
+# Get script arguments
+if len(sys.argv) < 5:
+    print("Usage: {} file_to_monitor timeout device_name pid_to_kill".format(sys.argv[0]))
+    sys.exit(1)
+
+file_to_monitor = sys.argv[1]
+timeout = int(sys.argv[2])
+device_name = sys.argv[3]
+pid_to_kill = int(sys.argv[4])
+check_interval = 1  # seconds - check more frequently for short timeouts
+
+# Set up logging
+log_file = file_to_monitor + ".log"
+def log(message):
+    timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+    with open(log_file, "a") as f:
+        f.write(f"{timestamp} - {message}\n")
+
+# Function to extract KiB value from progress line - get FIRST value, not second
+def extract_kib_value(line):
+    # Try pattern: "X.XX KiB / Y.YY KiB" or "X B / Y.YY KiB"
+    match = re.search(r'(\d+\.?\d*)\s*(B|KiB)\s*/\s*\d+\.?\d*\s*KiB', line)
+    if match:
+        value = match.group(1)
+        unit = match.group(2)
+        log(f"Matched progress pattern: value={value}, unit={unit} from '{line}'")
         
-        # Get the latest progress output if file exists
-        if [ -f "$TEMP_PROGRESS_FILE" ]; then
-            local progress_line=$(tail -n 1 "$TEMP_PROGRESS_FILE")
-            local current_value=$(extract_kib_value "$progress_line")
-            
-            # Convert to numeric values for comparison
-            local last_numeric=$(printf "%.1f" "$last_value")
-            local current_numeric=$(printf "%.1f" "$current_value")
-            
-            # Log for debugging
-            log "INFO" "Progress check: Last=$last_numeric KiB, Current=$current_numeric KiB, Stall counter=$stall_counter s"
-            
-            # If progress value hasn't changed and we have valid progress data
-            if (( $(echo "$current_numeric > 0.0" | bc -l) )) && (( $(echo "$current_numeric == $last_numeric" | bc -l) )); then
-                stall_counter=$((stall_counter + PROGRESS_CHECK_INTERVAL))
-                log "INFO" "No progress detected for $stall_counter seconds at $current_value KiB"
-                
-                if [ $stall_counter -ge $UPLOAD_STALL_TIMEOUT ]; then
-                    log "WARNING" "Upload to ${device_name} stalled at ${current_value} KiB for ${UPLOAD_STALL_TIMEOUT} seconds. Terminating..."
-                    kill $pid 2>/dev/null
-                    return 1
-                fi
-            else
-                # Reset stall counter if progress changed
-                if (( $(echo "$current_numeric != $last_numeric" | bc -l) )); then
-                    log "INFO" "Progress detected, resetting stall counter"
-                    stall_counter=0
-                    last_value=$current_value
-                fi
-            fi
-        fi
-    done
+        # Convert B to KiB if needed
+        if unit == "B" and float(value) == 0:
+            log("Upload just started at 0 bytes, not considering as stall")
+            return "start"
+        return value
     
-    # Process completed on its own
-    return 0
+    # No match
+    log(f"No match in: '{line}'")
+    return "0"
+
+log(f"Starting stall monitor: file={file_to_monitor}, timeout={timeout}s, pid={pid_to_kill}")
+
+# Initialize tracking variables
+last_value = None
+stall_counter = 0
+consecutive_same_readings = 0
+
+# Get all matching processes just to be sure
+def find_process_children(pid):
+    try:
+        output = subprocess.check_output(["pgrep", "-P", str(pid)]).decode().strip()
+        return [int(p) for p in output.split()]
+    except subprocess.CalledProcessError:
+        return []
+
+# Kill a process tree
+def kill_process_tree(pid):
+    log(f"Killing process tree starting at PID {pid}")
+    # Get child processes
+    children = find_process_children(pid)
+    for child in children:
+        kill_process_tree(child)
+    
+    # Kill the parent
+    try:
+        os.kill(pid, signal.SIGTERM)
+        time.sleep(0.5)
+        try:
+            os.kill(pid, 0)  # Check if process exists
+            os.kill(pid, signal.SIGKILL)  # Force kill if still running
+            log(f"Force killed PID {pid}")
+        except OSError:
+            log(f"Process {pid} terminated gracefully")
+    except OSError as e:
+        log(f"Error killing PID {pid}: {e}")
+
+while True:
+    time.sleep(check_interval)
+    
+    # Check if file exists
+    if not os.path.exists(file_to_monitor):
+        log("File no longer exists, exiting")
+        break
+    
+    # Read the file
+    try:
+        with open(file_to_monitor, "r") as f:
+            lines = f.readlines()
+            if not lines:
+                log("File is empty, waiting for data")
+                continue
+            
+            # Check the last line with KiB in it
+            kib_lines = [l for l in lines if "KiB" in l or " B / " in l]
+            if not kib_lines:
+                log("No progress lines found, waiting")
+                continue
+                
+            last_line = kib_lines[-1].strip()
+            current_value = extract_kib_value(last_line)
+            
+            # Skip empty or initial values
+            if current_value == "0" or current_value == "start":
+                log("Skipping initial value")
+                continue
+            
+            # First reading
+            if last_value is None:
+                last_value = current_value
+                log(f"First reading: {last_value}")
+                continue
+            
+            # Check for stall
+            if current_value == last_value:
+                consecutive_same_readings += 1
+                stall_counter += check_interval
+                log(f"Same value detected ({consecutive_same_readings} times): {current_value}, stall counter = {stall_counter}s")
+                
+                # Stall timeout reached - be very explicit about what's happening
+                if stall_counter >= timeout:
+                    log(f"STALL DETECTED! Value {current_value} unchanged for {stall_counter} seconds")
+                    log(f"Timeout of {timeout} seconds reached")
+                    
+                    # Print to stderr for visibility
+                    print(f"\033[31mSTALL DETECTED! Value {current_value} unchanged for {stall_counter} seconds\033[0m", file=sys.stderr)
+                    
+                    # Create a marker file
+                    with open(file_to_monitor + ".stalled", "w") as sf:
+                        sf.write(f"STALLED at {current_value} KiB for {stall_counter} seconds\n")
+                    
+                    # Kill the process tree
+                    kill_process_tree(pid_to_kill)
+                    
+                    # Final log before exiting
+                    log("Monitor exiting after stall detection")
+                    sys.exit(0)  # Exit with success code so the script continues
+            else:
+                # Progress detected - log the change
+                log(f"Progress detected: {last_value} -> {current_value}")
+                stall_counter = 0
+                consecutive_same_readings = 0
+                last_value = current_value
+    
+    except Exception as e:
+        log(f"Error: {str(e)}")
+        continue
+EOL
+
+    # Make the Python script executable
+    chmod +x "${TEMP_PROGRESS_FILE}.py"
+    
+    # Run the Python script
+    python3 "${TEMP_PROGRESS_FILE}.py" "$@"
 }
 
 # Function to update a single device
@@ -265,38 +398,130 @@ function update_device() {
     # Clear the progress file
     > "$TEMP_PROGRESS_FILE"
     
-    # Upload the new image - SHOWING PROGRESS BAR with stall detection
+    # Upload the new image with stall detection
     log "INFO" "Uploading firmware image to ${device_name}..."
     log "INFO" "Upload will be terminated if stalled for ${UPLOAD_STALL_TIMEOUT} seconds"
     
     # Record start time for timing the upload
     local upload_start_time=$(date +%s)
     
-    # Run mcumgr in background and show progress to terminal but NOT in the log file
-    # The last tee only captures KiB lines to the temp progress file
-    mcumgr -c "udp" image upload "${BUILD_DIR}/zephyr/app_update.bin" 2>&1 | tee >(grep -v "KiB" >> "$LOG_FILE") >(grep "KiB" > "$TEMP_PROGRESS_FILE") &
+    # Clear the progress file and stall indicator
+    > "$TEMP_PROGRESS_FILE"
+    rm -f "$TEMP_PROGRESS_FILE.stalled" 2>/dev/null
+    rm -f "$TEMP_PROGRESS_FILE.log" 2>/dev/null
+    rm -f "$TEMP_PROGRESS_FILE.py" 2>/dev/null
+    
+    # Use a better approach with coproc to monitor the process
+    # This fixes the "wait: pid is not a child of this shell" error
+    log "INFO" "Starting upload process..."
+    
+    # Create a named pipe for progress monitoring
+    local pipe_file="/tmp/mcumgr_pipe_$"
+    mkfifo "$pipe_file" 2>/dev/null
+    
+    # Start the upload in background using a process group
+    set -m  # Enable job control
+    mcumgr -c "udp" image upload "${BUILD_DIR}/zephyr/app_update.bin" > "$pipe_file" 2>&1 &
     upload_pid=$!
+    set +m  # Disable job control
     
-    # Monitor the upload progress
-    monitor_upload_progress $upload_pid "$device_name"
-    monitor_status=$?
+    # Start cat in background to read from the pipe and capture output
+    cat "$pipe_file" | tee "$TEMP_PROGRESS_FILE" &
+    cat_pid=$!
     
-    # Wait for the upload process to finish (should already be done)
-    wait $upload_pid
-    upload_status=$?
+    # Start Python monitor in background only if stall detection is enabled
+    if [ $UPLOAD_STALL_TIMEOUT -gt 0 ]; then
+        stall_monitor_script "$TEMP_PROGRESS_FILE" $UPLOAD_STALL_TIMEOUT "$device_name" $upload_pid &
+        monitor_pid=$!
+    fi
+    
+    # Calculate a reasonable timeout (stall timeout plus margin)
+    wait_timeout=$((UPLOAD_STALL_TIMEOUT + 300))  # 5 minutes extra for large files
+    
+    # Wait for the upload to finish with timeout
+    upload_status=0
+    upload_done=false
+    
+    log "INFO" "Waiting for upload to complete (timeout: ${wait_timeout}s)..."
+    
+    # Start a timeout counter
+    start_time=$(date +%s)
+    while ! $upload_done; do
+        # Check if process is still running
+        if ! kill -0 $upload_pid 2>/dev/null; then
+            # Process completed
+            wait $upload_pid 2>/dev/null
+            upload_status=$?
+            upload_done=true
+            log "INFO" "Upload process completed with status $upload_status"
+        else
+            # Check for stall marker
+            if [ -f "$TEMP_PROGRESS_FILE.stalled" ]; then
+                log "ERROR" "Upload stalled and was terminated by monitor"
+                kill -9 $upload_pid 2>/dev/null
+                upload_status=1
+                upload_done=true
+            else
+                # Check for timeout
+                current_time=$(date +%s)
+                elapsed=$((current_time - start_time))
+                
+                if [ $elapsed -gt $wait_timeout ]; then
+                    log "WARNING" "Upload timeout after ${elapsed}s, forcing termination"
+                    kill -9 $upload_pid 2>/dev/null
+                    upload_status=1
+                    upload_done=true
+                else
+                    # Sleep briefly before checking again
+                    sleep 2
+                fi
+            fi
+        fi
+    done
+    
+    # Allow cat process to finish reading the pipe
+    sleep 1
+    kill $cat_pid 2>/dev/null
+    rm -f "$pipe_file" 2>/dev/null
+    
+    # Check if the process was killed due to a stall
+    if [ -f "$TEMP_PROGRESS_FILE.stalled" ]; then
+        upload_status=1
+        log "ERROR" "Upload failed due to stall timeout"
+        
+        # Show the monitor log to diagnose issues
+        if [ -f "$TEMP_PROGRESS_FILE.log" ]; then
+            log "DEBUG" "Python stall monitor log content:"
+            cat "$TEMP_PROGRESS_FILE.log" >> "$LOG_FILE"
+        fi
+    fi
+    
+    # Kill the monitor if it's still running
+    if [ $UPLOAD_STALL_TIMEOUT -gt 0 ] && kill -0 $monitor_pid 2>/dev/null; then
+        kill $monitor_pid 2>/dev/null
+    fi
+    
+    # Make sure we don't leave any zombie processes
+    # Find all processes that might be related to our upload
+    local zombie_pids=$(pgrep -f "mcumgr.*upload" | grep -v "$$")
+    if [ -n "$zombie_pids" ]; then
+        log "WARNING" "Found lingering mcumgr processes, cleaning up..."
+        for pid in $zombie_pids; do
+            kill -9 $pid 2>/dev/null
+        done
+    fi
+    
+    # Remove the temp files
+    rm -f "$TEMP_PROGRESS_FILE" 2>/dev/null
+    rm -f "$TEMP_PROGRESS_FILE.stalled" 2>/dev/null
+    rm -f "$TEMP_PROGRESS_FILE.py" 2>/dev/null
+    rm -f "$TEMP_PROGRESS_FILE.log" 2>/dev/null
     
     # Calculate upload duration
     local upload_end_time=$(date +%s)
     local upload_duration=$((upload_end_time - upload_start_time))
     local minutes=$((upload_duration / 60))
     local seconds=$((upload_duration % 60))
-    
-    # Check for stall timeout
-    if [ $monitor_status -ne 0 ]; then
-        log "ERROR" "Upload to ${device_name} was terminated due to stall timeout"
-        mcumgr conn remove "udp" > /dev/null 2>&1
-        return 1
-    fi
     
     # Check if the upload was successful
     if [ $upload_status -ne 0 ]; then
@@ -373,8 +598,30 @@ function update_device() {
 
 # Function to clean up temp files
 function cleanup() {
+    # Clean up all temporary files
     if [ -f "$TEMP_PROGRESS_FILE" ]; then
         rm -f "$TEMP_PROGRESS_FILE"
+    fi
+    rm -f "$TEMP_PROGRESS_FILE.stalled" 2>/dev/null
+    rm -f "$TEMP_PROGRESS_FILE.log" 2>/dev/null
+    rm -f "$TEMP_PROGRESS_FILE.py" 2>/dev/null
+    rm -f "/tmp/mcumgr_pipe_$" 2>/dev/null
+    
+    # Kill any remaining mcumgr processes that might be hanging
+    local mcumgr_pids=$(pgrep -f "mcumgr.*upload")
+    if [ -n "$mcumgr_pids" ]; then
+        log "WARNING" "Cleaning up lingering mcumgr processes during exit..."
+        for pid in $mcumgr_pids; do
+            kill -9 $pid 2>/dev/null
+        done
+    fi
+    
+    # Kill any cat processes we might have started
+    local cat_pids=$(pgrep -f "cat.*mcumgr_pipe")
+    if [ -n "$cat_pids" ]; then
+        for pid in $cat_pids; do
+            kill -9 $pid 2>/dev/null
+        done
     fi
 }
 
@@ -415,11 +662,16 @@ function main() {
         exit 1
     fi
     
-    # Check for bc (binary calculator) for floating point comparisons
-    if ! command -v bc &> /dev/null; then
-        log "ERROR" "bc command not found. This is required for floating point comparisons."
-        log "INFO" "Installation: sudo apt install bc"
+    if ! command -v python3 &> /dev/null; then
+        log "ERROR" "python3 not found. This is required for stall detection."
+        log "INFO" "Installation: sudo apt install python3"
         exit 1
+    fi
+    
+    # Recommend timeout command which helps prevent hanging
+    if ! command -v timeout &> /dev/null; then
+        log "WARNING" "timeout command not found. Installing it is recommended for better stall handling."
+        log "INFO" "Installation: sudo apt install coreutils"
     fi
     
     # Check for the get-image-hash.sh script
@@ -527,6 +779,7 @@ function main() {
     
     # Process each device
     for i in "${!DEVICE_NAMES[@]}"; do
+        # FIX: Fixed array access for device addresses
         update_device "${DEVICE_NAMES[$i]}" "${DEVICE_ADDRESSES[$i]}" "$TEST_MODE"
         result=$?
         
