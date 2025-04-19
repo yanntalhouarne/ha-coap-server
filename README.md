@@ -83,7 +83,7 @@ coap-client -m get coap://[fd49:969:3c3c:1:88a2:4c28:69ec:34f7]/pumpdc -v 6
    
    - UDP: 
      ```bash
-     mcumgr conn add ota type="udp" connstring="[fd49:969:3c3c:1:8c6a:5db:a6ef:178f]:1337"
+     mcumgr conn add udp type="udp" connstring="[fd49:969:3c3c:1:8c6a:5db:a6ef:178f]:1337"
      ```
      > Replace IPV6 IP address with the address of the device
 
@@ -97,23 +97,26 @@ coap-client -m get coap://[fd49:969:3c3c:1:88a2:4c28:69ec:34f7]/pumpdc -v 6
 
 3. **Upload new image**:
    ```bash
-   mcumgr -c testDK image upload zephyr/app_update.bin
+   mcumgr -c serial image upload zephyr/app_update.bin
    ```
 
 4. **Confirm new image**:
    ```bash
-   mcumgr -c testDK image confirm <NEW_HASH>
+   mcumgr -c serial image confirm <NEW_HASH>
    ```
-
    > Image must be in a `build_*` folder (e.g., `ha-coap-server\application\build_mtd_lp`)
 
+5. **mcumgr script**:
+   Alternatively, the mcumgr interactive script can be used.
+   ```bash
+   cd scripts
+   ./mcumgr-dfu.sh
+   ```
+   
 ## 📝 Roadmap
 
 - [ ] Implement dynamic SRP client hostname reassignment when duplicates are detected
 - [ ] Refactor SRP functionality out of `coap_server.c`
-- [ ] Add FOTA support over OpenThread
-  - See [mcumgr over OpenThread UDP discussion](https://devzone.nordicsemi.com/f/nordic-q-a/96148/mcumgr-over-openthread-udp-error-8)
-- [ ] If the SRP service is already registered (i.e. callback returns DUPLICATED error), delete the SRP service and hostname from the client 
 
 ## 📚 References
 
