@@ -7,7 +7,7 @@ function get_devices() {
     echo "Scanning for ha-coap devices (this will take a few seconds)..."
     
     # Run avahi-browse with a timeout to ensure it doesn't run indefinitely
-    output=$(timeout 5s avahi-browse -r _ot._udp)
+    output=$(timeout 2s avahi-browse -r _ot._udp)
     
     # Initialize arrays to store device names and addresses
     declare -a devices=()
@@ -149,20 +149,7 @@ function handle_device() {
     read -r operation_choice
     
     if [[ "$operation_choice" == "1" ]]; then
-    # Prompt for test or confirm before uploading
-    echo
-    echo "After uploading, do you want to test or confirm the image?"
-    echo "  1. Test (can be reverted if problems occur)"
-    echo "  2. Confirm (permanent)"
-    read -r test_confirm_choice
-    
-    if [[ "$test_confirm_choice" != "1" && "$test_confirm_choice" != "2" ]]; then
-        echo "Invalid choice. Please enter 1 for Test or 2 for Confirm."
-    fi
-    upload_and_process_image "$transport" "$test_confirm_choice"
-    fi
-    
-    
+        upload_and_process_image "$transport"
     elif [[ "$operation_choice" == "2" ]]; then
         # Just list the images
         echo "Listing images..."
@@ -176,11 +163,17 @@ function handle_device() {
 # Function to handle the upload and post-upload operations
 function upload_and_process_image() {
     local transport="$1"
-    local test_confirm_choice="$2"
     
     # Change to the build directory
     echo "Changing to build directory..."
     cd ../application/build || { echo "Failed to change to build directory"; exit 1; }
+    
+    # Prompt for test or confirm before uploading
+    echo
+    echo "After uploading, do you want to test or confirm the image?"
+    echo "  1. Test (can be reverted if problems occur)"
+    echo "  2. Confirm (permanent)"
+    read -r test_confirm_choice
     
     # Upload the new image
     echo "Uploading image..."
@@ -199,8 +192,8 @@ function upload_and_process_image() {
     image_list_output=$(mcumgr -c "$transport" image list)
     echo "$image_list_output"
     
-    # Extract the hash for slot 1 (the newly uploaded image)
-    new_hash=$(echo "$image_list_output" | grep -A 3 "image=0 slot=1" | grep "hash:" | awk '{print $2}')
+    # More direct approach to extract the hash - look specifically for the hash line after "image=0 slot=1" appears
+    new_hash=$(echo "$image_list_output" | awk '/image=0 slot=1/{found=1} found && /hash:/{print $2; exit}')
     
     if [ -z "$new_hash" ]; then
         echo "Failed to get new image hash!"
@@ -216,6 +209,9 @@ function upload_and_process_image() {
     elif [[ "$test_confirm_choice" == "2" ]]; then
         echo "Confirming image..."
         mcumgr -c "$transport" image confirm "$new_hash"
+    else
+        echo "Invalid choice. Exiting without testing or confirming."
+        exit 1
     fi
     
     # Automatically reset the device after test/confirm
