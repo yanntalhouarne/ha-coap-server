@@ -105,10 +105,6 @@ coap-client -m get coap://[fd49:969:3c3c:1:88a2:4c28:69ec:34f7]/pumpdc -v 6
    mcumgr -c testDK image confirm <NEW_HASH>
    ```
 
-5. **Alternative flash method**:
-   ```bash
-   mcumgr -c testDK image upload build/zephyr/app_update.bin
-   ```
    > Image must be in a `build_*` folder (e.g., `ha-coap-server\application\build_mtd_lp`)
 
 ## 📝 Roadmap
