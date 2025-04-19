@@ -14,9 +14,14 @@ PURPLE='\033[0;35m'
 CYAN='\033[0;36m'
 NC='\033[0m' # No Color
 
+# Configuration
+UPLOAD_STALL_TIMEOUT=300  # 5 minutes in seconds
+PROGRESS_CHECK_INTERVAL=10  # Check progress every 10 seconds
+
 # Timestamp for log files
 TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
 LOG_FILE="flash_logs_${TIMESTAMP}.log"
+TEMP_PROGRESS_FILE="/tmp/mcumgr_progress_$TIMESTAMP.tmp"
 
 # Function to log messages to both console and log file
 function log() {
@@ -135,6 +140,51 @@ function discover_devices() {
     DEVICE_ADDRESSES=("${addresses[@]}")
 }
 
+# Function to extract KiB value from progress output
+function extract_kib_value() {
+    local progress_line="$1"
+    if [[ "$progress_line" =~ ([0-9]+\.[0-9]+)\ KiB ]]; then
+        echo "${BASH_REMATCH[1]}"
+    else
+        echo "0"
+    fi
+}
+
+# Function to monitor upload progress and kill if stalled
+function monitor_upload_progress() {
+    local pid=$1
+    local device_name=$2
+    local last_value="0"
+    local stall_counter=0
+    
+    while kill -0 $pid 2>/dev/null; do
+        sleep $PROGRESS_CHECK_INTERVAL
+        
+        # Get the latest progress output if file exists
+        if [ -f "$TEMP_PROGRESS_FILE" ]; then
+            local progress_line=$(tail -n 1 "$TEMP_PROGRESS_FILE")
+            local current_value=$(extract_kib_value "$progress_line")
+            
+            # If progress value hasn't changed
+            if [ "$current_value" = "$last_value" ] && [ "$current_value" != "0" ]; then
+                stall_counter=$((stall_counter + PROGRESS_CHECK_INTERVAL))
+                if [ $stall_counter -ge $UPLOAD_STALL_TIMEOUT ]; then
+                    log "WARNING" "Upload to ${device_name} stalled at ${current_value} KiB for ${UPLOAD_STALL_TIMEOUT} seconds. Terminating..."
+                    kill $pid 2>/dev/null
+                    return 1
+                fi
+            else
+                # Reset stall counter if progress changed
+                stall_counter=0
+                last_value="$current_value"
+            fi
+        fi
+    done
+    
+    # Process completed on its own
+    return 0
+}
+
 # Function to update a single device
 function update_device() {
     local device_name="$1"
@@ -199,14 +249,41 @@ function update_device() {
         fi
     fi
     
-    # Upload the new image - SHOWING PROGRESS BAR
-    log "INFO" "Uploading firmware image to ${device_name}..."
+    # Clear the progress file
+    > "$TEMP_PROGRESS_FILE"
     
-    # Run mcumgr directly so that the progress bar is displayed
-    # Store the command output, but also let it display to the console
-    set -o pipefail  # Make sure pipe failures are propagated
-    mcumgr -c "udp" image upload "${BUILD_DIR}/zephyr/app_update.bin" 2>&1 | tee -a "$LOG_FILE"
+    # Upload the new image - SHOWING PROGRESS BAR with stall detection
+    log "INFO" "Uploading firmware image to ${device_name}..."
+    log "INFO" "Upload will be terminated if stalled for ${UPLOAD_STALL_TIMEOUT} seconds"
+    
+    # Record start time for timing the upload
+    local upload_start_time=$(date +%s)
+    
+    # Run mcumgr in background and show progress to terminal but NOT in the log file
+    # The last tee only captures KiB lines to the temp progress file
+    mcumgr -c "udp" image upload "${BUILD_DIR}/zephyr/app_update.bin" 2>&1 | tee >(grep -v "KiB" >> "$LOG_FILE") >(grep "KiB" > "$TEMP_PROGRESS_FILE") &
+    upload_pid=$!
+    
+    # Monitor the upload progress
+    monitor_upload_progress $upload_pid "$device_name"
+    monitor_status=$?
+    
+    # Wait for the upload process to finish (should already be done)
+    wait $upload_pid
     upload_status=$?
+    
+    # Calculate upload duration
+    local upload_end_time=$(date +%s)
+    local upload_duration=$((upload_end_time - upload_start_time))
+    local minutes=$((upload_duration / 60))
+    local seconds=$((upload_duration % 60))
+    
+    # Check for stall timeout
+    if [ $monitor_status -ne 0 ]; then
+        log "ERROR" "Upload to ${device_name} was terminated due to stall timeout"
+        mcumgr conn remove "udp" > /dev/null 2>&1
+        return 1
+    fi
     
     # Check if the upload was successful
     if [ $upload_status -ne 0 ]; then
@@ -216,6 +293,7 @@ function update_device() {
     fi
     
     log "SUCCESS" "Upload completed successfully for ${device_name}"
+    log "INFO" "Upload time: ${minutes} minutes ${seconds} seconds"
     
     # Get the updated image list
     log "INFO" "Getting updated image list from ${device_name}..."
@@ -280,9 +358,19 @@ function update_device() {
     return 0
 }
 
+# Function to clean up temp files
+function cleanup() {
+    if [ -f "$TEMP_PROGRESS_FILE" ]; then
+        rm -f "$TEMP_PROGRESS_FILE"
+    fi
+}
+
 # Main function
 function main() {
     print_banner
+    
+    # Set up cleanup trap
+    trap cleanup EXIT
     
     # Enable pipefail to catch errors in piped commands
     set -o pipefail
@@ -302,10 +390,15 @@ function main() {
         exit 1
     fi
     
-    # Check for tee command
     if ! command -v tee &> /dev/null; then
         log "ERROR" "tee command not found. This is required for progress display."
         log "INFO" "Installation: sudo apt install coreutils"
+        exit 1
+    fi
+    
+    if ! command -v grep &> /dev/null; then
+        log "ERROR" "grep command not found. This is required for progress monitoring."
+        log "INFO" "Installation: sudo apt install grep"
         exit 1
     fi
     
@@ -378,6 +471,24 @@ function main() {
         exit 1
     fi
     
+    # Allow configuration of timeout
+    echo ""
+    echo -e "${YELLOW}? Enter upload stall timeout in seconds (300 is default, 0 to disable):${NC} "
+    read -r timeout_setting
+    
+    # Validate input
+    if [[ "$timeout_setting" =~ ^[0-9]+$ ]]; then
+        if [ "$timeout_setting" -gt 0 ]; then
+            UPLOAD_STALL_TIMEOUT=$timeout_setting
+            log "INFO" "Upload stall timeout set to ${UPLOAD_STALL_TIMEOUT} seconds"
+        else
+            log "INFO" "Stall detection disabled"
+            UPLOAD_STALL_TIMEOUT=0
+        fi
+    else
+        log "INFO" "Using default stall timeout of ${UPLOAD_STALL_TIMEOUT} seconds"
+    fi
+    
     # Confirm before proceeding
     total_devices=${#DEVICE_NAMES[@]}
     echo ""
@@ -400,7 +511,12 @@ function main() {
         result=$?
         
         if [ $result -eq 0 ]; then
-            SUCCESSFUL_UPDATES=$((SUCCESSFUL_UPDATES + 1))
+            if [ "$current_hash" == "$new_image_hash" ]; then
+                # Already counted in the update_device function
+                :
+            else
+                SUCCESSFUL_UPDATES=$((SUCCESSFUL_UPDATES + 1))
+            fi
         else
             FAILED_UPDATES=$((FAILED_UPDATES + 1))
         fi
@@ -414,16 +530,19 @@ function main() {
     log "INFO" "==== Update Summary ===="
     log "INFO" "Total devices: $total_devices"
     log "SUCCESS" "Successful updates: $SUCCESSFUL_UPDATES"
+    log "INFO" "Skipped updates (already had image): $SKIPPED_UPDATES"
     if [ $FAILED_UPDATES -gt 0 ]; then
         log "ERROR" "Failed updates: $FAILED_UPDATES"
     else
         log "INFO" "Failed updates: $FAILED_UPDATES"
     fi
-    log "INFO" "Skipped updates: $SKIPPED_UPDATES"
     log "INFO" "Log file: $LOG_FILE"
     
     log "INFO" "Bulk update process completed."
+    
+    # Clean up temp files
+    cleanup
 }
 
 # Run the main function
-main
+main 
