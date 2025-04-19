@@ -567,7 +567,7 @@ static inline float out_ev(struct sensor_value *val)
 int main(void)
 {
 
-	//k_sleep(K_MSEC(3000));
+	k_sleep(K_MSEC(100));
 
 	
 	/*

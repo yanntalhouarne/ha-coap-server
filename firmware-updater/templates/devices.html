@@ -1,0 +1,339 @@
+{% extends "base.html" %}
+
+{% block title %}Devices - HA-CoAP Firmware Updater{% endblock %}
+
+{% block content %}
+<div class="row mb-4">
+    <div class="col">
+        <h1><i class="bi bi-hdd-network"></i> Devices</h1>
+        <p class="lead">Manage and monitor your Thread network devices</p>
+    </div>
+</div>
+
+<div class="row mb-4">
+    <div class="col-md-12">
+        <div class="card">
+            <div class="card-header bg-primary text-white">
+                <h5 class="card-title mb-0"><i class="bi bi-search"></i> Device Discovery</h5>
+            </div>
+            <div class="card-body">
+                <p>Scan your Thread network to discover all available HA-CoAP devices that can be updated.</p>
+                <div class="d-flex justify-content-between">
+                    <button id="discover-btn" class="btn btn-primary">
+                        <i class="bi bi-search"></i> Discover Devices
+                    </button>
+                    <div id="discovery-status"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row">
+    <div class="col-md-12">
+        <div class="card">
+            <div class="card-header bg-success text-white">
+                <h5 class="card-title mb-0"><i class="bi bi-list-check"></i> Device List</h5>
+            </div>
+            <div class="card-body">
+                <div class="alert alert-info" id="no-devices-message">
+                    <i class="bi bi-info-circle"></i> No devices discovered yet. Click the "Discover Devices" button above to scan your network.
+                </div>
+                
+                <div id="device-list-container" style="display: none;">
+                    <div class="mb-3">
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" id="select-all-devices" checked>
+                            <label class="form-check-label" for="select-all-devices">
+                                Select/Deselect All
+                            </label>
+                        </div>
+                    </div>
+                    
+                    <div class="table-responsive">
+                        <table class="table table-striped table-hover">
+                            <thead>
+                                <tr>
+                                    <th>Select</th>
+                                    <th>Name</th>
+                                    <th>Address</th>
+                                    <th>Status</th>
+                                </tr>
+                            </thead>
+                            <tbody id="device-list">
+                                <!-- Devices will be populated here via JavaScript -->
+                            </tbody>
+                        </table>
+                    </div>
+                    
+                    <div class="d-flex justify-content-between">
+                        <div>
+                            <button id="update-selected-btn" class="btn btn-success me-2">
+                                <i class="bi bi-arrow-repeat"></i> Update Selected
+                            </button>
+                        </div>
+                        <div>
+                            <button id="save-device-list" class="btn btn-outline-secondary me-2">
+                                <i class="bi bi-save"></i> Save List
+                            </button>
+                            <button id="refresh-status-btn" class="btn btn-outline-primary">
+                                <i class="bi bi-arrow-clockwise"></i> Refresh Status
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    let discoveredDevices = [];
+    
+    document.addEventListener('DOMContentLoaded', function() {
+        // Initialize the page
+        document.getElementById('discover-btn').addEventListener('click', discoverDevices);
+        document.getElementById('select-all-devices').addEventListener('change', toggleAllDevices);
+        document.getElementById('update-selected-btn').addEventListener('click', updateSelectedDevices);
+        document.getElementById('save-device-list').addEventListener('click', saveDeviceList);
+        document.getElementById('refresh-status-btn').addEventListener('click', refreshDeviceStatus);
+        
+        // Check for saved device list
+        loadSavedDevices();
+    });
+    
+    function discoverDevices() {
+        const discoverBtn = document.getElementById('discover-btn');
+        const statusEl = document.getElementById('discovery-status');
+        
+        // Disable button and show loading status
+        discoverBtn.disabled = true;
+        discoverBtn.innerHTML = '<i class="bi bi-hourglass"></i> Discovering...';
+        statusEl.innerHTML = '<span class="text-primary">Scanning network...</span>';
+        
+        // Call the API to discover devices
+        fetch('/api/discover', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            }
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                discoveredDevices = data.devices;
+                statusEl.innerHTML = `<span class="text-success">Found ${discoveredDevices.length} devices</span>`;
+                
+                // Update the UI with the discovered devices
+                displayDevices(discoveredDevices);
+            } else {
+                statusEl.innerHTML = `<span class="text-danger">Error: ${data.error}</span>`;
+                console.error('Error discovering devices:', data.error);
+            }
+        })
+        .catch(error => {
+            statusEl.innerHTML = `<span class="text-danger">Error: ${error.message}</span>`;
+            console.error('Fetch error:', error);
+        })
+        .finally(() => {
+            // Re-enable the button
+            discoverBtn.disabled = false;
+            discoverBtn.innerHTML = '<i class="bi bi-search"></i> Discover Devices';
+        });
+    }
+    
+    function displayDevices(devices) {
+        const deviceList = document.getElementById('device-list');
+        const noDevicesMessage = document.getElementById('no-devices-message');
+        const deviceListContainer = document.getElementById('device-list-container');
+        
+        if (devices.length === 0) {
+            noDevicesMessage.style.display = 'block';
+            deviceListContainer.style.display = 'none';
+            return;
+        }
+        
+        // Hide the no devices message and show the list
+        noDevicesMessage.style.display = 'none';
+        deviceListContainer.style.display = 'block';
+        
+        // Clear the current list
+        deviceList.innerHTML = '';
+        
+        // Add each device to the table
+        devices.forEach((device, index) => {
+            const row = document.createElement('tr');
+            
+            // Create checkbox cell
+            const checkboxCell = document.createElement('td');
+            const checkboxDiv = document.createElement('div');
+            checkboxDiv.className = 'form-check';
+            
+            const checkbox = document.createElement('input');
+            checkbox.type = 'checkbox';
+            checkbox.className = 'form-check-input device-checkbox';
+            checkbox.id = `device-${index}`;
+            checkbox.checked = device.selected;
+            checkbox.dataset.deviceIndex = index;
+            
+            const label = document.createElement('label');
+            label.className = 'form-check-label';
+            label.htmlFor = `device-${index}`;
+            
+            checkboxDiv.appendChild(checkbox);
+            checkboxDiv.appendChild(label);
+            checkboxCell.appendChild(checkboxDiv);
+            
+            // Create name cell
+            const nameCell = document.createElement('td');
+            nameCell.textContent = device.name;
+            
+            // Create address cell
+            const addressCell = document.createElement('td');
+            addressCell.textContent = device.address;
+            
+            // Create status cell
+            const statusCell = document.createElement('td');
+            statusCell.innerHTML = '<span class="badge bg-secondary">Unknown</span>';
+            
+            // Add cells to row
+            row.appendChild(checkboxCell);
+            row.appendChild(nameCell);
+            row.appendChild(addressCell);
+            row.appendChild(statusCell);
+            
+            // Add row to table
+            deviceList.appendChild(row);
+        });
+        
+        // Add event listeners to checkboxes
+        document.querySelectorAll('.device-checkbox').forEach(checkbox => {
+            checkbox.addEventListener('change', function() {
+                const index = parseInt(this.dataset.deviceIndex);
+                discoveredDevices[index].selected = this.checked;
+                updateSelectAllCheckbox();
+            });
+        });
+        
+        // Update the select all checkbox
+        updateSelectAllCheckbox();
+    }
+    
+    function toggleAllDevices() {
+        const selectAll = document.getElementById('select-all-devices').checked;
+        
+        // Update all device checkboxes
+        document.querySelectorAll('.device-checkbox').forEach(checkbox => {
+            checkbox.checked = selectAll;
+            
+            // Update the device data
+            const index = parseInt(checkbox.dataset.deviceIndex);
+            discoveredDevices[index].selected = selectAll;
+        });
+    }
+    
+    function updateSelectAllCheckbox() {
+        const checkboxes = document.querySelectorAll('.device-checkbox');
+        const selectAllCheckbox = document.getElementById('select-all-devices');
+        
+        // Count selected checkboxes
+        let selectedCount = 0;
+        checkboxes.forEach(checkbox => {
+            if (checkbox.checked) {
+                selectedCount++;
+            }
+        });
+        
+        // Update the select all checkbox based on the selection state
+        if (selectedCount === 0) {
+            selectAllCheckbox.checked = false;
+            selectAllCheckbox.indeterminate = false;
+        } else if (selectedCount === checkboxes.length) {
+            selectAllCheckbox.checked = true;
+            selectAllCheckbox.indeterminate = false;
+        } else {
+            selectAllCheckbox.indeterminate = true;
+        }
+    }
+    
+    function updateSelectedDevices() {
+        // Get selected devices
+        const selectedDevices = discoveredDevices.filter(device => device.selected);
+        
+        if (selectedDevices.length === 0) {
+            alert('Please select at least one device to update.');
+            return;
+        }
+        
+        // Redirect to the update page with the selected devices
+        const deviceParam = encodeURIComponent(JSON.stringify(selectedDevices));
+        window.location.href = `${window.location.origin}/update?devices=${deviceParam}`;
+    }
+    
+    function saveDeviceList() {
+        // Save the current device list to local storage
+        localStorage.setItem('savedDevices', JSON.stringify(discoveredDevices));
+        
+        // Show a brief confirmation
+        const saveBtn = document.getElementById('save-device-list');
+        const originalText = saveBtn.innerHTML;
+        
+        saveBtn.innerHTML = '<i class="bi bi-check2"></i> Saved!';
+        saveBtn.disabled = true;
+        
+        setTimeout(() => {
+            saveBtn.innerHTML = originalText;
+            saveBtn.disabled = false;
+        }, 1500);
+    }
+    
+    function loadSavedDevices() {
+        const savedDevices = localStorage.getItem('savedDevices');
+        
+        if (savedDevices) {
+            try {
+                discoveredDevices = JSON.parse(savedDevices);
+                displayDevices(discoveredDevices);
+                
+                // Show a message that these are saved devices
+                const statusEl = document.getElementById('discovery-status');
+                statusEl.innerHTML = '<span class="text-info">Loaded saved device list</span>';
+            } catch (e) {
+                console.error('Error loading saved devices:', e);
+            }
+        }
+    }
+    
+    function refreshDeviceStatus() {
+        // In a real implementation, this would ping each device to check its status
+        // For this demo, we'll simulate status updates
+        
+        const statuses = ['Online', 'Offline', 'Updating', 'Needs Update'];
+        const colors = ['success', 'danger', 'warning', 'info'];
+        
+        const statusCells = document.querySelectorAll('#device-list tr td:nth-child(4)');
+        
+        statusCells.forEach(cell => {
+            const randomIndex = Math.floor(Math.random() * statuses.length);
+            const status = statuses[randomIndex];
+            const color = colors[randomIndex];
+            
+            cell.innerHTML = `<span class="badge bg-${color}">${status}</span>`;
+        });
+        
+        // Show a brief confirmation
+        const refreshBtn = document.getElementById('refresh-status-btn');
+        const originalText = refreshBtn.innerHTML;
+        
+        refreshBtn.innerHTML = '<i class="bi bi-check2"></i> Refreshed!';
+        refreshBtn.disabled = true;
+        
+        setTimeout(() => {
+            refreshBtn.innerHTML = originalText;
+            refreshBtn.disabled = false;
+        }, 1500);
+    }
+</script>
+{% endblock %}

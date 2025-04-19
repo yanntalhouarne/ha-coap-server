@@ -1,0 +1,12 @@
+Flask==2.3.3
+Flask-SocketIO==5.3.5
+python-socketio==5.9.0
+python-engineio==4.7.1
+eventlet==0.33.3
+Werkzeug==2.3.7
+Jinja2==3.1.2
+itsdangerous==2.1.2
+click==8.1.7
+bidict==0.22.1
+dnspython==2.4.2
+simple-websocket==0.10.1

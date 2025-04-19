@@ -76,7 +76,7 @@ function print_banner() {
     echo "" >> "$LOG_FILE"
 }
 
-# Function to extract ha-coap devices and their IPv6 addresses
+# Function to discover ha-coap devices and their IPv6 addresses
 function discover_devices() {
     log "INFO" "Scanning for ha-coap devices..."
     
@@ -144,9 +144,10 @@ function discover_devices() {
 function extract_kib_value() {
     local progress_line="$1"
     if [[ "$progress_line" =~ ([0-9]+\.[0-9]+)\ KiB ]]; then
+        # Return just the numeric part as a decimal number
         echo "${BASH_REMATCH[1]}"
     else
-        echo "0"
+        echo "0.0"
     fi
 }
 
@@ -154,7 +155,7 @@ function extract_kib_value() {
 function monitor_upload_progress() {
     local pid=$1
     local device_name=$2
-    local last_value="0"
+    local last_value=0.0
     local stall_counter=0
     
     while kill -0 $pid 2>/dev/null; do
@@ -165,9 +166,18 @@ function monitor_upload_progress() {
             local progress_line=$(tail -n 1 "$TEMP_PROGRESS_FILE")
             local current_value=$(extract_kib_value "$progress_line")
             
-            # If progress value hasn't changed
-            if [ "$current_value" = "$last_value" ] && [ "$current_value" != "0" ]; then
+            # Convert to numeric values for comparison
+            local last_numeric=$(printf "%.1f" "$last_value")
+            local current_numeric=$(printf "%.1f" "$current_value")
+            
+            # Log for debugging
+            log "INFO" "Progress check: Last=$last_numeric KiB, Current=$current_numeric KiB, Stall counter=$stall_counter s"
+            
+            # If progress value hasn't changed and we have valid progress data
+            if (( $(echo "$current_numeric > 0.0" | bc -l) )) && (( $(echo "$current_numeric == $last_numeric" | bc -l) )); then
                 stall_counter=$((stall_counter + PROGRESS_CHECK_INTERVAL))
+                log "INFO" "No progress detected for $stall_counter seconds at $current_value KiB"
+                
                 if [ $stall_counter -ge $UPLOAD_STALL_TIMEOUT ]; then
                     log "WARNING" "Upload to ${device_name} stalled at ${current_value} KiB for ${UPLOAD_STALL_TIMEOUT} seconds. Terminating..."
                     kill $pid 2>/dev/null
@@ -175,8 +185,11 @@ function monitor_upload_progress() {
                 fi
             else
                 # Reset stall counter if progress changed
-                stall_counter=0
-                last_value="$current_value"
+                if (( $(echo "$current_numeric != $last_numeric" | bc -l) )); then
+                    log "INFO" "Progress detected, resetting stall counter"
+                    stall_counter=0
+                    last_value=$current_value
+                fi
             fi
         fi
     done
@@ -399,6 +412,13 @@ function main() {
     if ! command -v grep &> /dev/null; then
         log "ERROR" "grep command not found. This is required for progress monitoring."
         log "INFO" "Installation: sudo apt install grep"
+        exit 1
+    fi
+    
+    # Check for bc (binary calculator) for floating point comparisons
+    if ! command -v bc &> /dev/null; then
+        log "ERROR" "bc command not found. This is required for floating point comparisons."
+        log "INFO" "Installation: sudo apt install bc"
         exit 1
     fi
     
