@@ -7,7 +7,7 @@ function get_devices() {
     echo "Scanning for ha-coap devices (this will take a few seconds)..."
     
     # Run avahi-browse with a timeout to ensure it doesn't run indefinitely
-    output=$(timeout 2s avahi-browse -r _ot._udp)
+    output=$(timeout 5s avahi-browse -r _ot._udp)
     
     # Initialize arrays to store device names and addresses
     declare -a devices=()
@@ -56,7 +56,7 @@ function get_devices() {
     
     # Get user selection
     echo
-    echo "Enter the number of the device to flash (or 'q' to quit):"
+    echo "Enter the number of the device to select (or 'q' to quit):"
     read -r choice
     
     # Process user selection
@@ -70,16 +70,16 @@ function get_devices() {
         echo "Selected device: $device_name"
         echo "IPv6 Address: $device_address"
         
-        # Call the flash function with the selected device
-        flash_device "$device_name" "$device_address"
+        # Call the handle_device function with the selected device
+        handle_device "$device_name" "$device_address"
     else
         echo "Invalid selection. Please try again."
         exit 1
     fi
 }
 
-# Function to handle the flashing process
-function flash_device() {
+# Function to handle device operations
+function handle_device() {
     local device_name="$1"
     local device_address="$2"
     
@@ -141,6 +141,43 @@ function flash_device() {
         exit 1
     fi
     
+    # Prompt for operation
+    echo
+    echo "Select operation:"
+    echo "  1. Upload image"
+    echo "  2. List images"
+    read -r operation_choice
+    
+    if [[ "$operation_choice" == "1" ]]; then
+    # Prompt for test or confirm before uploading
+    echo
+    echo "After uploading, do you want to test or confirm the image?"
+    echo "  1. Test (can be reverted if problems occur)"
+    echo "  2. Confirm (permanent)"
+    read -r test_confirm_choice
+    
+    if [[ "$test_confirm_choice" != "1" && "$test_confirm_choice" != "2" ]]; then
+        echo "Invalid choice. Please enter 1 for Test or 2 for Confirm."
+    fi
+    upload_and_process_image "$transport" "$test_confirm_choice"
+    fi
+    
+    
+    elif [[ "$operation_choice" == "2" ]]; then
+        # Just list the images
+        echo "Listing images..."
+        mcumgr -c "$transport" image list
+    else
+        echo "Invalid operation selection."
+        exit 1
+    fi
+}
+
+# Function to handle the upload and post-upload operations
+function upload_and_process_image() {
+    local transport="$1"
+    local test_confirm_choice="$2"
+    
     # Change to the build directory
     echo "Changing to build directory..."
     cd ../application/build || { echo "Failed to change to build directory"; exit 1; }
@@ -148,10 +185,14 @@ function flash_device() {
     # Upload the new image
     echo "Uploading image..."
     mcumgr -c "$transport" image upload zephyr/app_update.bin
+    
+    # Check if the upload was successful
     if [ $? -ne 0 ]; then
         echo "Image upload failed!"
         exit 1
     fi
+    
+    echo "Upload completed successfully."
     
     # Get the image list to find the new hash
     echo "Getting image list..."
@@ -168,42 +209,19 @@ function flash_device() {
     
     echo "New image hash: $new_hash"
     
-    # Prompt for test or confirm
-    echo
-    echo "Do you want to test or confirm the image?"
-    echo "  1. Test (can be reverted if problems occur)"
-    echo "  2. Confirm (permanent)"
-    read -r test_confirm_choice
-    
-    # Test or confirm based on choice
+    # Test or confirm based on earlier choice
     if [[ "$test_confirm_choice" == "1" ]]; then
         echo "Testing image..."
         mcumgr -c "$transport" image test "$new_hash"
     elif [[ "$test_confirm_choice" == "2" ]]; then
         echo "Confirming image..."
         mcumgr -c "$transport" image confirm "$new_hash"
-    else
-        echo "Invalid choice. Exiting without testing or confirming."
-        exit 1
     fi
     
-    # Prompt for reset
-    echo
-    echo "Do you want to reset the device now? (y/n)"
-    read -r reset_choice
-    
-    if [[ "$reset_choice" == "y" || "$reset_choice" == "Y" ]]; then
-        if [[ "$transport" == "serial" ]]; then
-            echo "Resetting device via serial..."
-            mcumgr -c serial reset
-        else
-            echo "Resetting device via UDP..."
-            mcumgr -c udp reset
-        fi
-        echo "Device reset initiated."
-    else
-        echo "Device not reset. You can manually reset it later."
-    fi
+    # Automatically reset the device after test/confirm
+    echo "Resetting device..."
+    mcumgr -c "$transport" reset
+    echo "Device reset initiated."
     
     echo "Flash process completed."
 }
