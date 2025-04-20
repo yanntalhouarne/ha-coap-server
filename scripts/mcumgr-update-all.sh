@@ -17,6 +17,7 @@ NC='\033[0m' # No Color
 # Configuration
 UPLOAD_STALL_TIMEOUT=300  # 5 minutes in seconds
 PROGRESS_CHECK_INTERVAL=10  # Check progress every 10 seconds
+MAX_UPLOAD_RETRIES=3  # Maximum number of upload retry attempts
 
 # Timestamp for log files
 TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
@@ -336,6 +337,8 @@ function update_device() {
     local device_name="$1"
     local device_address="$2"
     local test_mode="$3"
+    local retry_count=0
+    local upload_success=false
     
     log "INFO" "===== Processing device: ${device_name} (${device_address}) ====="
     
@@ -395,205 +398,231 @@ function update_device() {
         fi
     fi
     
-    # Clear the progress file
-    > "$TEMP_PROGRESS_FILE"
-    
-    # Upload the new image with stall detection
-    log "INFO" "Uploading firmware image to ${device_name}..."
-    log "INFO" "Upload will be terminated if stalled for ${UPLOAD_STALL_TIMEOUT} seconds"
-    
-    # Record start time for timing the upload
-    local upload_start_time=$(date +%s)
-    
-    # Clear the progress file and stall indicator
-    > "$TEMP_PROGRESS_FILE"
-    rm -f "$TEMP_PROGRESS_FILE.stalled" 2>/dev/null
-    rm -f "$TEMP_PROGRESS_FILE.log" 2>/dev/null
-    rm -f "$TEMP_PROGRESS_FILE.py" 2>/dev/null
-    
-    # Use a better approach with coproc to monitor the process
-    # This fixes the "wait: pid is not a child of this shell" error
-    log "INFO" "Starting upload process..."
-    
-    # Create a named pipe for progress monitoring
-    local pipe_file="/tmp/mcumgr_pipe_$"
-    mkfifo "$pipe_file" 2>/dev/null
-    
-    # Start the upload in background using a process group
-    set -m  # Enable job control
-    mcumgr -c "udp" image upload "${BUILD_DIR}/zephyr/app_update.bin" > "$pipe_file" 2>&1 &
-    upload_pid=$!
-    set +m  # Disable job control
-    
-    # Start cat in background to read from the pipe and capture output
-    cat "$pipe_file" | tee "$TEMP_PROGRESS_FILE" &
-    cat_pid=$!
-    
-    # Start Python monitor in background only if stall detection is enabled
-    if [ $UPLOAD_STALL_TIMEOUT -gt 0 ]; then
-        stall_monitor_script "$TEMP_PROGRESS_FILE" $UPLOAD_STALL_TIMEOUT "$device_name" $upload_pid &
-        monitor_pid=$!
-    fi
-    
-    # Calculate a reasonable timeout (stall timeout plus margin)
-    wait_timeout=$((UPLOAD_STALL_TIMEOUT + 3600))  # 1 hour margin
-    
-    # Wait for the upload to finish with timeout
-    upload_status=0
-    upload_done=false
-    
-    log "INFO" "Waiting for upload to complete (timeout: ${wait_timeout}s)..."
-    
-    # Start a timeout counter
-    start_time=$(date +%s)
-    while ! $upload_done; do
-        # Check if process is still running
-        if ! kill -0 $upload_pid 2>/dev/null; then
-            # Process completed
-            wait $upload_pid 2>/dev/null
-            upload_status=$?
-            upload_done=true
-            log "INFO" "Upload process completed with status $upload_status"
-        else
-            # Check for stall marker
-            if [ -f "$TEMP_PROGRESS_FILE.stalled" ]; then
-                log "ERROR" "Upload stalled and was terminated by monitor"
-                kill -9 $upload_pid 2>/dev/null
-                upload_status=1
+    # Implement retry logic
+    while [ $retry_count -lt $MAX_UPLOAD_RETRIES ] && [ "$upload_success" = false ]; do
+        # Increment retry count
+        retry_count=$((retry_count + 1))
+        
+        if [ $retry_count -gt 1 ]; then
+            log "INFO" "Retry attempt $retry_count of $MAX_UPLOAD_RETRIES for ${device_name}..."
+            # Add a short delay before retrying
+            sleep 3
+        fi
+        
+        # Clear the progress file
+        > "$TEMP_PROGRESS_FILE"
+        
+        # Upload the new image with stall detection
+        log "INFO" "Uploading firmware image to ${device_name}..."
+        log "INFO" "Upload will be terminated if stalled for ${UPLOAD_STALL_TIMEOUT} seconds"
+        
+        # Record start time for timing the upload
+        local upload_start_time=$(date +%s)
+        
+        # Clear the progress file and stall indicator
+        > "$TEMP_PROGRESS_FILE"
+        rm -f "$TEMP_PROGRESS_FILE.stalled" 2>/dev/null
+        rm -f "$TEMP_PROGRESS_FILE.log" 2>/dev/null
+        rm -f "$TEMP_PROGRESS_FILE.py" 2>/dev/null
+        
+        # Use a better approach with coproc to monitor the process
+        # This fixes the "wait: pid is not a child of this shell" error
+        log "INFO" "Starting upload process..."
+        
+        # Create a named pipe for progress monitoring
+        local pipe_file="/tmp/mcumgr_pipe_$"
+        mkfifo "$pipe_file" 2>/dev/null
+        
+        # Start the upload in background using a process group
+        set -m  # Enable job control
+        mcumgr -c "udp" image upload "${BUILD_DIR}/zephyr/app_update.bin" > "$pipe_file" 2>&1 &
+        upload_pid=$!
+        set +m  # Disable job control
+        
+        # Start cat in background to read from the pipe and capture output
+        cat "$pipe_file" | tee "$TEMP_PROGRESS_FILE" &
+        cat_pid=$!
+        
+        # Start Python monitor in background only if stall detection is enabled
+        if [ $UPLOAD_STALL_TIMEOUT -gt 0 ]; then
+            stall_monitor_script "$TEMP_PROGRESS_FILE" $UPLOAD_STALL_TIMEOUT "$device_name" $upload_pid &
+            monitor_pid=$!
+        fi
+        
+        # Calculate a reasonable timeout (stall timeout plus margin)
+        wait_timeout=$((UPLOAD_STALL_TIMEOUT + 3600))  # 1 hour margin
+        
+        # Wait for the upload to finish with timeout
+        upload_status=0
+        upload_done=false
+        
+        log "INFO" "Waiting for upload to complete (timeout: ${wait_timeout}s)..."
+        
+        # Start a timeout counter
+        start_time=$(date +%s)
+        while ! $upload_done; do
+            # Check if process is still running
+            if ! kill -0 $upload_pid 2>/dev/null; then
+                # Process completed
+                wait $upload_pid 2>/dev/null
+                upload_status=$?
                 upload_done=true
+                log "INFO" "Upload process completed with status $upload_status"
             else
-                # Check for timeout
-                current_time=$(date +%s)
-                elapsed=$((current_time - start_time))
-                
-                if [ $elapsed -gt $wait_timeout ]; then
-                    log "WARNING" "Upload timeout after ${elapsed}s, forcing termination"
+                # Check for stall marker
+                if [ -f "$TEMP_PROGRESS_FILE.stalled" ]; then
+                    log "ERROR" "Upload stalled and was terminated by monitor"
                     kill -9 $upload_pid 2>/dev/null
                     upload_status=1
                     upload_done=true
                 else
-                    # Sleep briefly before checking again
-                    sleep 2
+                    # Check for timeout
+                    current_time=$(date +%s)
+                    elapsed=$((current_time - start_time))
+                    
+                    if [ $elapsed -gt $wait_timeout ]; then
+                        log "WARNING" "Upload timeout after ${elapsed}s, forcing termination"
+                        kill -9 $upload_pid 2>/dev/null
+                        upload_status=1
+                        upload_done=true
+                    else
+                        # Sleep briefly before checking again
+                        sleep 2
+                    fi
                 fi
+            fi
+        done
+        
+        # Allow cat process to finish reading the pipe
+        sleep 1
+        kill $cat_pid 2>/dev/null
+        rm -f "$pipe_file" 2>/dev/null
+        
+        # Check if the process was killed due to a stall
+        if [ -f "$TEMP_PROGRESS_FILE.stalled" ]; then
+            upload_status=1
+            log "ERROR" "Upload failed due to stall timeout"
+            
+            # Show the monitor log to diagnose issues
+            if [ -f "$TEMP_PROGRESS_FILE.log" ]; then
+                log "DEBUG" "Python stall monitor log content:"
+                cat "$TEMP_PROGRESS_FILE.log" >> "$LOG_FILE"
+            fi
+        fi
+        
+        # Kill the monitor if it's still running
+        if [ $UPLOAD_STALL_TIMEOUT -gt 0 ] && kill -0 $monitor_pid 2>/dev/null; then
+            kill $monitor_pid 2>/dev/null
+        fi
+        
+        # Make sure we don't leave any zombie processes
+        # Find all processes that might be related to our upload
+        local zombie_pids=$(pgrep -f "mcumgr.*upload" | grep -v "$$")
+        if [ -n "$zombie_pids" ]; then
+            log "WARNING" "Found lingering mcumgr processes, cleaning up..."
+            for pid in $zombie_pids; do
+                kill -9 $pid 2>/dev/null
+            done
+        fi
+        
+        # Remove the temp files
+        rm -f "$TEMP_PROGRESS_FILE" 2>/dev/null
+        rm -f "$TEMP_PROGRESS_FILE.stalled" 2>/dev/null
+        rm -f "$TEMP_PROGRESS_FILE.py" 2>/dev/null
+        rm -f "$TEMP_PROGRESS_FILE.log" 2>/dev/null
+        
+        # Calculate upload duration
+        local upload_end_time=$(date +%s)
+        local upload_duration=$((upload_end_time - upload_start_time))
+        local minutes=$((upload_duration / 60))
+        local seconds=$((upload_duration % 60))
+        
+        # Check if the upload was successful
+        if [ $upload_status -eq 0 ]; then
+            log "SUCCESS" "Upload completed successfully for ${device_name}"
+            log "INFO" "Upload time: ${minutes} minutes ${seconds} seconds"
+            upload_success=true
+        else
+            if [ $retry_count -lt $MAX_UPLOAD_RETRIES ]; then
+                log "ERROR" "Upload attempt $retry_count failed for ${device_name}"
+                log "INFO" "Will retry in a moment..."
+            else
+                log "ERROR" "All $MAX_UPLOAD_RETRIES upload attempts failed for ${device_name}"
+                mcumgr conn remove "udp" > /dev/null 2>&1
+                return 1
             fi
         fi
     done
     
-    # Allow cat process to finish reading the pipe
-    sleep 1
-    kill $cat_pid 2>/dev/null
-    rm -f "$pipe_file" 2>/dev/null
-    
-    # Check if the process was killed due to a stall
-    if [ -f "$TEMP_PROGRESS_FILE.stalled" ]; then
-        upload_status=1
-        log "ERROR" "Upload failed due to stall timeout"
+    # Only proceed with confirmation and reset if upload was successful
+    if [ "$upload_success" = true ]; then
+        # Get the updated image list
+        log "INFO" "Getting updated image list from ${device_name}..."
+        image_list_output=$(mcumgr -c "udp" image list 2>&1)
         
-        # Show the monitor log to diagnose issues
-        if [ -f "$TEMP_PROGRESS_FILE.log" ]; then
-            log "DEBUG" "Python stall monitor log content:"
-            cat "$TEMP_PROGRESS_FILE.log" >> "$LOG_FILE"
-        fi
-    fi
-    
-    # Kill the monitor if it's still running
-    if [ $UPLOAD_STALL_TIMEOUT -gt 0 ] && kill -0 $monitor_pid 2>/dev/null; then
-        kill $monitor_pid 2>/dev/null
-    fi
-    
-    # Make sure we don't leave any zombie processes
-    # Find all processes that might be related to our upload
-    local zombie_pids=$(pgrep -f "mcumgr.*upload" | grep -v "$$")
-    if [ -n "$zombie_pids" ]; then
-        log "WARNING" "Found lingering mcumgr processes, cleaning up..."
-        for pid in $zombie_pids; do
-            kill -9 $pid 2>/dev/null
-        done
-    fi
-    
-    # Remove the temp files
-    rm -f "$TEMP_PROGRESS_FILE" 2>/dev/null
-    rm -f "$TEMP_PROGRESS_FILE.stalled" 2>/dev/null
-    rm -f "$TEMP_PROGRESS_FILE.py" 2>/dev/null
-    rm -f "$TEMP_PROGRESS_FILE.log" 2>/dev/null
-    
-    # Calculate upload duration
-    local upload_end_time=$(date +%s)
-    local upload_duration=$((upload_end_time - upload_start_time))
-    local minutes=$((upload_duration / 60))
-    local seconds=$((upload_duration % 60))
-    
-    # Check if the upload was successful
-    if [ $upload_status -ne 0 ]; then
-        log "ERROR" "Image upload failed for ${device_name}"
-        mcumgr conn remove "udp" > /dev/null 2>&1
-        return 1
-    fi
-    
-    log "SUCCESS" "Upload completed successfully for ${device_name}"
-    log "INFO" "Upload time: ${minutes} minutes ${seconds} seconds"
-    
-    # Get the updated image list
-    log "INFO" "Getting updated image list from ${device_name}..."
-    image_list_output=$(mcumgr -c "udp" image list 2>&1)
-    
-    # Save updated image list to the log
-    echo "Updated image list from ${device_name}:" >> "$LOG_FILE"
-    echo "$image_list_output" >> "$LOG_FILE"
-    echo "" >> "$LOG_FILE"
-    
-    # Extract the hash of the newly uploaded image
-    new_hash=$(echo "$image_list_output" | awk '/image=0 slot=1/{found=1} found && /hash:/{print $2; exit}')
-    
-    if [ -z "$new_hash" ]; then
-        log "ERROR" "Failed to get new image hash for ${device_name}!"
-        mcumgr conn remove "udp" > /dev/null 2>&1
-        return 1
-    fi
-    
-    log "INFO" "New image hash on ${device_name}: ${new_hash}"
-    
-    # Test or confirm based on the mode
-    if [ "$test_mode" = true ]; then
-        log "INFO" "Setting image for testing on ${device_name}..."
-        test_output=$(mcumgr -c "udp" image test "$new_hash" 2>&1)
+        # Save updated image list to the log
+        echo "Updated image list from ${device_name}:" >> "$LOG_FILE"
+        echo "$image_list_output" >> "$LOG_FILE"
+        echo "" >> "$LOG_FILE"
         
-        if [ $? -ne 0 ]; then
-            log "ERROR" "Failed to set test mode for ${device_name}: ${test_output}"
+        # Extract the hash of the newly uploaded image
+        new_hash=$(echo "$image_list_output" | awk '/image=0 slot=1/{found=1} found && /hash:/{print $2; exit}')
+        
+        if [ -z "$new_hash" ]; then
+            log "ERROR" "Failed to get new image hash for ${device_name}!"
             mcumgr conn remove "udp" > /dev/null 2>&1
             return 1
         fi
         
-        log "SUCCESS" "Image marked for testing on ${device_name}. It will run once after reset and revert if boot fails."
-    else
-        log "INFO" "Confirming image permanently on ${device_name}..."
-        confirm_output=$(mcumgr -c "udp" image confirm "$new_hash" 2>&1)
+        log "INFO" "New image hash on ${device_name}: ${new_hash}"
         
-        if [ $? -ne 0 ]; then
-            log "ERROR" "Failed to confirm image for ${device_name}: ${confirm_output}"
-            mcumgr conn remove "udp" > /dev/null 2>&1
-            return 1
+        # Test or confirm based on the mode
+        if [ "$test_mode" = true ]; then
+            log "INFO" "Setting image for testing on ${device_name}..."
+            test_output=$(mcumgr -c "udp" image test "$new_hash" 2>&1)
+            
+            if [ $? -ne 0 ]; then
+                log "ERROR" "Failed to set test mode for ${device_name}: ${test_output}"
+                mcumgr conn remove "udp" > /dev/null 2>&1
+                return 1
+            fi
+            
+            log "SUCCESS" "Image marked for testing on ${device_name}. It will run once after reset and revert if boot fails."
+        else
+            log "INFO" "Confirming image permanently on ${device_name}..."
+            confirm_output=$(mcumgr -c "udp" image confirm "$new_hash" 2>&1)
+            
+            if [ $? -ne 0 ]; then
+                log "ERROR" "Failed to confirm image for ${device_name}: ${confirm_output}"
+                mcumgr conn remove "udp" > /dev/null 2>&1
+                return 1
+            fi
+            
+            log "SUCCESS" "Image confirmed permanently on ${device_name}."
         fi
         
-        log "SUCCESS" "Image confirmed permanently on ${device_name}."
+        # Reset the device
+        log "INFO" "Resetting device ${device_name}..."
+        reset_output=$(mcumgr -c "udp" reset 2>&1)
+        
+        if [ $? -ne 0 ]; then
+            log "WARNING" "Failed to reset device ${device_name}: ${reset_output}"
+            # Not returning error as the flash was successful
+        else
+            log "SUCCESS" "Device ${device_name} reset initiated."
+        fi
+        
+        # Clean up connection
+        mcumgr conn remove "udp" > /dev/null 2>&1
+        
+        log "SUCCESS" "Flash process completed for ${device_name}"
+        return 0
     fi
     
-    # Reset the device
-    log "INFO" "Resetting device ${device_name}..."
-    reset_output=$(mcumgr -c "udp" reset 2>&1)
-    
-    if [ $? -ne 0 ]; then
-        log "WARNING" "Failed to reset device ${device_name}: ${reset_output}"
-        # Not returning error as the flash was successful
-    else
-        log "SUCCESS" "Device ${device_name} reset initiated."
-    fi
-    
-    # Clean up connection
+    # If we reach here, all retries failed
+    log "ERROR" "Flash process failed for ${device_name} after ${MAX_UPLOAD_RETRIES} attempts"
     mcumgr conn remove "udp" > /dev/null 2>&1
-    
-    log "SUCCESS" "Flash process completed for ${device_name}"
-    return 0
+    return 1
 }
 
 # Function to clean up temp files
@@ -761,6 +790,21 @@ function main() {
         log "INFO" "Using default stall timeout of ${UPLOAD_STALL_TIMEOUT} seconds"
     fi
     
+    # Allow configuration of max retries
+    echo ""
+    echo -e "${YELLOW}? Enter maximum number of upload retry attempts (${MAX_UPLOAD_RETRIES} is default):${NC} "
+    read -r retry_setting
+    
+    # Validate input
+    if [[ "$retry_setting" =~ ^[0-9]+$ ]]; then
+        if [ "$retry_setting" -ge 0 ]; then
+            MAX_UPLOAD_RETRIES=$retry_setting
+            log "INFO" "Maximum upload retries set to ${MAX_UPLOAD_RETRIES}"
+        fi
+    else
+        log "INFO" "Using default retry setting of ${MAX_UPLOAD_RETRIES} attempts"
+    fi
+    
     # Confirm before proceeding
     total_devices=${#DEVICE_NAMES[@]}
     echo ""
@@ -779,7 +823,7 @@ function main() {
     
     # Process each device
     for i in "${!DEVICE_NAMES[@]}"; do
-        # FIX: Fixed array access for device addresses
+        # Fixed array access for device addresses 
         update_device "${DEVICE_NAMES[$i]}" "${DEVICE_ADDRESSES[$i]}" "$TEST_MODE"
         result=$?
         
@@ -818,4 +862,4 @@ function main() {
 }
 
 # Run the main function
-main 
+main
