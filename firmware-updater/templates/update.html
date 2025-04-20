@@ -240,33 +240,44 @@
     }
     
     function loadSelectedDevices() {
-        // Check URL parameters first
-        const urlParams = new URLSearchParams(window.location.search);
-        const deviceParam = urlParams.get('devices');
-        
-        if (deviceParam) {
-            try {
-                selectedDevices = JSON.parse(decodeURIComponent(deviceParam));
-                displaySelectedDevices();
-                return;
-            } catch (e) {
-                console.error('Error parsing device parameter:', e);
-            }
+    // Check URL parameters first
+    const urlParams = new URLSearchParams(window.location.search);
+    const deviceParam = urlParams.get('devices');
+    
+    if (deviceParam) {
+        try {
+            // Add console.log to debug the parameter
+            console.log("Device parameter:", deviceParam);
+            selectedDevices = JSON.parse(decodeURIComponent(deviceParam));
+            console.log("Parsed devices:", selectedDevices);
+            displaySelectedDevices();
+            return;
+        } catch (e) {
+            console.error('Error parsing device parameter:', e);
+            // Log the actual parameter for debugging
+            console.error('Raw parameter:', deviceParam);
         }
-        
-        // If no URL parameter, check local storage
-        const savedDevices = localStorage.getItem('savedDevices');
-        
-        if (savedDevices) {
-            try {
-                const devices = JSON.parse(savedDevices);
-                selectedDevices = devices.filter(device => device.selected);
-                displaySelectedDevices();
-            } catch (e) {
-                console.error('Error loading saved devices:', e);
-            }
-        }
+    } else {
+        console.log("No devices parameter found in URL");
     }
+    
+    // If no URL parameter, check local storage
+    const savedDevices = localStorage.getItem('savedDevices');
+    
+    if (savedDevices) {
+        try {
+            console.log("Found saved devices in localStorage");
+            const devices = JSON.parse(savedDevices);
+            selectedDevices = devices.filter(device => device.selected);
+            console.log("Filtered selected devices:", selectedDevices);
+            displaySelectedDevices();
+        } catch (e) {
+            console.error('Error loading saved devices:', e);
+        }
+    } else {
+        console.log("No saved devices found in localStorage");
+    }
+}
     
     function displaySelectedDevices() {
         const deviceList = document.getElementById('selected-devices');

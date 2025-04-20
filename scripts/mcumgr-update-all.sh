@@ -436,7 +436,7 @@ function update_device() {
     fi
     
     # Calculate a reasonable timeout (stall timeout plus margin)
-    wait_timeout=$((UPLOAD_STALL_TIMEOUT + 300))  # 5 minutes extra for large files
+    wait_timeout=$((UPLOAD_STALL_TIMEOUT + 3600))  # 1 hour margin
     
     # Wait for the upload to finish with timeout
     upload_status=0
