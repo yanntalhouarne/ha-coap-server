@@ -1,30 +1,50 @@
 #!/bin/bash
 
-# ===================================================
-# HA-CoAP Bulk Device Manager
-# A tool to flash firmware to multiple Thread devices
-# ===================================================
+# ========================================================================
+#  HA-CoAP Bulk Device Manager
+#  A tool for efficient firmware updates to multiple Thread devices
+# ========================================================================
 
-# Terminal colors for better visual experience
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[0;33m'
-BLUE='\033[0;34m'
-PURPLE='\033[0;35m'
-CYAN='\033[0;36m'
-NC='\033[0m' # No Color
+# ----------------------
+# Terminal color definitions
+# ----------------------
+declare -r RED='\033[0;31m'
+declare -r GREEN='\033[0;32m'
+declare -r YELLOW='\033[0;33m'
+declare -r BLUE='\033[0;34m'
+declare -r PURPLE='\033[0;35m'
+declare -r CYAN='\033[0;36m'
+declare -r NC='\033[0m' # No Color
 
-# Configuration
+# ----------------------
+# Configuration variables
+# ----------------------
+declare -r TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
+declare -r LOG_FILE="flash_logs_${TIMESTAMP}.log"
+declare -r TEMP_PROGRESS_FILE="/tmp/mcumgr_progress_$TIMESTAMP.tmp"
+
+# Default settings (can be modified by user input)
 UPLOAD_STALL_TIMEOUT=300  # 5 minutes in seconds
 PROGRESS_CHECK_INTERVAL=10  # Check progress every 10 seconds
 MAX_UPLOAD_RETRIES=3  # Maximum number of upload retry attempts
 
-# Timestamp for log files
-TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
-LOG_FILE="flash_logs_${TIMESTAMP}.log"
-TEMP_PROGRESS_FILE="/tmp/mcumgr_progress_$TIMESTAMP.tmp"
+# Global variables for tracking devices and statistics
+declare -a DEVICE_NAMES
+declare -a DEVICE_ADDRESSES
+SUCCESSFUL_UPDATES=0
+FAILED_UPDATES=0
+SKIPPED_UPDATES=0
+BUILD_DIR=""
 
-# Function to log messages to both console and log file
+# ----------------------
+# Utility Functions
+# ----------------------
+
+# Function: log
+# Description: Logs messages to both console and log file with appropriate formatting
+# Parameters:
+#   $1 - Log level (INFO, SUCCESS, ERROR, WARNING)
+#   $2 - Message to log
 function log() {
     local level="$1"
     local message="$2"
@@ -32,22 +52,10 @@ function log() {
     local prefix=""
     
     case "$level" in
-        "INFO")
-            color="$CYAN"
-            prefix="[INFO]"
-            ;;
-        "SUCCESS")
-            color="$GREEN"
-            prefix="[SUCCESS]"
-            ;;
-        "ERROR")
-            color="$RED"
-            prefix="[ERROR]"
-            ;;
-        "WARNING")
-            color="$YELLOW"
-            prefix="[WARNING]"
-            ;;
+        "INFO")    color="$CYAN";    prefix="[INFO]"    ;;
+        "SUCCESS") color="$GREEN";   prefix="[SUCCESS]" ;;
+        "ERROR")   color="$RED";     prefix="[ERROR]"   ;;
+        "WARNING") color="$YELLOW";  prefix="[WARNING]" ;;
     esac
     
     # Print to console with color
@@ -57,7 +65,8 @@ function log() {
     echo "$(date '+%Y-%m-%d %H:%M:%S') ${prefix} ${message}" >> "$LOG_FILE"
 }
 
-# Print banner
+# Function: print_banner
+# Description: Displays a stylized banner at the start of the script
 function print_banner() {
     clear
     echo -e "${BLUE}+---------------------------------------------------+${NC}"
@@ -77,7 +86,36 @@ function print_banner() {
     echo "" >> "$LOG_FILE"
 }
 
-# Function to discover ha-coap devices and their IPv6 addresses
+# Function: cleanup
+# Description: Cleans up temporary files and processes
+function cleanup() {
+    # Clean up all temporary files
+    rm -f "$TEMP_PROGRESS_FILE" "$TEMP_PROGRESS_FILE.stalled" "$TEMP_PROGRESS_FILE.log" "$TEMP_PROGRESS_FILE.py" "/tmp/mcumgr_pipe_$" 2>/dev/null
+    
+    # Kill any remaining mcumgr processes that might be hanging
+    local mcumgr_pids=$(pgrep -f "mcumgr.*upload")
+    if [ -n "$mcumgr_pids" ]; then
+        log "WARNING" "Cleaning up lingering mcumgr processes during exit..."
+        for pid in $mcumgr_pids; do
+            kill -9 $pid 2>/dev/null
+        done
+    fi
+    
+    # Kill any cat processes we might have started
+    local cat_pids=$(pgrep -f "cat.*mcumgr_pipe")
+    if [ -n "$cat_pids" ]; then
+        for pid in $cat_pids; do
+            kill -9 $pid 2>/dev/null
+        done
+    fi
+}
+
+# ----------------------
+# Device Discovery & Management
+# ----------------------
+
+# Function: discover_devices
+# Description: Uses avahi-browse to find HA-CoAP devices on the network
 function discover_devices() {
     log "INFO" "Scanning for ha-coap devices..."
     
@@ -98,9 +136,7 @@ function discover_devices() {
             device_name=$(echo "$line" | awk '{print $4}')
             
             # Skip if we've already seen this device
-            if [[ -n "${seen_devices[$device_name]}" ]]; then
-                continue
-            fi
+            [[ -n "${seen_devices[$device_name]}" ]] && continue
             
             # Mark this device as seen
             seen_devices[$device_name]=1
@@ -141,7 +177,10 @@ function discover_devices() {
     DEVICE_ADDRESSES=("${addresses[@]}")
 }
 
-# Function to extract KiB value from progress output
+# Function: extract_kib_value
+# Description: Extracts KiB values from progress output lines
+# Parameters:
+#   $1 - Progress line to extract from
 function extract_kib_value() {
     local progress_line="$1"
     
@@ -168,7 +207,13 @@ function extract_kib_value() {
     fi
 }
 
-# Function to monitor stall using Python (more reliable parsing)
+# ----------------------
+# Python Stall Monitoring
+# ----------------------
+
+# Function: stall_monitor_script
+# Description: Creates and runs a Python script to monitor upload progress and detect stalls
+# Parameters are passed through to the Python script
 function stall_monitor_script() {
     # Create a temporary Python script to monitor for stalls
     cat > "${TEMP_PROGRESS_FILE}.py" << 'EOL'
@@ -332,7 +377,16 @@ EOL
     python3 "${TEMP_PROGRESS_FILE}.py" "$@"
 }
 
-# Function to update a single device
+# ----------------------
+# Firmware Update Functions
+# ----------------------
+
+# Function: update_device
+# Description: Updates firmware on a single device with retry logic
+# Parameters:
+#   $1 - Device name
+#   $2 - Device IPv6 address
+#   $3 - Test mode flag (true/false)
 function update_device() {
     local device_name="$1"
     local device_address="$2"
@@ -421,12 +475,9 @@ function update_device() {
         
         # Clear the progress file and stall indicator
         > "$TEMP_PROGRESS_FILE"
-        rm -f "$TEMP_PROGRESS_FILE.stalled" 2>/dev/null
-        rm -f "$TEMP_PROGRESS_FILE.log" 2>/dev/null
-        rm -f "$TEMP_PROGRESS_FILE.py" 2>/dev/null
+        rm -f "$TEMP_PROGRESS_FILE.stalled" "$TEMP_PROGRESS_FILE.log" "$TEMP_PROGRESS_FILE.py" 2>/dev/null
         
         # Use a better approach with coproc to monitor the process
-        # This fixes the "wait: pid is not a child of this shell" error
         log "INFO" "Starting upload process..."
         
         # Create a named pipe for progress monitoring
@@ -526,10 +577,7 @@ function update_device() {
         fi
         
         # Remove the temp files
-        rm -f "$TEMP_PROGRESS_FILE" 2>/dev/null
-        rm -f "$TEMP_PROGRESS_FILE.stalled" 2>/dev/null
-        rm -f "$TEMP_PROGRESS_FILE.py" 2>/dev/null
-        rm -f "$TEMP_PROGRESS_FILE.log" 2>/dev/null
+        rm -f "$TEMP_PROGRESS_FILE" "$TEMP_PROGRESS_FILE.stalled" "$TEMP_PROGRESS_FILE.py" "$TEMP_PROGRESS_FILE.log" 2>/dev/null
         
         # Calculate upload duration
         local upload_end_time=$(date +%s)
@@ -625,77 +673,32 @@ function update_device() {
     return 1
 }
 
-# Function to clean up temp files
-function cleanup() {
-    # Clean up all temporary files
-    if [ -f "$TEMP_PROGRESS_FILE" ]; then
-        rm -f "$TEMP_PROGRESS_FILE"
-    fi
-    rm -f "$TEMP_PROGRESS_FILE.stalled" 2>/dev/null
-    rm -f "$TEMP_PROGRESS_FILE.log" 2>/dev/null
-    rm -f "$TEMP_PROGRESS_FILE.py" 2>/dev/null
-    rm -f "/tmp/mcumgr_pipe_$" 2>/dev/null
-    
-    # Kill any remaining mcumgr processes that might be hanging
-    local mcumgr_pids=$(pgrep -f "mcumgr.*upload")
-    if [ -n "$mcumgr_pids" ]; then
-        log "WARNING" "Cleaning up lingering mcumgr processes during exit..."
-        for pid in $mcumgr_pids; do
-            kill -9 $pid 2>/dev/null
-        done
-    fi
-    
-    # Kill any cat processes we might have started
-    local cat_pids=$(pgrep -f "cat.*mcumgr_pipe")
-    if [ -n "$cat_pids" ]; then
-        for pid in $cat_pids; do
-            kill -9 $pid 2>/dev/null
-        done
-    fi
-}
+# ----------------------
+# Dependency Checking
+# ----------------------
 
-# Main function
-function main() {
-    print_banner
-    
-    # Set up cleanup trap
-    trap cleanup EXIT
-    
-    # Enable pipefail to catch errors in piped commands
-    set -o pipefail
-    
-    # Check for required dependencies
+# Function: check_dependencies
+# Description: Verifies all required tools are installed
+function check_dependencies() {
     log "INFO" "Checking for required dependencies..."
     
-    if ! command -v mcumgr &> /dev/null; then
-        log "ERROR" "mcumgr not found. Please install it before running this script."
-        log "INFO" "Installation instructions: https://docs.zephyrproject.org/latest/services/device_mgmt/mcumgr.html"
-        exit 1
-    fi
+    local missing_deps=false
+    local deps=("mcumgr" "avahi-browse" "tee" "grep" "python3")
+    local install_instructions=(
+        "Installation instructions: https://docs.zephyrproject.org/latest/services/device_mgmt/mcumgr.html"
+        "Installation: sudo apt install avahi-utils" 
+        "Installation: sudo apt install coreutils"
+        "Installation: sudo apt install grep"
+        "Installation: sudo apt install python3"
+    )
     
-    if ! command -v avahi-browse &> /dev/null; then
-        log "ERROR" "avahi-browse not found. Please install avahi-utils before running this script."
-        log "INFO" "Installation: sudo apt install avahi-utils"
-        exit 1
-    fi
-    
-    if ! command -v tee &> /dev/null; then
-        log "ERROR" "tee command not found. This is required for progress display."
-        log "INFO" "Installation: sudo apt install coreutils"
-        exit 1
-    fi
-    
-    if ! command -v grep &> /dev/null; then
-        log "ERROR" "grep command not found. This is required for progress monitoring."
-        log "INFO" "Installation: sudo apt install grep"
-        exit 1
-    fi
-    
-    if ! command -v python3 &> /dev/null; then
-        log "ERROR" "python3 not found. This is required for stall detection."
-        log "INFO" "Installation: sudo apt install python3"
-        exit 1
-    fi
+    for i in "${!deps[@]}"; do
+        if ! command -v "${deps[$i]}" &> /dev/null; then
+            log "ERROR" "${deps[$i]} not found. Please install it before running this script."
+            log "INFO" "${install_instructions[$i]}"
+            missing_deps=true
+        fi
+    done
     
     # Recommend timeout command which helps prevent hanging
     if ! command -v timeout &> /dev/null; then
@@ -707,15 +710,22 @@ function main() {
     if [ ! -f "./get-image-hash.sh" ]; then
         log "WARNING" "get-image-hash.sh not found in the current directory."
         log "INFO" "Hash comparison feature will not work properly."
-    fi
-    
-    # Check if the get-image-hash.sh script is executable
-    if [ -f "./get-image-hash.sh" ] && [ ! -x "./get-image-hash.sh" ]; then
+    elif [ ! -x "./get-image-hash.sh" ]; then
         log "INFO" "Making get-image-hash.sh executable..."
         chmod +x ./get-image-hash.sh
     fi
     
-    # Locate build directory
+    if $missing_deps; then
+        log "ERROR" "Missing dependencies. Please install them and try again."
+        exit 1
+    fi
+    
+    log "SUCCESS" "All required dependencies found."
+}
+
+# Function: locate_build_directory
+# Description: Locates or prompts for the build directory
+function locate_build_directory() {
     log "INFO" "Locating build directory..."
     
     # First check the default location
@@ -746,11 +756,12 @@ function main() {
     fi
     
     log "SUCCESS" "Firmware image found: ${BUILD_DIR}/zephyr/app_update.bin"
-    
-    # Discover available devices
-    discover_devices
-    
-    # Prompt for operation mode
+}
+
+# Function: prompt_for_mode
+# Description: Prompts user to select update mode (test or confirm)
+# Returns: Sets global TEST_MODE variable
+function prompt_for_mode() {
     echo ""
     echo -e "${BLUE}+-------------------------------------------+${NC}"
     echo -e "${BLUE}|          Firmware Update Configuration    |${NC}"
@@ -771,8 +782,12 @@ function main() {
         log "ERROR" "Invalid selection: $test_confirm_choice"
         exit 1
     fi
-    
-    # Allow configuration of timeout
+}
+
+# Function: configure_settings
+# Description: Prompts for and configures stall timeout and retry settings
+function configure_settings() {
+    # Configure stall timeout
     echo ""
     echo -e "${YELLOW}? Enter upload stall timeout in seconds (300 is default, 0 to disable):${NC} "
     read -r timeout_setting
@@ -790,7 +805,7 @@ function main() {
         log "INFO" "Using default stall timeout of ${UPLOAD_STALL_TIMEOUT} seconds"
     fi
     
-    # Allow configuration of max retries
+    # Configure max retries
     echo ""
     echo -e "${YELLOW}? Enter maximum number of upload retry attempts (${MAX_UPLOAD_RETRIES} is default):${NC} "
     read -r retry_setting
@@ -804,6 +819,54 @@ function main() {
     else
         log "INFO" "Using default retry setting of ${MAX_UPLOAD_RETRIES} attempts"
     fi
+}
+
+# Function: display_summary
+# Description: Shows summary of the update operation
+function display_summary() {
+    echo ""
+    log "INFO" "==== Update Summary ===="
+    log "INFO" "Total devices: $1"
+    log "SUCCESS" "Successful updates: $SUCCESSFUL_UPDATES"
+    log "INFO" "Skipped updates (already had image): $SKIPPED_UPDATES"
+    if [ $FAILED_UPDATES -gt 0 ]; then
+        log "ERROR" "Failed updates: $FAILED_UPDATES"
+    else
+        log "INFO" "Failed updates: $FAILED_UPDATES"
+    fi
+    log "INFO" "Log file: $LOG_FILE"
+    
+    log "INFO" "Bulk update process completed."
+}
+
+# ----------------------
+# Main Function
+# ----------------------
+
+# Main function to orchestrate the update process
+function main() {
+    print_banner
+    
+    # Set up cleanup trap
+    trap cleanup EXIT
+    
+    # Enable pipefail to catch errors in piped commands
+    set -o pipefail
+    
+    # Verify all dependencies are installed
+    check_dependencies
+    
+    # Find the build directory
+    locate_build_directory
+    
+    # Discover available devices
+    discover_devices
+    
+    # Prompt for operation mode
+    prompt_for_mode
+    
+    # Configure stall timeout and retry settings
+    configure_settings
     
     # Confirm before proceeding
     total_devices=${#DEVICE_NAMES[@]}
@@ -816,14 +879,8 @@ function main() {
         exit 0
     fi
     
-    # Track statistics
-    SUCCESSFUL_UPDATES=0
-    FAILED_UPDATES=0
-    SKIPPED_UPDATES=0
-    
     # Process each device
     for i in "${!DEVICE_NAMES[@]}"; do
-        # Fixed array access for device addresses 
         update_device "${DEVICE_NAMES[$i]}" "${DEVICE_ADDRESSES[$i]}" "$TEST_MODE"
         result=$?
         
@@ -843,19 +900,7 @@ function main() {
     done
     
     # Display summary
-    echo ""
-    log "INFO" "==== Update Summary ===="
-    log "INFO" "Total devices: $total_devices"
-    log "SUCCESS" "Successful updates: $SUCCESSFUL_UPDATES"
-    log "INFO" "Skipped updates (already had image): $SKIPPED_UPDATES"
-    if [ $FAILED_UPDATES -gt 0 ]; then
-        log "ERROR" "Failed updates: $FAILED_UPDATES"
-    else
-        log "INFO" "Failed updates: $FAILED_UPDATES"
-    fi
-    log "INFO" "Log file: $LOG_FILE"
-    
-    log "INFO" "Bulk update process completed."
+    display_summary "$total_devices"
     
     # Clean up temp files
     cleanup
