@@ -5,13 +5,14 @@
 # A tool to flash firmware to multiple Thread devices
 # ===================================================
 
-# Terminal colors for better visual experience
+# Terminal colors and formatting
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[0;33m'
 BLUE='\033[0;34m'
 PURPLE='\033[0;35m'
 CYAN='\033[0;36m'
+BOLD='\033[1m'
 NC='\033[0m' # No Color
 
 # Configuration
@@ -33,20 +34,20 @@ function log() {
     
     case "$level" in
         "INFO")
-            color="$CYAN"
+            color="${CYAN}"
             prefix="[INFO]"
             ;;
         "SUCCESS")
-            color="$GREEN"
-            prefix="[SUCCESS]"
+            color="${GREEN}"
+            prefix="[✓]"
             ;;
         "ERROR")
-            color="$RED"
-            prefix="[ERROR]"
+            color="${RED}"
+            prefix="[✗]"
             ;;
         "WARNING")
-            color="$YELLOW"
-            prefix="[WARNING]"
+            color="${YELLOW}"
+            prefix="[!]"
             ;;
     esac
     
@@ -57,18 +58,18 @@ function log() {
     echo "$(date '+%Y-%m-%d %H:%M:%S') ${prefix} ${message}" >> "$LOG_FILE"
 }
 
-# Print banner
+# Print fancy banner
 function print_banner() {
     clear
-    echo -e "${BLUE}+---------------------------------------------------+${NC}"
-    echo -e "${BLUE}|                                                   |${NC}"
-    echo -e "${BLUE}|${CYAN}              HA-CoAP Bulk Updater                 ${BLUE}|${NC}"
-    echo -e "${BLUE}|${CYAN}         Multi-Device Flashing Tool               ${BLUE}|${NC}"
-    echo -e "${BLUE}|                                                   |${NC}"
-    echo -e "${BLUE}+---------------------------------------------------+${NC}"
+    echo -e "${BLUE}┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓${NC}"
+    echo -e "${BLUE}┃                                                ┃${NC}"
+    echo -e "${BLUE}┃  ${BOLD}${CYAN}       HA-CoAP Bulk Device Manager          ${NC}${BLUE}  ┃${NC}"
+    echo -e "${BLUE}┃  ${CYAN}    Flash Firmware to Multiple Devices      ${BLUE}  ┃${NC}"
+    echo -e "${BLUE}┃                                                ┃${NC}"
+    echo -e "${BLUE}┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛${NC}"
     echo ""
     
-    # Also log the banner to the log file
+    # Log the banner to the log file (plain text version)
     echo "+---------------------------------------------------+" >> "$LOG_FILE"
     echo "|              HA-CoAP Bulk Updater                 |" >> "$LOG_FILE"
     echo "|         Multi-Device Flashing Tool                |" >> "$LOG_FILE"
@@ -77,12 +78,74 @@ function print_banner() {
     echo "" >> "$LOG_FILE"
 }
 
+# Function to display a spinner animation during operations
+spinner=('⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏')
+function show_spinner() {
+    local pid=$1
+    local message="$2"
+    local i=0
+    
+    # Hide cursor
+    tput civis
+    
+    while kill -0 $pid 2>/dev/null; do
+        echo -ne "\r${CYAN}${spinner[$i]} ${message}${NC}"
+        i=$(( (i+1) % ${#spinner[@]} ))
+        sleep 0.1
+    done
+    
+    # Clear spinner and restore cursor
+    echo -ne "\r\033[K"
+    tput cnorm
+}
+
+# Function to show progress bar
+function show_progress_bar() {
+    local percent=$1
+    local width=50
+    local num_filled=$(( $percent * $width / 100 ))
+    local num_empty=$(( $width - $num_filled ))
+    
+    # Create the bar with filled and empty parts
+    local bar=""
+    for ((i=0; i<$num_filled; i++)); do
+        bar="${bar}█"
+    done
+    
+    for ((i=0; i<$num_empty; i++)); do
+        bar="${bar}░"
+    done
+    
+    # Display the progress bar
+    echo -ne "\r[${bar}] ${percent}%"
+}
+
 # Function to discover ha-coap devices and their IPv6 addresses
 function discover_devices() {
     log "INFO" "Scanning for ha-coap devices..."
     
+    # Start spinner in background during scan
+    (
+        i=0
+        while true; do
+            echo -ne "\r${CYAN}${spinner[$i]} Scanning network for devices...${NC}"
+            i=$(( (i+1) % ${#spinner[@]} ))
+            sleep 0.1
+        done
+    ) &
+    SPINNER_PID=$!
+    
+    # Hide cursor during spinner
+    tput civis
+    
     # Run avahi-browse with a timeout to ensure it doesn't run indefinitely
     output=$(timeout 3s avahi-browse -r _ot._udp 2>/dev/null)
+    
+    # Kill spinner and restore cursor
+    kill $SPINNER_PID &>/dev/null
+    wait $SPINNER_PID 2>/dev/null
+    echo -ne "\r\033[K"
+    tput cnorm
     
     # Initialize arrays to store device names and addresses
     declare -a devices=()
@@ -123,18 +186,26 @@ function discover_devices() {
     # Check if we found any devices
     if [ ${#devices[@]} -eq 0 ]; then
         log "ERROR" "No ha-coap devices found."
-        log "INFO" "Troubleshooting tips:"
-        log "INFO" "- Make sure your devices are powered on and connected"
-        log "INFO" "- Verify Thread network is properly set up"
-        log "INFO" "- Increase the timeout value in the script (currently 3s)"
+        echo -e "${YELLOW}┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓${NC}"
+        echo -e "${YELLOW}┃  ${BOLD}Troubleshooting Tips:${NC}                         ${YELLOW}┃${NC}"
+        echo -e "${YELLOW}┃  ✓ Make sure your devices are powered on           ┃${NC}"
+        echo -e "${YELLOW}┃  ✓ Verify Thread network is properly set up        ┃${NC}"
+        echo -e "${YELLOW}┃  ✓ Try increasing scan timeout in the script       ┃${NC}"
+        echo -e "${YELLOW}┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛${NC}"
         exit 1
     fi
     
-    # Display the list of devices
+    # Display the list of devices in a nice table
     log "SUCCESS" "Found ${#devices[@]} ha-coap device(s)"
+    echo -e "${CYAN}┏━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓${NC}"
+    echo -e "${CYAN}┃${BOLD} ID    ┃ Device Name                   ┃ IPv6 Address                           ${NC}${CYAN}┃${NC}"
+    echo -e "${CYAN}┣━━━━━━━╋━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╋━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┫${NC}"
+    
     for i in "${!devices[@]}"; do
-        log "INFO" "[$((i+1))] ${devices[$i]} (${addresses[$i]})"
+        printf "${CYAN}┃${NC} %-5s ${CYAN}┃${NC} %-29s ${CYAN}┃${NC} %-19s \n" "$((i+1))" "${devices[$i]}" "${addresses[$i]}"
     done
+    
+    echo -e "${CYAN}┗━━━━━━━┻━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┻━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛${NC}"
     
     # Return the arrays through global variables
     DEVICE_NAMES=("${devices[@]}")
@@ -332,7 +403,7 @@ EOL
     python3 "${TEMP_PROGRESS_FILE}.py" "$@"
 }
 
-# Function to update a single device
+# Function to update a single device with visual progress indicators
 function update_device() {
     local device_name="$1"
     local device_address="$2"
@@ -340,29 +411,42 @@ function update_device() {
     local retry_count=0
     local upload_success=false
     
-    log "INFO" "===== Processing device: ${device_name} (${device_address}) ====="
+    echo -e "${BLUE}┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓${NC}"
+    echo -e "${BLUE}┃  ${BOLD}Device:${NC} ${CYAN}${device_name}${NC}"
+    echo -e "${BLUE}┃  ${BOLD}Address:${NC} ${CYAN}${device_address}${NC}"
+    echo -e "${BLUE}┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛${NC}"
     
-    # Add the UDP connection
-    log "INFO" "Connecting via UDP to [${device_address}]:1337..."
+    log "INFO" "Processing device: ${device_name} (${device_address})"
+    
+    # Add the UDP connection with spinner
+    echo -ne "${CYAN}⏳ Connecting...${NC}"
+    
     mcumgr conn add udp type="udp" connstring="[${device_address}]:1337" > /dev/null 2>&1
     
     if [ $? -ne 0 ]; then
+        echo -ne "\r\033[K"
         log "ERROR" "Failed to establish UDP connection to ${device_name}"
         return 1
     fi
     
+    echo -ne "\r\033[K"
     log "SUCCESS" "UDP connection established to ${device_name}"
     
-    # Get the current image list
-    log "INFO" "Retrieving current image list from ${device_name}..."
+    # Get the current image list with spinner
+    echo -ne "${CYAN}⏳ Reading current firmware...${NC}"
+    
     image_list_output=$(mcumgr -c "udp" image list 2>&1)
     
     # Check if the command was successful
     if [ $? -ne 0 ]; then
+        echo -ne "\r\033[K"
         log "ERROR" "Failed to retrieve image list from ${device_name}: ${image_list_output}"
         mcumgr conn remove "udp" > /dev/null 2>&1
         return 1
     fi
+    
+    echo -ne "\r\033[K"
+    log "INFO" "Retrieved current image list"
     
     # Save image list to the log
     echo "Image list from ${device_name}:" >> "$LOG_FILE"
@@ -378,8 +462,9 @@ function update_device() {
         log "INFO" "Current image hash on ${device_name}: ${current_hash}"
         
         # Get the hash of the image we're about to upload
-        log "INFO" "Getting hash of new image..."
+        echo -ne "${CYAN}⏳ Checking image hash...${NC}"
         new_image_hash=$(./get-image-hash.sh)
+        echo -ne "\r\033[K"
         
         if [ -z "$new_image_hash" ]; then
             log "WARNING" "Could not determine new image hash. Proceeding anyway."
@@ -389,6 +474,7 @@ function update_device() {
             # Compare the hashes
             if [ "$current_hash" == "$new_image_hash" ]; then
                 log "INFO" "Device ${device_name} already has the current image installed."
+                echo -e "${GREEN}✓ Device is already up to date!${NC}"
                 # Clean up connection
                 mcumgr conn remove "udp" > /dev/null 2>&1
                 # Increment skipped updates count
@@ -405,6 +491,7 @@ function update_device() {
         
         if [ $retry_count -gt 1 ]; then
             log "INFO" "Retry attempt $retry_count of $MAX_UPLOAD_RETRIES for ${device_name}..."
+            echo -e "${YELLOW}↻ Retrying upload (attempt $retry_count of $MAX_UPLOAD_RETRIES)${NC}"
             # Add a short delay before retrying
             sleep 3
         fi
@@ -412,9 +499,14 @@ function update_device() {
         # Clear the progress file
         > "$TEMP_PROGRESS_FILE"
         
-        # Upload the new image with stall detection
+        # Upload the new image with stall detection and progress bar
         log "INFO" "Uploading firmware image to ${device_name}..."
-        log "INFO" "Upload will be terminated if stalled for ${UPLOAD_STALL_TIMEOUT} seconds"
+        echo -e "${CYAN}⏳ Uploading firmware...${NC}"
+        
+        if [ $UPLOAD_STALL_TIMEOUT -gt 0 ]; then
+            log "INFO" "Upload will be terminated if stalled for ${UPLOAD_STALL_TIMEOUT} seconds"
+            echo -e "${CYAN}ℹ️  Stall detection: ${UPLOAD_STALL_TIMEOUT}s timeout${NC}"
+        fi
         
         # Record start time for timing the upload
         local upload_start_time=$(date +%s)
@@ -424,10 +516,6 @@ function update_device() {
         rm -f "$TEMP_PROGRESS_FILE.stalled" 2>/dev/null
         rm -f "$TEMP_PROGRESS_FILE.log" 2>/dev/null
         rm -f "$TEMP_PROGRESS_FILE.py" 2>/dev/null
-        
-        # Use a better approach with coproc to monitor the process
-        # This fixes the "wait: pid is not a child of this shell" error
-        log "INFO" "Starting upload process..."
         
         # Create a named pipe for progress monitoring
         local pipe_file="/tmp/mcumgr_pipe_$"
@@ -440,7 +528,7 @@ function update_device() {
         set +m  # Disable job control
         
         # Start cat in background to read from the pipe and capture output
-        cat "$pipe_file" | tee "$TEMP_PROGRESS_FILE" &
+        cat "$pipe_file" | tee "$TEMP_PROGRESS_FILE" > /dev/null &
         cat_pid=$!
         
         # Start Python monitor in background only if stall detection is enabled
@@ -450,17 +538,63 @@ function update_device() {
         fi
         
         # Calculate a reasonable timeout (stall timeout plus margin)
-        wait_timeout=$((UPLOAD_STALL_TIMEOUT + 3600))  # 1 hour margin
+        wait_timeout=$((UPLOAD_STALL_TIMEOUT + 7200))  # 2 hour upload timeout per device
         
-        # Wait for the upload to finish with timeout
+        # Wait for the upload to finish with timeout and show progress
         upload_status=0
         upload_done=false
         
         log "INFO" "Waiting for upload to complete (timeout: ${wait_timeout}s)..."
         
+        # Hide cursor during progress display
+        tput civis
+        
+        # For progress display
+        last_progress=0
+        total_size=0
+        
         # Start a timeout counter
         start_time=$(date +%s)
         while ! $upload_done; do
+            # Update progress display
+            if [ -f "$TEMP_PROGRESS_FILE" ]; then
+                # Get the latest progress line with KiB
+                progress_line=$(grep -o "[0-9]\+\.*[0-9]* KiB / [0-9]\+\.*[0-9]* KiB" "$TEMP_PROGRESS_FILE" | tail -n 1)
+                
+                if [ -n "$progress_line" ]; then
+                    current_kb=$(echo "$progress_line" | cut -d' ' -f1)
+                    total_kb=$(echo "$progress_line" | cut -d'/' -f2 | cut -d' ' -f2)
+                    
+                    if [ -n "$current_kb" ] && [ -n "$total_kb" ]; then
+                        percent=$((current_kb * 100 / total_kb))
+                        show_progress_bar $percent
+                    fi
+                    
+                    # Save for rate calculation
+                    if [ $last_progress -eq 0 ]; then
+                        last_progress=$current_kb
+                        progress_time=$(date +%s)
+                    else
+                        current_time=$(date +%s)
+                        time_diff=$((current_time - progress_time))
+                        
+                        if [ $time_diff -ge 2 ]; then
+                            # Calculate rate in KiB/s
+                            rate=$(( (current_kb - last_progress) / time_diff ))
+                            
+                            # Update the display with rate
+                            if [ $rate -gt 0 ]; then
+                                echo -ne " ($rate KiB/s)"
+                            fi
+                            
+                            # Reset for next calculation
+                            last_progress=$current_kb
+                            progress_time=$current_time
+                        fi
+                    fi
+                fi
+            fi
+            
             # Check if process is still running
             if ! kill -0 $upload_pid 2>/dev/null; then
                 # Process completed
@@ -487,11 +621,15 @@ function update_device() {
                         upload_done=true
                     else
                         # Sleep briefly before checking again
-                        sleep 2
+                        sleep 0.5
                     fi
                 fi
             fi
         done
+        
+        # Restore cursor
+        echo -e "\n"
+        tput cnorm
         
         # Allow cat process to finish reading the pipe
         sleep 1
@@ -502,6 +640,7 @@ function update_device() {
         if [ -f "$TEMP_PROGRESS_FILE.stalled" ]; then
             upload_status=1
             log "ERROR" "Upload failed due to stall timeout"
+            echo -e "${RED}✗ Upload stalled and was terminated${NC}"
             
             # Show the monitor log to diagnose issues
             if [ -f "$TEMP_PROGRESS_FILE.log" ]; then
@@ -541,13 +680,16 @@ function update_device() {
         if [ $upload_status -eq 0 ]; then
             log "SUCCESS" "Upload completed successfully for ${device_name}"
             log "INFO" "Upload time: ${minutes} minutes ${seconds} seconds"
+            echo -e "${GREEN}✓ Upload completed in ${minutes}m ${seconds}s${NC}"
             upload_success=true
         else
             if [ $retry_count -lt $MAX_UPLOAD_RETRIES ]; then
                 log "ERROR" "Upload attempt $retry_count failed for ${device_name}"
+                echo -e "${RED}✗ Upload failed${NC}"
                 log "INFO" "Will retry in a moment..."
             else
                 log "ERROR" "All $MAX_UPLOAD_RETRIES upload attempts failed for ${device_name}"
+                echo -e "${RED}✗ All $MAX_UPLOAD_RETRIES upload attempts failed${NC}"
                 mcumgr conn remove "udp" > /dev/null 2>&1
                 return 1
             fi
@@ -557,8 +699,10 @@ function update_device() {
     # Only proceed with confirmation and reset if upload was successful
     if [ "$upload_success" = true ]; then
         # Get the updated image list
+        echo -ne "${CYAN}⏳ Verifying uploaded image...${NC}"
         log "INFO" "Getting updated image list from ${device_name}..."
         image_list_output=$(mcumgr -c "udp" image list 2>&1)
+        echo -ne "\r\033[K"
         
         # Save updated image list to the log
         echo "Updated image list from ${device_name}:" >> "$LOG_FILE"
@@ -570,6 +714,7 @@ function update_device() {
         
         if [ -z "$new_hash" ]; then
             log "ERROR" "Failed to get new image hash for ${device_name}!"
+            echo -e "${RED}✗ Verification failed - cannot find new image hash${NC}"
             mcumgr conn remove "udp" > /dev/null 2>&1
             return 1
         fi
@@ -578,49 +723,66 @@ function update_device() {
         
         # Test or confirm based on the mode
         if [ "$test_mode" = true ]; then
+            echo -ne "${CYAN}⏳ Setting image for testing...${NC}"
             log "INFO" "Setting image for testing on ${device_name}..."
             test_output=$(mcumgr -c "udp" image test "$new_hash" 2>&1)
             
             if [ $? -ne 0 ]; then
+                echo -ne "\r\033[K"
                 log "ERROR" "Failed to set test mode for ${device_name}: ${test_output}"
+                echo -e "${RED}✗ Failed to set test mode${NC}"
                 mcumgr conn remove "udp" > /dev/null 2>&1
                 return 1
             fi
             
+            echo -ne "\r\033[K"
             log "SUCCESS" "Image marked for testing on ${device_name}. It will run once after reset and revert if boot fails."
+            echo -e "${GREEN}✓ Image set for test boot${NC}"
         else
+            echo -ne "${CYAN}⏳ Setting image as permanent...${NC}"
             log "INFO" "Confirming image permanently on ${device_name}..."
             confirm_output=$(mcumgr -c "udp" image confirm "$new_hash" 2>&1)
             
             if [ $? -ne 0 ]; then
+                echo -ne "\r\033[K"
                 log "ERROR" "Failed to confirm image for ${device_name}: ${confirm_output}"
+                echo -e "${RED}✗ Failed to confirm image${NC}"
                 mcumgr conn remove "udp" > /dev/null 2>&1
                 return 1
             fi
             
+            echo -ne "\r\033[K"
             log "SUCCESS" "Image confirmed permanently on ${device_name}."
+            echo -e "${GREEN}✓ Image confirmed as permanent${NC}"
         fi
         
         # Reset the device
+        echo -ne "${CYAN}⏳ Rebooting device...${NC}"
         log "INFO" "Resetting device ${device_name}..."
         reset_output=$(mcumgr -c "udp" reset 2>&1)
         
         if [ $? -ne 0 ]; then
+            echo -ne "\r\033[K"
             log "WARNING" "Failed to reset device ${device_name}: ${reset_output}"
+            echo -e "${YELLOW}! Device reset command failed, but flash was successful${NC}"
             # Not returning error as the flash was successful
         else
+            echo -ne "\r\033[K"
             log "SUCCESS" "Device ${device_name} reset initiated."
+            echo -e "${GREEN}✓ Device reboot initiated${NC}"
         fi
         
         # Clean up connection
         mcumgr conn remove "udp" > /dev/null 2>&1
         
+        echo -e "${GREEN}✅ Update completed successfully for ${device_name}${NC}"
         log "SUCCESS" "Flash process completed for ${device_name}"
         return 0
     fi
     
     # If we reach here, all retries failed
     log "ERROR" "Flash process failed for ${device_name} after ${MAX_UPLOAD_RETRIES} attempts"
+    echo -e "${RED}❌ Update failed for ${device_name}${NC}"
     mcumgr conn remove "udp" > /dev/null 2>&1
     return 1
 }
@@ -652,6 +814,9 @@ function cleanup() {
             kill -9 $pid 2>/dev/null
         done
     fi
+    
+    # Always make sure cursor is visible
+    tput cnorm
 }
 
 # Main function
@@ -666,73 +831,109 @@ function main() {
     
     # Check for required dependencies
     log "INFO" "Checking for required dependencies..."
+    echo -e "${CYAN}⏳ Checking system requirements...${NC}"
     
-    if ! command -v mcumgr &> /dev/null; then
-        log "ERROR" "mcumgr not found. Please install it before running this script."
-        log "INFO" "Installation instructions: https://docs.zephyrproject.org/latest/services/device_mgmt/mcumgr.html"
-        exit 1
+    # Create a table for dependencies
+    echo -e "${CYAN}┏━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━┓${NC}"
+    echo -e "${CYAN}┃${BOLD} Dependency              ┃ Status             ${NC}${CYAN}┃${NC}"
+    echo -e "${CYAN}┣━━━━━━━━━━━━━━━━━━━━━━━━━╋━━━━━━━━━━━━━━━━━━━━┫${NC}"
+    
+    # Check each dependency
+    local deps_ok=true
+    
+    # Check mcumgr
+    if command -v mcumgr &> /dev/null; then
+        printf "${CYAN}┃${NC} %-23s ${CYAN}┃${NC} ${GREEN}%-19s${NC}  ${CYAN}┃${NC}\n" "mcumgr" "✓ Installed"
+    else
+        printf "${CYAN}┃${NC} %-23s ${CYAN}┃${NC} ${RED}%-19s${NC}  ${CYAN}┃${NC}\n" "mcumgr" "✗ Missing!"
+        deps_ok=false
     fi
     
-    if ! command -v avahi-browse &> /dev/null; then
-        log "ERROR" "avahi-browse not found. Please install avahi-utils before running this script."
-        log "INFO" "Installation: sudo apt install avahi-utils"
-        exit 1
+    # Check avahi-browse
+    if command -v avahi-browse &> /dev/null; then
+        printf "${CYAN}┃${NC} %-23s ${CYAN}┃${NC} ${GREEN}%-19s${NC}  ${CYAN}┃${NC}\n" "avahi-utils" "✓ Installed"
+    else
+        printf "${CYAN}┃${NC} %-23s ${CYAN}┃${NC} ${RED}%-19s${NC}  ${CYAN}┃${NC}\n" "avahi-utils" "✗ Missing!"
+        deps_ok=false
     fi
     
-    if ! command -v tee &> /dev/null; then
-        log "ERROR" "tee command not found. This is required for progress display."
-        log "INFO" "Installation: sudo apt install coreutils"
-        exit 1
+    # Check tee
+    if command -v tee &> /dev/null; then
+        printf "${CYAN}┃${NC} %-23s ${CYAN}┃${NC} ${GREEN}%-19s${NC}  ${CYAN}┃${NC}\n" "tee (coreutils)" "✓ Installed"
+    else
+        printf "${CYAN}┃${NC} %-23s ${CYAN}┃${NC} ${RED}%-19s${NC}  ${CYAN}┃${NC}\n" "tee (coreutils)" "✗ Missing!"
+        deps_ok=false
     fi
     
-    if ! command -v grep &> /dev/null; then
-        log "ERROR" "grep command not found. This is required for progress monitoring."
-        log "INFO" "Installation: sudo apt install grep"
-        exit 1
+    # Check grep
+    if command -v grep &> /dev/null; then
+        printf "${CYAN}┃${NC} %-23s ${CYAN}┃${NC} ${GREEN}%-19s${NC}  ${CYAN}┃${NC}\n" "grep" "✓ Installed"
+    else
+        printf "${CYAN}┃${NC} %-23s ${CYAN}┃${NC} ${RED}%-19s${NC}  ${CYAN}┃${NC}\n" "grep" "✗ Missing!"
+        deps_ok=false
     fi
     
-    if ! command -v python3 &> /dev/null; then
-        log "ERROR" "python3 not found. This is required for stall detection."
-        log "INFO" "Installation: sudo apt install python3"
-        exit 1
+    # Check python3
+    if command -v python3 &> /dev/null; then
+        printf "${CYAN}┃${NC} %-23s ${CYAN}┃${NC} ${GREEN}%-19s${NC}  ${CYAN}┃${NC}\n" "python3" "✓ Installed"
+    else
+        printf "${CYAN}┃${NC} %-23s ${CYAN}┃${NC} ${RED}%-19s${NC}  ${CYAN}┃${NC}\n" "python3" "✗ Missing!"
+        deps_ok=false
     fi
     
-    # Recommend timeout command which helps prevent hanging
-    if ! command -v timeout &> /dev/null; then
-        log "WARNING" "timeout command not found. Installing it is recommended for better stall handling."
-        log "INFO" "Installation: sudo apt install coreutils"
+    # Check timeout (recommended)
+    if command -v timeout &> /dev/null; then
+        printf "${CYAN}┃${NC} %-23s ${CYAN}┃${NC} ${GREEN}%-19s${NC}  ${CYAN}┃${NC}\n" "timeout (coreutils)" "✓ Installed"
+    else
+        printf "${CYAN}┃${NC} %-23s ${CYAN}┃${NC} ${YELLOW}%-19s${NC}  ${CYAN}┃${NC}\n" "timeout (coreutils)" "! Recommended"
+    fi
+    
+    echo -e "${CYAN}┗━━━━━━━━━━━━━━━━━━━━━━━━━┻━━━━━━━━━━━━━━━━━━━━┛${NC}"
+    
+    # Exit if any required dependencies are missing
+    if [ "$deps_ok" = false ]; then
+        log "ERROR" "Missing required dependencies. Please install them and try again."
+        echo -e "${RED}✗ Missing required dependencies. Please install the missing packages.${NC}"
+        exit 1
     fi
     
     # Check for the get-image-hash.sh script
     if [ ! -f "./get-image-hash.sh" ]; then
         log "WARNING" "get-image-hash.sh not found in the current directory."
-        log "INFO" "Hash comparison feature will not work properly."
+        echo -e "${YELLOW}! get-image-hash.sh not found. Hash comparison feature will not work properly.${NC}"
     fi
     
     # Check if the get-image-hash.sh script is executable
     if [ -f "./get-image-hash.sh" ] && [ ! -x "./get-image-hash.sh" ]; then
         log "INFO" "Making get-image-hash.sh executable..."
         chmod +x ./get-image-hash.sh
+        echo -e "${GREEN}✓ Made get-image-hash.sh executable${NC}"
     fi
     
     # Locate build directory
     log "INFO" "Locating build directory..."
+    echo -e "${CYAN}⏳ Locating firmware build directory...${NC}"
     
     # First check the default location
     if [ -d "../application/build" ]; then
         BUILD_DIR="../application/build"
+        echo -e "${GREEN}✓ Found build directory at default location${NC}"
     else
         log "WARNING" "Default build directory not found at: ../application/build"
+        echo -e "${YELLOW}! Default build directory not found${NC}"
         log "INFO" "Current directory: $(pwd)"
         
-        # Prompt for custom path
+        # Prompt for custom path with better visuals
+        echo ""
         echo -e "${YELLOW}? Enter full path to the build directory:${NC} "
         read -r build_path
         
         if [ -d "$build_path" ]; then
             BUILD_DIR="$build_path"
+            echo -e "${GREEN}✓ Custom build directory accepted${NC}"
         else
             log "ERROR" "Invalid build directory: $build_path"
+            echo -e "${RED}✗ Invalid build directory: $build_path${NC}"
             exit 1
         fi
     fi
@@ -740,41 +941,56 @@ function main() {
     log "SUCCESS" "Using build directory: $BUILD_DIR"
     
     # Verify firmware image exists
+    echo -ne "${CYAN}⏳ Checking for firmware image...${NC}"
     if [ ! -f "${BUILD_DIR}/zephyr/app_update.bin" ]; then
+        echo -ne "\r\033[K"
         log "ERROR" "Firmware image not found at: ${BUILD_DIR}/zephyr/app_update.bin"
+        echo -e "${RED}✗ Firmware image not found at: ${BUILD_DIR}/zephyr/app_update.bin${NC}"
         exit 1
     fi
     
+    echo -ne "\r\033[K"
     log "SUCCESS" "Firmware image found: ${BUILD_DIR}/zephyr/app_update.bin"
+    echo -e "${GREEN}✓ Firmware image found: ${BUILD_DIR}/zephyr/app_update.bin${NC}"
     
     # Discover available devices
     discover_devices
     
-    # Prompt for operation mode
+    # Prompt for operation mode with better visuals
     echo ""
-    echo -e "${BLUE}+-------------------------------------------+${NC}"
-    echo -e "${BLUE}|          Firmware Update Configuration    |${NC}"
-    echo -e "${BLUE}+-------------------------------------------+${NC}"
-    echo -e "  ${CYAN}1.${NC} Test mode ${YELLOW}(can be reverted if problems occur)${NC}"
-    echo -e "  ${CYAN}2.${NC} Confirm immediately ${RED}(permanent, no going back)${NC}"
+    echo -e "${BLUE}┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓${NC}"
+    echo -e "${BLUE}┃  ${BOLD}${CYAN}        Firmware Update Configuration         ${NC}${BLUE}┃${NC}"
+    echo -e "${BLUE}┣━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┫${NC}"
+    echo -e "${BLUE}┃  ${CYAN}1. Test mode ${YELLOW}(can revert if boot fails)       ${BLUE}┃${NC}"
+    echo -e "${BLUE}┃  ${CYAN}2. Confirm immediately ${RED}(permanent update)     ${BLUE}┃${NC}"
+    echo -e "${BLUE}┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛${NC}"
     echo ""
-    echo -e "${YELLOW}? Select update mode [1-2]:${NC} "
+    echo -ne "${YELLOW}? Select update mode [1-2]:${NC} "
     read -r test_confirm_choice
     
     if [[ "$test_confirm_choice" == "1" ]]; then
         TEST_MODE=true
         log "INFO" "Selected mode: Test mode (will revert if boot fails)"
+        echo -e "${GREEN}✓ Selected: Test mode${NC}"
     elif [[ "$test_confirm_choice" == "2" ]]; then
         TEST_MODE=false
         log "INFO" "Selected mode: Confirm immediately (permanent)"
+        echo -e "${GREEN}✓ Selected: Permanent mode${NC}"
     else
         log "ERROR" "Invalid selection: $test_confirm_choice"
+        echo -e "${RED}✗ Invalid selection${NC}"
         exit 1
     fi
     
     # Allow configuration of timeout
     echo ""
-    echo -e "${YELLOW}? Enter upload stall timeout in seconds (300 is default, 0 to disable):${NC} "
+    echo -e "${BLUE}┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓${NC}"
+    echo -e "${BLUE}┃  ${BOLD}${CYAN}         Upload Timeout Configuration       ${NC}${BLUE}  ┃${NC}"
+    echo -e "${BLUE}┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛${NC}"
+    echo -e "${CYAN}This timeout will cancel uploads that stall for too long.${NC}"
+    echo -e "${CYAN}Default is 300 seconds (5 minutes). Enter 0 to disable.${NC}"
+    echo ""
+    echo -ne "${YELLOW}? Enter upload stall timeout in seconds:${NC} "
     read -r timeout_setting
     
     # Validate input
@@ -782,17 +998,26 @@ function main() {
         if [ "$timeout_setting" -gt 0 ]; then
             UPLOAD_STALL_TIMEOUT=$timeout_setting
             log "INFO" "Upload stall timeout set to ${UPLOAD_STALL_TIMEOUT} seconds"
+            echo -e "${GREEN}✓ Timeout set to ${UPLOAD_STALL_TIMEOUT} seconds${NC}"
         else
             log "INFO" "Stall detection disabled"
             UPLOAD_STALL_TIMEOUT=0
+            echo -e "${YELLOW}! Stall detection disabled${NC}"
         fi
     else
         log "INFO" "Using default stall timeout of ${UPLOAD_STALL_TIMEOUT} seconds"
+        echo -e "${GREEN}✓ Using default timeout (${UPLOAD_STALL_TIMEOUT} seconds)${NC}"
     fi
     
     # Allow configuration of max retries
     echo ""
-    echo -e "${YELLOW}? Enter maximum number of upload retry attempts (${MAX_UPLOAD_RETRIES} is default):${NC} "
+    echo -e "${BLUE}┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓${NC}"
+    echo -e "${BLUE}┃  ${BOLD}${CYAN}          Upload Retry Configuration        ${NC}${BLUE}  ┃${NC}"
+    echo -e "${BLUE}┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛${NC}"
+    echo -e "${CYAN}Number of times to retry uploading if it fails.${NC}"
+    echo -e "${CYAN}Default is ${MAX_UPLOAD_RETRIES} retries.${NC}"
+    echo ""
+    echo -ne "${YELLOW}? Enter maximum number of upload retry attempts:${NC} "
     read -r retry_setting
     
     # Validate input
@@ -800,19 +1025,31 @@ function main() {
         if [ "$retry_setting" -ge 0 ]; then
             MAX_UPLOAD_RETRIES=$retry_setting
             log "INFO" "Maximum upload retries set to ${MAX_UPLOAD_RETRIES}"
+            echo -e "${GREEN}✓ Max retries set to ${MAX_UPLOAD_RETRIES}${NC}"
         fi
     else
         log "INFO" "Using default retry setting of ${MAX_UPLOAD_RETRIES} attempts"
+        echo -e "${GREEN}✓ Using default retries (${MAX_UPLOAD_RETRIES})${NC}"
     fi
     
-    # Confirm before proceeding
+    # Confirm before proceeding with a nice summary
     total_devices=${#DEVICE_NAMES[@]}
     echo ""
-    echo -e "${YELLOW}? You are about to update firmware on ${total_devices} devices. Continue? (y/n):${NC} "
+    echo -e "${BLUE}┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓${NC}"
+    echo -e "${BLUE}┃  ${BOLD}${CYAN}            Operation Summary               ${NC}${BLUE}  ┃${NC}"
+    echo -e "${BLUE}┣━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┫${NC}"
+    echo -e "${BLUE}┃  ${BOLD}Devices to update:${NC} ${CYAN}${total_devices}${NC}"
+    echo -e "${BLUE}┃  ${BOLD}Update mode:${NC} ${CYAN}$([ "$TEST_MODE" = true ] && echo "Test mode" || echo "Permanent")${NC}"
+    echo -e "${BLUE}┃  ${BOLD}Stall timeout:${NC} ${CYAN}${UPLOAD_STALL_TIMEOUT}s${NC}"
+    echo -e "${BLUE}┃  ${BOLD}Max retries:${NC} ${CYAN}${MAX_UPLOAD_RETRIES}${NC}"
+    echo -e "${BLUE}┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛${NC}"
+    echo ""
+    echo -ne "${YELLOW}? Proceed with firmware update? (y/n):${NC} "
     read -r confirm
     
     if [[ "$confirm" != "y" && "$confirm" != "Y" ]]; then
         log "INFO" "Operation cancelled by user."
+        echo -e "${YELLOW}Operation cancelled by user.${NC}"
         exit 0
     fi
     
@@ -821,8 +1058,18 @@ function main() {
     FAILED_UPDATES=0
     SKIPPED_UPDATES=0
     
-    # Process each device
+    # Display a progress header
+    echo ""
+    echo -e "${BLUE}┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓${NC}"
+    echo -e "${BLUE}┃  ${BOLD}${CYAN}           Starting Updates...              ${NC}${BLUE}  ┃${NC}"
+    echo -e "${BLUE}┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛${NC}"
+    echo ""
+    
+    # Process each device with progress indication
     for i in "${!DEVICE_NAMES[@]}"; do
+        # Show progress counter
+        echo -e "${CYAN}Device ${i+1}/${total_devices}${NC}"
+        
         # Fixed array access for device addresses 
         update_device "${DEVICE_NAMES[$i]}" "${DEVICE_ADDRESSES[$i]}" "$TEST_MODE"
         result=$?
@@ -839,23 +1086,40 @@ function main() {
         fi
         
         # Add a small delay between devices to avoid network congestion
-        sleep 2
+        if [ $i -lt $((${#DEVICE_NAMES[@]} - 1)) ]; then
+            echo -e "${CYAN}Waiting before next device...${NC}"
+            sleep 2
+            echo ""
+            echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+            echo ""
+        fi
     done
     
-    # Display summary
+    # Display summary with nice formatting
     echo ""
-    log "INFO" "==== Update Summary ===="
-    log "INFO" "Total devices: $total_devices"
-    log "SUCCESS" "Successful updates: $SUCCESSFUL_UPDATES"
-    log "INFO" "Skipped updates (already had image): $SKIPPED_UPDATES"
-    if [ $FAILED_UPDATES -gt 0 ]; then
-        log "ERROR" "Failed updates: $FAILED_UPDATES"
-    else
-        log "INFO" "Failed updates: $FAILED_UPDATES"
-    fi
-    log "INFO" "Log file: $LOG_FILE"
+    echo -e "${BLUE}┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓${NC}"
+    echo -e "${BLUE}┃  ${BOLD}${CYAN}              Update Summary                ${NC}${BLUE}  ┃${NC}"
+    echo -e "${BLUE}┣━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┫${NC}"
+    echo -e "${BLUE}┃  ${BOLD}Total devices:${NC} ${CYAN}${total_devices}${NC}"
+    echo -e "${BLUE}┃  ${BOLD}Successful updates:${NC} ${GREEN}${SUCCESSFUL_UPDATES}${NC}"
+    echo -e "${BLUE}┃  ${BOLD}Skipped (already updated):${NC} ${CYAN}${SKIPPED_UPDATES}${NC}"
     
-    log "INFO" "Bulk update process completed."
+    if [ $FAILED_UPDATES -gt 0 ]; then
+        echo -e "${BLUE}┃  ${BOLD}Failed updates:${NC} ${RED}${FAILED_UPDATES}${NC}"
+    else
+        echo -e "${BLUE}┃  ${BOLD}Failed updates:${NC} ${GREEN}${FAILED_UPDATES}${NC}"
+    fi
+    
+    echo -e "${BLUE}┃  ${BOLD}Log file:${NC} ${CYAN}${LOG_FILE}${NC}       ${BLUE}┃${NC}"
+    echo -e "${BLUE}┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛${NC}"
+    
+    # Final completion message
+    if [ $FAILED_UPDATES -eq 0 ]; then
+        echo -e "\n${GREEN}${BOLD}✅ Bulk update process completed successfully!${NC}\n"
+    else
+        echo -e "\n${YELLOW}${BOLD}⚠️  Bulk update completed with ${FAILED_UPDATES} failures.${NC}\n"
+        echo -e "${YELLOW}Check the log file for details: ${LOG_FILE}${NC}\n"
+    fi
     
     # Clean up temp files
     cleanup
