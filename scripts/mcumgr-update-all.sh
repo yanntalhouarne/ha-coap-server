@@ -1110,7 +1110,7 @@ function main() {
         echo -e "${BLUE}┃  ${BOLD}Failed updates:${NC} ${GREEN}${FAILED_UPDATES}${NC}"
     fi
     
-    echo -e "${BLUE}┃  ${BOLD}Log file:${NC} ${CYAN}${LOG_FILE}${NC}       ${BLUE}┃${NC}"
+    echo -e "${BLUE}┃  ${BOLD}Log file:${NC} ${CYAN}${LOG_FILE}${NC}"
     echo -e "${BLUE}┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛${NC}"
     
     # Final completion message
