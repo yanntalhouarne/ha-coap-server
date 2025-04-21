@@ -103,6 +103,17 @@ function show_spinner() {
 function show_progress_bar() {
     local percent=$1
     local width=50
+    
+    # Ensure percent is a valid integer
+    if ! [[ "$percent" =~ ^[0-9]+$ ]]; then
+        percent=0
+    fi
+    
+    # Cap at 100%
+    if [ $percent -gt 100 ]; then
+        percent=100
+    fi
+    
     local num_filled=$(( $percent * $width / 100 ))
     local num_empty=$(( $width - $num_filled ))
     
@@ -197,15 +208,15 @@ function discover_devices() {
     
     # Display the list of devices in a nice table
     log "SUCCESS" "Found ${#devices[@]} ha-coap device(s)"
-    echo -e "${CYAN}┏━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓${NC}"
-    echo -e "${CYAN}┃${BOLD} ID    ┃ Device Name                   ┃ IPv6 Address                           ${NC}${CYAN}┃${NC}"
-    echo -e "${CYAN}┣━━━━━━━╋━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╋━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┫${NC}"
+    echo -e "${CYAN}┏━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓${NC}"
+    echo -e "${CYAN}┃${BOLD} ID    ┃ Device Name                   ┃ IPv6 Address                          ${NC}${CYAN}┃${NC}"
+    echo -e "${CYAN}┣━━━━━━━╋━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╋━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┫${NC}"
     
     for i in "${!devices[@]}"; do
-        printf "${CYAN}┃${NC} %-5s ${CYAN}┃${NC} %-29s ${CYAN}┃${NC} %-19s \n" "$((i+1))" "${devices[$i]}" "${addresses[$i]}"
+        printf "${CYAN}┃${NC} %-5s ${CYAN}┃${NC} %-29s ${CYAN}┃${NC} %-19s\n" "$((i+1))" "${devices[$i]}" "${addresses[$i]}"
     done
     
-    echo -e "${CYAN}┗━━━━━━━┻━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┻━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛${NC}"
+    echo -e "${CYAN}┗━━━━━━━┻━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┻━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛${NC}"
     
     # Return the arrays through global variables
     DEVICE_NAMES=("${devices[@]}")
@@ -550,46 +561,60 @@ function update_device() {
         tput civis
         
         # For progress display
-        last_progress=0
-        total_size=0
+        last_progress="0"
+        total_size="0"
         
         # Start a timeout counter
         start_time=$(date +%s)
         while ! $upload_done; do
-            # Update progress display
+                            # Update progress display
             if [ -f "$TEMP_PROGRESS_FILE" ]; then
                 # Get the latest progress line with KiB
-                progress_line=$(grep -o "[0-9]\+\.*[0-9]* KiB / [0-9]\+\.*[0-9]* KiB" "$TEMP_PROGRESS_FILE" | tail -n 1)
+                progress_line=$(grep -o "[0-9]\+\.*[0-9]* KiB / [0-9]\+\.*[0-9]* KiB" "$TEMP_PROGRESS_FILE" 2>/dev/null | tail -n 1)
                 
                 if [ -n "$progress_line" ]; then
-                    current_kb=$(echo "$progress_line" | cut -d' ' -f1)
-                    total_kb=$(echo "$progress_line" | cut -d'/' -f2 | cut -d' ' -f2)
+                    # Extract values more safely using awk
+                    current_kb=$(echo "$progress_line" | awk '{print $1}')
+                    total_kb=$(echo "$progress_line" | awk '{print $4}')
                     
                     if [ -n "$current_kb" ] && [ -n "$total_kb" ]; then
-                        percent=$((current_kb * 100 / total_kb))
-                        show_progress_bar $percent
-                    fi
-                    
-                    # Save for rate calculation
-                    if [ $last_progress -eq 0 ]; then
-                        last_progress=$current_kb
-                        progress_time=$(date +%s)
-                    else
-                        current_time=$(date +%s)
-                        time_diff=$((current_time - progress_time))
+                        # Convert floating point to integer by removing the decimal point
+                        # This avoids the "invalid arithmetic operator" error with decimal numbers
+                        current_kb_int=$(echo "$current_kb" | sed 's/\..*//')
+                        total_kb_int=$(echo "$total_kb" | sed 's/\..*//')
                         
-                        if [ $time_diff -ge 2 ]; then
-                            # Calculate rate in KiB/s
-                            rate=$(( (current_kb - last_progress) / time_diff ))
-                            
-                            # Update the display with rate
-                            if [ $rate -gt 0 ]; then
-                                echo -ne " ($rate KiB/s)"
-                            fi
-                            
-                            # Reset for next calculation
+                        if [ -n "$current_kb_int" ] && [ -n "$total_kb_int" ] && [ "$total_kb_int" -gt 0 ]; then
+                            percent=$((current_kb_int * 100 / total_kb_int))
+                            show_progress_bar $percent
+                        fi
+                        
+                        # Save for rate calculation
+                        if [ "$last_progress" = "0" ]; then
                             last_progress=$current_kb
-                            progress_time=$current_time
+                            progress_time=$(date +%s)
+                        else
+                            current_time=$(date +%s)
+                            time_diff=$((current_time - progress_time))
+                            
+                            if [ $time_diff -ge 2 ]; then
+                                # Calculate rate in KiB/s - convert to integers first
+                                # This fixes the "invalid arithmetic operator" error with decimal numbers
+                                current_kb_int=$(echo "$current_kb" | sed 's/\..*//')
+                                last_progress_int=$(echo "$last_progress" | sed 's/\..*//')
+                                
+                                if [ -n "$current_kb_int" ] && [ -n "$last_progress_int" ] && [ "$current_kb_int" -gt "$last_progress_int" ]; then
+                                    rate=$(( (current_kb_int - last_progress_int) / time_diff ))
+                                    
+                                    # Update the display with rate
+                                    if [ $rate -gt 0 ]; then
+                                        echo -ne " ($rate KiB/s)"
+                                    fi
+                                fi
+                                
+                                # Reset for next calculation
+                                last_progress=$current_kb
+                                progress_time=$current_time
+                            fi
                         fi
                     fi
                 fi
@@ -843,49 +868,49 @@ function main() {
     
     # Check mcumgr
     if command -v mcumgr &> /dev/null; then
-        printf "${CYAN}┃${NC} %-23s ${CYAN}┃${NC} ${GREEN}%-19s${NC}  ${CYAN}┃${NC}\n" "mcumgr" "✓ Installed"
+        printf "${CYAN}┃${NC} %-23s ${CYAN}┃${NC} ${GREEN}%-19s${NC}\n" "mcumgr" "✓ Installed"
     else
-        printf "${CYAN}┃${NC} %-23s ${CYAN}┃${NC} ${RED}%-19s${NC}  ${CYAN}┃${NC}\n" "mcumgr" "✗ Missing!"
+        printf "${CYAN}┃${NC} %-23s ${CYAN}┃${NC} ${RED}%-19s${NC}\n" "mcumgr" "✗ Missing!"
         deps_ok=false
     fi
     
     # Check avahi-browse
     if command -v avahi-browse &> /dev/null; then
-        printf "${CYAN}┃${NC} %-23s ${CYAN}┃${NC} ${GREEN}%-19s${NC}  ${CYAN}┃${NC}\n" "avahi-utils" "✓ Installed"
+        printf "${CYAN}┃${NC} %-23s ${CYAN}┃${NC} ${GREEN}%-19s${NC}\n" "avahi-utils" "✓ Installed"
     else
-        printf "${CYAN}┃${NC} %-23s ${CYAN}┃${NC} ${RED}%-19s${NC}  ${CYAN}┃${NC}\n" "avahi-utils" "✗ Missing!"
+        printf "${CYAN}┃${NC} %-23s ${CYAN}┃${NC} ${RED}%-19s${NC}\n" "avahi-utils" "✗ Missing!"
         deps_ok=false
     fi
     
     # Check tee
     if command -v tee &> /dev/null; then
-        printf "${CYAN}┃${NC} %-23s ${CYAN}┃${NC} ${GREEN}%-19s${NC}  ${CYAN}┃${NC}\n" "tee (coreutils)" "✓ Installed"
+        printf "${CYAN}┃${NC} %-23s ${CYAN}┃${NC} ${GREEN}%-19s${NC}\n" "tee (coreutils)" "✓ Installed"
     else
-        printf "${CYAN}┃${NC} %-23s ${CYAN}┃${NC} ${RED}%-19s${NC}  ${CYAN}┃${NC}\n" "tee (coreutils)" "✗ Missing!"
+        printf "${CYAN}┃${NC} %-23s ${CYAN}┃${NC} ${RED}%-19s${NC}\n" "tee (coreutils)" "✗ Missing!"
         deps_ok=false
     fi
     
     # Check grep
     if command -v grep &> /dev/null; then
-        printf "${CYAN}┃${NC} %-23s ${CYAN}┃${NC} ${GREEN}%-19s${NC}  ${CYAN}┃${NC}\n" "grep" "✓ Installed"
+        printf "${CYAN}┃${NC} %-23s ${CYAN}┃${NC} ${GREEN}%-19s${NC}\n" "grep" "✓ Installed"
     else
-        printf "${CYAN}┃${NC} %-23s ${CYAN}┃${NC} ${RED}%-19s${NC}  ${CYAN}┃${NC}\n" "grep" "✗ Missing!"
+        printf "${CYAN}┃${NC} %-23s ${CYAN}┃${NC} ${RED}%-19s${NC}\n" "grep" "✗ Missing!"
         deps_ok=false
     fi
     
     # Check python3
     if command -v python3 &> /dev/null; then
-        printf "${CYAN}┃${NC} %-23s ${CYAN}┃${NC} ${GREEN}%-19s${NC}  ${CYAN}┃${NC}\n" "python3" "✓ Installed"
+        printf "${CYAN}┃${NC} %-23s ${CYAN}┃${NC} ${GREEN}%-19s${NC}\n" "python3" "✓ Installed"
     else
-        printf "${CYAN}┃${NC} %-23s ${CYAN}┃${NC} ${RED}%-19s${NC}  ${CYAN}┃${NC}\n" "python3" "✗ Missing!"
+        printf "${CYAN}┃${NC} %-23s ${CYAN}┃${NC} ${RED}%-19s${NC}\n" "python3" "✗ Missing!"
         deps_ok=false
     fi
     
     # Check timeout (recommended)
     if command -v timeout &> /dev/null; then
-        printf "${CYAN}┃${NC} %-23s ${CYAN}┃${NC} ${GREEN}%-19s${NC}  ${CYAN}┃${NC}\n" "timeout (coreutils)" "✓ Installed"
+        printf "${CYAN}┃${NC} %-23s ${CYAN}┃${NC} ${GREEN}%-19s${NC}\n" "timeout (coreutils)" "✓ Installed"
     else
-        printf "${CYAN}┃${NC} %-23s ${CYAN}┃${NC} ${YELLOW}%-19s${NC}  ${CYAN}┃${NC}\n" "timeout (coreutils)" "! Recommended"
+        printf "${CYAN}┃${NC} %-23s ${CYAN}┃${NC} ${YELLOW}%-19s${NC}\n" "timeout (coreutils)" "! Recommended"
     fi
     
     echo -e "${CYAN}┗━━━━━━━━━━━━━━━━━━━━━━━━━┻━━━━━━━━━━━━━━━━━━━━┛${NC}"
@@ -959,10 +984,10 @@ function main() {
     # Prompt for operation mode with better visuals
     echo ""
     echo -e "${BLUE}┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓${NC}"
-    echo -e "${BLUE}┃  ${BOLD}${CYAN}        Firmware Update Configuration         ${NC}${BLUE}┃${NC}"
+    echo -e "${BLUE}┃  ${BOLD}${CYAN}        Firmware Update Configuration       ${NC}${BLUE}  ┃${NC}"
     echo -e "${BLUE}┣━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┫${NC}"
-    echo -e "${BLUE}┃  ${CYAN}1. Test mode ${YELLOW}(can revert if boot fails)       ${BLUE}┃${NC}"
-    echo -e "${BLUE}┃  ${CYAN}2. Confirm immediately ${RED}(permanent update)     ${BLUE}┃${NC}"
+    echo -e "${BLUE}┃  ${CYAN}1. Test mode ${YELLOW}(can revert if boot fails)       ${NC}${CYAN}┃${NC}"
+    echo -e "${BLUE}┃  ${CYAN}2. Confirm immediately ${RED}(permanent update)     ${NC}${CYAN}┃${NC}"
     echo -e "${BLUE}┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛${NC}"
     echo ""
     echo -ne "${YELLOW}? Select update mode [1-2]:${NC} "
@@ -1098,19 +1123,19 @@ function main() {
     # Display summary with nice formatting
     echo ""
     echo -e "${BLUE}┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓${NC}"
-    echo -e "${BLUE}┃  ${BOLD}${CYAN}              Update Summary                ${NC}${BLUE}  ┃${NC}"
+    echo -e "${BLUE}┃  ${BOLD}${CYAN}              Update Summary               ${NC}${BLUE}  ┃${NC}"
     echo -e "${BLUE}┣━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┫${NC}"
-    echo -e "${BLUE}┃  ${BOLD}Total devices:${NC} ${CYAN}${total_devices}${NC}"
-    echo -e "${BLUE}┃  ${BOLD}Successful updates:${NC} ${GREEN}${SUCCESSFUL_UPDATES}${NC}"
-    echo -e "${BLUE}┃  ${BOLD}Skipped (already updated):${NC} ${CYAN}${SKIPPED_UPDATES}${NC}"
+    echo -e "${BLUE}┃  ${BOLD}Total devices:${NC} ${CYAN}${total_devices}${NC}                        ${BLUE}┃${NC}"
+    echo -e "${BLUE}┃  ${BOLD}Successful updates:${NC} ${GREEN}${SUCCESSFUL_UPDATES}${NC}                    ${BLUE}┃${NC}"
+    echo -e "${BLUE}┃  ${BOLD}Skipped (already updated):${NC} ${CYAN}${SKIPPED_UPDATES}${NC}                ${BLUE}┃${NC}"
     
     if [ $FAILED_UPDATES -gt 0 ]; then
-        echo -e "${BLUE}┃  ${BOLD}Failed updates:${NC} ${RED}${FAILED_UPDATES}${NC}"
+        echo -e "${BLUE}┃  ${BOLD}Failed updates:${NC} ${RED}${FAILED_UPDATES}${NC}                         ${BLUE}┃${NC}"
     else
-        echo -e "${BLUE}┃  ${BOLD}Failed updates:${NC} ${GREEN}${FAILED_UPDATES}${NC}"
+        echo -e "${BLUE}┃  ${BOLD}Failed updates:${NC} ${GREEN}${FAILED_UPDATES}${NC}                         ${BLUE}┃${NC}"
     fi
     
-    echo -e "${BLUE}┃  ${BOLD}Log file:${NC} ${CYAN}${LOG_FILE}${NC}"
+    echo -e "${BLUE}┃  ${BOLD}Log file:${NC} ${CYAN}${LOG_FILE}${NC}       ${BLUE}┃${NC}"
     echo -e "${BLUE}┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛${NC}"
     
     # Final completion message
