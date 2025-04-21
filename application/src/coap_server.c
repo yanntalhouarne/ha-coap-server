@@ -252,10 +252,10 @@ void on_srp_client_updated(otError aError, const otSrpClientHostInfo *aHostInfo,
 			buzzer_active = 1;
 			k_timer_start(&ot_buzzer_timer, K_MSEC(1), K_NO_WAIT);
 		}
-	}
+	} 
 	else 
 	{
-		dk_set_led_on(RADIO_RED_LED);
+		//dk_set_led_on(RADIO_RED_LED);
 	}
 }
 
@@ -340,7 +340,9 @@ static void on_thread_state_changed(otChangedFlags flags, struct openthread_cont
 			dk_set_led_off(RADIO_BLUE_LED);
 			break;
 		default:
+			dk_set_led_on(RADIO_RED_LED);
 			dk_set_led_off(RADIO_GREEN_LED);
+			dk_set_led_off(RADIO_BLUE_LED);
 			break;
 		}
 	}
@@ -565,8 +567,9 @@ static inline float out_ev(struct sensor_value *val)
 int main(void)
 {
 
-	k_sleep(K_MSEC(3000));
+	k_sleep(K_MSEC(50));
 
+	
 	/*
 	 _      ____   _____          _       _____       _____ _   _ _____ _______
 	| |    / __ \ / ____|   /\   | |     / ____|     |_   _| \ | |_   _|__   __|
@@ -576,6 +579,14 @@ int main(void)
 	|______\____/ \_____/_/    \_\______|_____/      |_____|_| \_|_____|  |_|
 	*/
 	int ret;
+
+	if (IS_ENABLED(CONFIG_USB_DEVICE_STACK)) {
+		ret = usb_enable(NULL);
+		if (ret) {
+			dk_set_led_on(RADIO_RED_LED);
+			goto end;
+		}
+	}
 
 	/*
 	 _      ______ _____   _____       _____ _   _ _____ _______
@@ -878,7 +889,7 @@ int main(void)
 			goto end;
 		}
 	}
-		/* TURN ON SENSOR */
+	/* TURN ON SENSOR */
 	dk_set_led_off(SENSOR_VCC_MCU); // set sensor rail to VCC (VBAT or V_USB)
 	dk_set_led_on(SENSOR_EN);
 	k_sleep(K_MSEC(200));
@@ -993,9 +1004,9 @@ int main(void)
 	dk_set_led_off(RADIO_GREEN_LED);
 	pwm_set_dt(&pwm_buzzer, PWM_KHZ(6), 0);
 
-	dk_set_led_on(RADIO_RED_LED);
-	dk_set_led_on(RADIO_GREEN_LED);
-	dk_set_led_on(RADIO_BLUE_LED);
+	// dk_set_led_on(RADIO_RED_LED);
+	// dk_set_led_on(RADIO_GREEN_LED);
+	// dk_set_led_on(RADIO_BLUE_LED);
 
 	/*
 	  ____  _____  ______ _   _ _______ _    _ _____  ______          _____        _____ _   _ _____ _______
@@ -1008,9 +1019,20 @@ int main(void)
 	/*****************************
 	 * Openthread Initialization *
 	 *****************************/
-	openthread_state_changed_cb_register(openthread_get_default_context(), &ot_state_chaged_cb);
-	openthread_start(openthread_get_default_context());
-
+	ret = openthread_state_changed_cb_register(openthread_get_default_context(), &ot_state_chaged_cb);
+	if (ret)
+	{
+		LOG_ERR("Could register OpenThread callback");
+		dk_set_led_on(RADIO_RED_LED);
+		goto end;
+	}
+	ret = openthread_start(openthread_get_default_context());
+	if (ret)
+	{
+		LOG_ERR("Could not stat OpenThread");
+		dk_set_led_on(RADIO_RED_LED);
+		goto end;
+	}
 end:
 	return 0;
 }

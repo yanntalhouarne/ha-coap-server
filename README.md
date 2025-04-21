@@ -1,34 +1,125 @@
-# openthread_coap_server
+# 📡 OpenThread CoAP Server
 
-*** using nRF SDK Connect v2.4 ***
+![Version](https://img.shields.io/badge/nRF%20SDK-v2.4-blue)
+![License](https://img.shields.io/badge/license-MIT-green)
 
-1. nRF Connect Build Configuration
-   - Configuration:
-      * prj.conf
-   - Kconfig fragments:
-      * overlay-usb.conf
-      * overlay-logging.conf (optional)
-   - Extra CMake arguments:
-      * -DDTC_OVERLAY_FILE:STRING=usb.overlay
+*An implementation of CoAP server functionality using OpenThread on nRF hardware*
 
-2. SRP Client Service Registering
-   - For each new device flashed, a unique hostname and service instance but be set in "ot_srp_config.h"
-   - If hostname is not unique, the SRP server (on the border router dongle) will reject the registering of the service
-   - Openthread saves the SRP key to non-volatile memory. If the device is erased (e.g. ot factoryreset), the key will erased and the SRP client on the device will have issues updating its service with the SRP server
+## 📋 Overview
 
-3. Remaining work
-   - Set a different SRP client hostname if it is already taken (the SRP Client callback in coap_server.c will be called with aError = DUPLICATE)
-   - Move the SRP stuff out of coap_server.c
+This project implements a CoAP server using OpenThread on Nordic Semiconductor's nRF hardware. It enables IoT devices to communicate using the CoAP protocol over Thread network.
+This project is meant to be run on the [ha-coap-pcb](https://github.com/yanntalhouarne/ha-coap-pcb) custom board, along with the [ha-coap](https://github.com/yanntalhouarne/ha-coap-integration) Home Assistant custom integration .
 
-4. Ping the device
-   - ping -6 SRP_CLIENT_HOSTNAME.local
-   - coap-client -m get coap://[SRP_CLIENT_HOSTNAME.local]/temperature -N
-   - example: 
-      * ping -6 nrf52840dongle.local
-      * coap-client -m get coap://nrf52840dongle.local/temperature -N -v 9
+## 🛠️ Build Configuration
 
-5. To flash nRF52840 Dongle:
-   - generate DFU package from .hex file
-      $ nrfutil pkg generate --hw-version 52 --sd-req 0x00 --application-version 1 --application /PATH_TO_THIS_REPO/build_1/zephyr/zephyr.hex nrfDongle_dfu_package.zip
-   - flash Dongle (make sure it is set in bootloader mode by holding the side switch while connecting it to the USB port):
-      $ nrfutil dfu usb-serial -pkg nrfDongle_dfu_package.zip -p /dev/ttyACM0
+### Prerequisites
+- **SDK**: `nRF Connect SDK v2.4.3`
+- **Toolchain**: `nRF Connect SDK Toolchain v2.4.3`
+- **Board target**: `hacoap`
+
+### Project Configuration
+- **Main config**: `prj.conf`
+- **Kconfig fragments**: `overlay-mtd.conf`
+- **Devicetree overlays**: `boards/usb.overlay`
+- **CMake arguments**:
+  ```
+  -DBOARD_ROOT="c:\Users\talho\Documents\Smargit\repos\ha-coap-server\application\"
+  ```
+
+## 🔄 SRP Client Service Registration
+
+> **Important**: Each device requires a unique hostname to function properly.
+
+- Configure a unique hostname and service instance in `ot_srp_config.h` for each flashed device
+- The SRP server will reject duplicate hostnames during registration
+- Note that OpenThread stores the SRP key in non-volatile memory
+  - If the device is factory reset (`ot factoryreset`), the key will be erased
+  - This can cause issues when the SRP client attempts to update its service with the SRP server
+
+## 🌐 Network Communication
+
+### Discover Thread Devices
+```bash
+avahi-browse -r _ot._udp
+```
+
+### Test Connectivity
+```bash
+ping -6 fd49:969:3c3c:1:88a2:4c28:69ec:34f7
+```
+
+### CoAP Communication Examples
+```bash
+# Get the 'pumpdc' resource
+coap-client -m get coap://[fd49:969:3c3c:1:88a2:4c28:69ec:34f7]/pumpdc -v 6
+
+# Other examples could be added here...
+```
+
+## 📲 Flashing Instructions
+
+### nRF52840 Dongle
+
+1. **Generate DFU package**:
+   ```bash
+   nrfutil pkg generate --hw-version 52 --sd-req 0x00 --application-version 1 \
+     --application /PATH_TO_REPO/build_1/zephyr/zephyr.hex nrfDongle_dfu_package.zip
+   ```
+
+2. **Flash the Dongle**:
+   > Put the device in bootloader mode by holding the side switch while connecting to USB
+   ```bash
+   nrfutil dfu usb-serial -pkg nrfDongle_dfu_package.zip -p /dev/ttyACM0
+   ```
+
+### Firmware Updates via USB
+
+1. **Create MCUMGR connection**:
+   - USB-CDC: 
+     ```bash
+     mcumgr conn add serial type="serial" connstring="COM7,baud=115200,mtu=512"
+     ```
+     > Replace COM7 with the appropriate port on your system
+   
+   - UDP: 
+     ```bash
+     mcumgr conn add udp type="udp" connstring="[fd49:969:3c3c:1:8c6a:5db:a6ef:178f]:1337"
+     ```
+     > Replace IPV6 IP address with the address of the device
+
+
+*Note: if using UDP, replace "serial" with "udp" in the following commands.*
+
+2. **View current firmware**:
+   ```bash
+   mcumgr -c serial image list
+   ```
+
+3. **Upload new image**:
+   ```bash
+   mcumgr -c serial image upload zephyr/app_update.bin
+   ```
+
+4. **Confirm new image**:
+   ```bash
+   mcumgr -c serial image confirm <NEW_HASH>
+   ```
+   > Image must be in a `build_*` folder (e.g., `ha-coap-server\application\build_mtd_lp`)
+
+5. **mcumgr script**:
+   Alternatively, the mcumgr interactive script can be used.
+   ```bash
+   cd scripts
+   ./mcumgr-dfu.sh
+   ```
+   
+## 📝 Roadmap
+
+- [ ] Implement dynamic SRP client hostname reassignment when duplicates are detected
+- [ ] Refactor SRP functionality out of `coap_server.c`
+
+## 📚 References
+
+- [OpenThread Documentation](https://openthread.io/guides)
+- [nRF Connect SDK Documentation](https://developer.nordicsemi.com/nRF_Connect_SDK/doc/latest/nrf/index.html)
+- [CoAP Protocol RFC 7252](https://tools.ietf.org/html/rfc7252)
