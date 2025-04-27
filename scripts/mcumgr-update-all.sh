@@ -130,7 +130,7 @@ function show_spinner() {
 # Function: log
 # Description: Logs messages to both console and log file with appropriate formatting
 # Parameters:
-#   $1 - Log level (INFO, SUCCESS, ERROR, WARNING)
+#   $1 - Log level (INFO, SUCCESS, ERROR, WARNING, DEBUG, PROGRESS)
 #   $2 - Message to log
 function log() {
     local level="$1"
@@ -140,11 +140,12 @@ function log() {
     local icon=""
     
     case "$level" in
-        "INFO")    color="$CYAN";    prefix="[INFO]";    icon="ℹ " ;;
-        "SUCCESS") color="$GREEN";   prefix="[SUCCESS]"; icon="✓ " ;;
-        "ERROR")   color="$RED";     prefix="[ERROR]";   icon="✗ " ;;
-        "WARNING") color="$YELLOW";  prefix="[WARNING]"; icon="! " ;;
-        "DEBUG")   color="$DIM";     prefix="[DEBUG]";   icon="  " ;;
+        "INFO")     color="$CYAN";    prefix="[INFO]";    icon="ℹ " ;;
+        "SUCCESS")  color="$GREEN";   prefix="[SUCCESS]"; icon="✓ " ;;
+        "ERROR")    color="$RED";     prefix="[ERROR]";   icon="✗ " ;;
+        "WARNING")  color="$YELLOW";  prefix="[WARNING]"; icon="! " ;;
+        "DEBUG")    color="$DIM";     prefix="[DEBUG]";   icon="  " ;;
+        "PROGRESS") color="$CYAN";    prefix="[PROGRESS]";icon="  " ;;
     esac
     
     # Print to console with color, only if not DEBUG level
@@ -152,8 +153,10 @@ function log() {
         echo -e "${color}${icon}${prefix}${NC} ${message}"
     fi
     
-    # Log to file without color codes
-    echo "$(date '+%Y-%m-%d %H:%M:%S') ${prefix} ${message}" >> "$LOG_FILE"
+    # Log to file without color codes, EXCEPT for PROGRESS messages
+    if [ "$level" != "PROGRESS" ]; then
+        echo "$(date '+%Y-%m-%d %H:%M:%S') ${prefix} ${message}" >> "$LOG_FILE"
+    fi
 }
 
 # Function: print_banner
@@ -464,39 +467,6 @@ device_name = sys.argv[3]
 pid_to_kill = int(sys.argv[4])
 check_interval = 1  # seconds - check more frequently for short timeouts
 
-# Set up logging
-log_file = file_to_monitor + ".log"
-def log(message):
-    timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
-    with open(log_file, "a") as f:
-        f.write(f"{timestamp} - {message}\n")
-
-# Function to extract KiB value from progress line - get FIRST value, not second
-def extract_kib_value(line):
-    # Check for "Done" marker which indicates upload is complete
-    if "Done" in line:
-        log("Found 'Done' marker - upload completed successfully")
-        return "done"
-        
-    # Try pattern: "X.XX KiB / Y.YY KiB" or "X B / Y.YY KiB"
-    match = re.search(r'(\d+\.?\d*)\s*(B|KiB)\s*/\s*\d+\.?\d*\s*KiB', line)
-    if match:
-        value = match.group(1)
-        unit = match.group(2)
-        log(f"Matched progress pattern: value={value}, unit={unit} from '{line}'")
-        
-        # Convert B to KiB if needed
-        if unit == "B" and float(value) == 0:
-            log("Upload just started at 0 bytes, not considering as stall")
-            return "start"
-        return value
-    
-    # No match
-    log(f"No match in: '{line}'")
-    return "0"
-
-log(f"Starting stall monitor: file={file_to_monitor}, timeout={timeout}s, pid={pid_to_kill}")
-
 # Initialize tracking variables
 last_value = None
 stall_counter = 0
@@ -512,7 +482,6 @@ def find_process_children(pid):
 
 # Kill a process tree
 def kill_process_tree(pid):
-    log(f"Killing process tree starting at PID {pid}")
     # Get child processes
     children = find_process_children(pid)
     for child in children:
@@ -525,18 +494,36 @@ def kill_process_tree(pid):
         try:
             os.kill(pid, 0)  # Check if process exists
             os.kill(pid, signal.SIGKILL)  # Force kill if still running
-            log(f"Force killed PID {pid}")
         except OSError:
-            log(f"Process {pid} terminated gracefully")
-    except OSError as e:
-        log(f"Error killing PID {pid}: {e}")
+            pass
+    except OSError:
+        pass
+
+# Function to extract KiB value from progress line - get FIRST value, not second
+def extract_kib_value(line):
+    # Check for "Done" marker which indicates upload is complete
+    if "Done" in line:
+        return "done"
+        
+    # Try pattern: "X.XX KiB / Y.YY KiB" or "X B / Y.YY KiB"
+    match = re.search(r'(\d+\.?\d*)\s*(B|KiB)\s*/\s*\d+\.?\d*\s*KiB', line)
+    if match:
+        value = match.group(1)
+        unit = match.group(2)
+        
+        # Convert B to KiB if needed
+        if unit == "B" and float(value) == 0:
+            return "start"
+        return value
+    
+    # No match
+    return "0"
 
 while True:
     time.sleep(check_interval)
     
     # Check if file exists
     if not os.path.exists(file_to_monitor):
-        log("File no longer exists, exiting")
         break
     
     # Read the file
@@ -544,13 +531,11 @@ while True:
         with open(file_to_monitor, "r") as f:
             lines = f.readlines()
             if not lines:
-                log("File is empty, waiting for data")
                 continue
             
             # Check the last line with KiB in it
             kib_lines = [l for l in lines if "KiB" in l or " B / " in l]
             if not kib_lines:
-                log("No progress lines found, waiting")
                 continue
                 
             last_line = kib_lines[-1].strip()
@@ -558,61 +543,48 @@ while True:
             
             # Skip empty or initial values
             if current_value == "0" or current_value == "start":
-                log("Skipping initial value")
                 continue
             
             # First reading
             if last_value is None:
                 last_value = current_value
-                log(f"First reading: {last_value}")
                 continue
             
             # Check for completed upload
             if current_value == "done":
-                log("Upload process completed successfully")
                 break
                 
             # Check for stall
             if current_value == last_value:
                 consecutive_same_readings += 1
                 stall_counter += check_interval
-                log(f"Same value detected ({consecutive_same_readings} times): {current_value}, stall counter = {stall_counter}s")
                 
                 # Check for 100% completion
                 if "100" in last_line or "100.00%" in last_line or "100%" in last_line:
-                    log("Found 100% completion marker - waiting briefly for 'Done' message")
                     # Give a short grace period for the "Done" message to appear
                     if consecutive_same_readings >= 5:
-                        log("Upload appears to be complete at 100% - assuming successful completion")
                         break
                 
-                # Stall timeout reached - be very explicit about what's happening
+                # Stall timeout reached
                 elif stall_counter >= timeout:
-                    log(f"STALL DETECTED! Value {current_value} unchanged for {stall_counter} seconds")
-                    log(f"Timeout of {timeout} seconds reached")
-                    
                     # Print to stderr for visibility
                     print(f"\033[31mSTALL DETECTED! Value {current_value} unchanged for {stall_counter} seconds\033[0m", file=sys.stderr)
                     
-                    # Create a marker file
+                    # Create a marker file with stall information
                     with open(file_to_monitor + ".stalled", "w") as sf:
-                        sf.write(f"STALLED at {current_value} KiB for {stall_counter} seconds\n")
+                        sf.write(f"{current_value}|{stall_counter}")
                     
                     # Kill the process tree
                     kill_process_tree(pid_to_kill)
                     
-                    # Final log before exiting
-                    log("Monitor exiting after stall detection")
                     sys.exit(0)  # Exit with success code so the script continues
             else:
-                # Progress detected - log the change
-                log(f"Progress detected: {last_value} -> {current_value}")
+                # Progress detected
                 stall_counter = 0
                 consecutive_same_readings = 0
                 last_value = current_value
     
-    except Exception as e:
-        log(f"Error: {str(e)}")
+    except Exception:
         continue
 EOL
 
@@ -837,6 +809,8 @@ function update_device() {
                                     # Update the progress bar
                                     echo -ne "\r "
                                     draw_progress_bar $percent $progress_bar_width
+                                    # Use PROGRESS level for progress updates - these won't go to log file
+                                    log "PROGRESS" "Upload progress: $percent%"
                                 fi
                             fi
                         fi
@@ -856,13 +830,18 @@ function update_device() {
         # Check if the process was killed due to a stall
         if [ -f "$TEMP_PROGRESS_FILE.stalled" ]; then
             upload_status=1
-            echo -e "${RED}❌ Upload failed due to stall timeout${NC}"
-            log "ERROR" "Upload failed due to stall timeout"
             
-            # Show the monitor log to help diagnose issues
-            if [ -f "$TEMP_PROGRESS_FILE.log" ]; then
-                log "DEBUG" "Python stall monitor log content:"
-                cat "$TEMP_PROGRESS_FILE.log" >> "$LOG_FILE"
+            # Get stall information from the marker file
+            if [ -s "$TEMP_PROGRESS_FILE.stalled" ]; then
+                stall_info=$(cat "$TEMP_PROGRESS_FILE.stalled")
+                # Split the info by the pipe character
+                IFS='|' read -r stalled_value stalled_time <<< "$stall_info"
+                
+                echo -e "${RED}❌ Upload failed due to stall timeout${NC}"
+                log "ERROR" "Upload failed - stalled at ${stalled_value} KiB for ${stalled_time} seconds"
+            else
+                echo -e "${RED}❌ Upload failed due to stall timeout${NC}"
+                log "ERROR" "Upload failed due to stall timeout"
             fi
         fi
         
@@ -882,7 +861,7 @@ function update_device() {
         fi
         
         # Remove the temp files
-        rm -f "$TEMP_PROGRESS_FILE" "$TEMP_PROGRESS_FILE.stalled" "$TEMP_PROGRESS_FILE.py" "$TEMP_PROGRESS_FILE.log" 2>/dev/null
+        rm -f "$TEMP_PROGRESS_FILE" "$TEMP_PROGRESS_FILE.stalled" "$TEMP_PROGRESS_FILE.py" 2>/dev/null
         
         # Calculate upload duration
         local upload_end_time=$(date +%s)
