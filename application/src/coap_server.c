@@ -64,6 +64,10 @@ static const struct gpio_dt_spec pump_gpio = GPIO_DT_SPEC_GET(DT_ALIAS(pump1), g
 static const struct gpio_dt_spec sensor_en_gpio = GPIO_DT_SPEC_GET(DT_ALIAS(sensor_en), gpios);   // IO 0_28, FPF1320 EN (soil sensor power)
 static const struct gpio_dt_spec sensor_pwr_gpio = GPIO_DT_SPEC_GET(DT_ALIAS(sensor_pwr), gpios); // IO 1_15, FPF1320 SEL: 0 = VCC, 1 = VCC_MCU
 
+/* Watchdog */
+static const struct device *const wdt_dev = DEVICE_DT_GET(DT_ALIAS(watchdog0));
+static int wdt_channel;
+
 /*
 ████████ ██ ███    ███ ███████ ██████  ███████
    ██    ██ ████  ████ ██      ██   ██ ██
@@ -773,6 +777,46 @@ static int usr_button_init(void)
 	return gpio_add_callback(usr_button.port, &usr_button_cb_data);
 }
 
+/* Feeds the watchdog and schedules the next feed. */
+static void on_wdt_feed_work(struct k_work *work)
+{
+	wdt_feed(wdt_dev, wdt_channel);
+	k_work_schedule(k_work_delayable_from_work(work), K_MSEC(WDT_FEED_PERIOD));
+}
+static K_WORK_DELAYABLE_DEFINE(wdt_feed_work, on_wdt_feed_work);
+
+/* Starts the hardware watchdog, fed every WDT_FEED_PERIOD from the system work queue.
+ * It keeps running in sleep and pauses while a debugger has the CPU halted. */
+static int watchdog_init(void)
+{
+	struct wdt_timeout_cfg wdt_config = {
+		.window.min = 0U,
+		.window.max = WDT_TIMEOUT,
+		.callback = NULL,
+		.flags = WDT_FLAG_RESET_SOC,
+	};
+	int err;
+
+	if (!device_is_ready(wdt_dev))
+	{
+		return -ENODEV;
+	}
+	wdt_channel = wdt_install_timeout(wdt_dev, &wdt_config);
+	if (wdt_channel < 0)
+	{
+		return wdt_channel;
+	}
+	err = wdt_setup(wdt_dev, WDT_OPT_PAUSE_HALTED_BY_DBG);
+	if (err != 0)
+	{
+		return err;
+	}
+
+	k_work_schedule(&wdt_feed_work, K_MSEC(WDT_FEED_PERIOD));
+
+	return 0;
+}
+
 /* Configures the soil sensor ADC channel. */
 static bool adc_init(void)
 {
@@ -868,6 +912,20 @@ int main(void)
 	/* Before the button, which starts the pump timer. */
 	k_timer_init(&pump_timer, on_pump_timer_expiry, NULL);
 	k_timer_init(&buzzer_timer, on_buzzer_timer_expiry, NULL);
+
+	/*
+	 __          _______ _______       _____ _   _ _____ _______
+	 \ \        / /  __ \__   __|     |_   _| \ | |_   _|__   __|
+	  \ \  /\  / /| |  | | | |          | | |  \| | | |    | |
+	   \ \/  \/ / | |  | | | |          | | | . ` | | |    | |
+	    \  /\  /  | |__| | | |         _| |_| |\  |_| |_   | |
+	     \/  \/   |_____/  |_|        |_____|_| \_|_____|  |_|
+	*/
+	ret = watchdog_init();
+	if (ret)
+	{
+		LOG_ERR("Could not start the watchdog (error: %d)", ret);
+	}
 
 	/*
 	 ____  _    _ _______ _______ ____  _   _  _____       _____ _   _ _____ _______

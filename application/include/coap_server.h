@@ -33,6 +33,7 @@
 #include <zephyr/drivers/sensor.h>
 #include <zephyr/drivers/pwm.h>
 #include <zephyr/drivers/gpio.h>
+#include <zephyr/drivers/watchdog.h>
 #include <soc.h>
 /* OPENTHREAD */
 #include <openthread/thread.h>
@@ -75,6 +76,8 @@
 #define INIT_BUZZER_PERIOD 100 // in milli-seconds. Time between buzzer pulses upon initialization.
 #define SENSOR_POWER_UP_TIME 200 // in milli-seconds. Time the soil sensor needs after SENSOR_EN before it is sampled.
 #define ERROR_BLINK_PERIOD 500 // in milli-seconds. On (and off) time of the red LED blinks reporting a missing sensor.
+#define WDT_TIMEOUT 30000 // in milli-seconds. The SoC resets if the watchdog is not fed within this time.
+#define WDT_FEED_PERIOD 10000 // in milli-seconds. How often the system work queue feeds the watchdog.
 
 /* Calibration values*/
 #define HUMIDITY_DRY 2200 // in mV
