@@ -1,0 +1,16 @@
+/*
+ * Console and logs on a second USB CDC ACM port, next to the mcumgr port from
+ * usb.overlay (cdc_acm_uart0). Use together with usb.overlay and overlay-usb.conf.
+ */
+
+/ {
+	chosen {
+		zephyr,console = &cdc_acm_uart1;
+	};
+};
+
+&zephyr_udc0 {
+	cdc_acm_uart1: cdc_acm_uart1 {
+		compatible = "zephyr,cdc-acm-uart";
+	};
+};

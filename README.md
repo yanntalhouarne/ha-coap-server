@@ -31,14 +31,14 @@ Optional fragments and overlays:
 | File | Purpose |
 |---|---|
 | `overlay-mtd.conf` | Thread sleepy end device (battery builds) |
-| `overlay-usb.conf` + `overlay-logging.conf` | Logs over USB CDC ACM |
+| `overlay-usb.conf` + `overlay-logging.conf` + `boards/usb-console.overlay` | Console and logs on a second USB CDC ACM port (the first one stays for mcumgr) |
 | `overlay-debug.conf` | Asserts, `-Og` and thread info for debugging |
 | `overlay-udp.conf` | mcumgr over Thread (UDP port 1337) for over-the-air updates |
 | `boards/usb.overlay` | mcumgr over USB CDC ACM (always used) |
-| `boards/uart.overlay` | Console on the J4 UART. UART0 is disabled otherwise, since its receiver draws current in sleep |
+| `boards/uart.overlay` + `overlay-uart.conf` | Console on the J4 UART. UART0 is disabled otherwise, since its receiver draws current in sleep |
 
 ### Board notes
-- **DC/DC regulator**: the board enables the nRF52840's DC/DC regulator (`CONFIG_BOARD_ENABLE_DCDC`, default `y`), since the ACN52840 module includes the converter components. If a board doesn't boot with it, build with `CONFIG_BOARD_ENABLE_DCDC=n` and reflash over SWD.
+- **DC/DC regulator**: the board enables the nRF52840's DC/DC regulator (`CONFIG_BOARD_ENABLE_DCDC`, default `y`), since the ACN52840 module includes the converter components. If a board doesn't boot with it, turn it off for both the app and MCUboot (`-DCONFIG_BOARD_ENABLE_DCDC=n -Dmcuboot_CONFIG_BOARD_ENABLE_DCDC=n`) and reflash over SWD.
 - **Watchdog**: the application starts a 30 s hardware watchdog, fed every 10 s from the system work queue. A watchdog reset during an MCUboot test boot reverts to the previous image.
 - **Startup**: a missing sensor no longer stops the boot. It's logged, shown on the red LED (2 blinks: HDC1080, 3 blinks: fuel gauge) and reported as 0 in `data`, and the device still joins the network so it can be updated.
 - **Time-of-flight sensor**: the VL53L0X node is disabled in the board DTS while it's unused. To use it, set its `status` to `"okay"` and add `CONFIG_VL53L0X=y`.
