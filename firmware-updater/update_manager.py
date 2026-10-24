@@ -5,59 +5,66 @@ import os
 import subprocess
 import threading
 import re
-import time
-import json
-import glob
 import logging
-import tempfile
 from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
+# Per-run logs written by this manager: update_YYYYmmdd_HHMMSS.log
+LOG_FILE_RE = re.compile(r'^update_\d{8}_\d{6}\.log$')
+
+
 class UpdateManager:
     """Manager class for handling firmware updates"""
-    
-    def __init__(self, socketio):
+
+    def __init__(self, socketio, log_dir):
         """Initialize update manager with socket.io for real-time updates"""
         self.socketio = socketio
+        self.log_dir = log_dir
+        os.makedirs(self.log_dir, exist_ok=True)
+        self._lock = threading.Lock()
         self.update_in_progress = False
-        self.current_status = {
-            "state": "idle",
+        self.current_status = self._new_status("idle", 0)
+        self.devices_list = []
+
+        # Use the script from the parent directory's scripts folder
+        self.script_dir = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '../scripts'))
+        self.update_script = os.path.join(self.script_dir, 'mcumgr-update-all.sh')
+
+        # Ensure the script directory exists
+        if not os.path.exists(self.script_dir):
+            logger.warning(f"Script directory not found: {self.script_dir}")
+
+    @staticmethod
+    def _new_status(state, total_devices, log_file=None):
+        return {
+            "state": state,
             "current_device": None,
-            "total_devices": 0,
+            "total_devices": total_devices,
             "completed_devices": 0,
             "successful_updates": 0,
             "failed_updates": 0,
             "skipped_updates": 0,
             "upload_progress": 0,
-            "log_file": None,
+            "log_file": log_file,
             "last_update": datetime.now().isoformat()
         }
-        self.devices_list = []
-        
-        # Use the script from the parent directory's scripts folder
-        self.script_dir = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '../scripts'))
-        self.update_script = os.path.join(self.script_dir, 'mcumgr-update-all.sh')
-        
-        # Ensure the script directory exists
-        if not os.path.exists(self.script_dir):
-            logger.warning(f"Script directory not found: {self.script_dir}")
-        
+
     def discover_devices(self):
         """Discover available devices using avahi-browse"""
         logger.info("Discovering devices...")
         self.emit_status_update("Discovering devices...")
-        
+
         # Use avahi-browse to discover devices
         try:
             cmd = ["timeout", "3", "avahi-browse", "-r", "_ot._udp"]
             result = subprocess.run(cmd, capture_output=True, text=True)
             output = result.stdout
-            
+
             # Parse the output to extract devices
             devices = []
             seen_devices = set()
-            
+
             lines = output.split('\n')
             i = 0
             while i < len(lines):
@@ -67,14 +74,14 @@ class UpdateManager:
                     parts = line.split()
                     if len(parts) >= 4:
                         device_name = parts[3]
-                        
+
                         # Skip if we've already seen this device
                         if device_name in seen_devices:
                             i += 1
                             continue
-                            
+
                         seen_devices.add(device_name)
-                        
+
                         # Read the next 2 lines to get the address
                         if i + 2 < len(lines):
                             address_line = lines[i + 2]
@@ -88,153 +95,130 @@ class UpdateManager:
                                     "selected": True  # Default to selected
                                 })
                 i += 1
-            
+
             logger.info(f"Discovered {len(devices)} devices")
             self.devices_list = devices
             self.emit_status_update(f"Discovered {len(devices)} devices")
             return devices
-            
+
         except Exception as e:
             logger.error(f"Error discovering devices: {str(e)}")
             self.emit_status_update(f"Error discovering devices: {str(e)}")
             raise
-    
+
     def start_update(self, devices, build_dir, update_mode, stall_timeout):
-        """Start the update process for the given devices"""
-        if self.update_in_progress:
-            logger.warning("Update already in progress")
-            return {"success": False, "error": "Update already in progress"}
-        
-        self.update_in_progress = True
-        self.current_status = {
-            "state": "updating",
-            "current_device": None,
-            "total_devices": len(devices),
-            "completed_devices": 0,
-            "successful_updates": 0,
-            "failed_updates": 0,
-            "skipped_updates": 0,
-            "upload_progress": 0,
-            "log_file": None,
-            "last_update": datetime.now().isoformat()
-        }
-        
+        """Start the update process for the given (already validated) devices.
+
+        The update script runs in its non-interactive mode; every setting is passed through
+        HACOAP_* environment variables, never through a shell command line."""
+        with self._lock:
+            if self.update_in_progress:
+                logger.warning("Update already in progress")
+                return {"success": False, "error": "Update already in progress"}
+            self.update_in_progress = True
+
+        log_name = datetime.now().strftime('update_%Y%m%d_%H%M%S.log')
+        self.current_status = self._new_status("updating", len(devices), log_name)
+
         logger.info(f"Starting update for {len(devices)} devices with build_dir={build_dir}, mode={update_mode}")
         self.emit_status_update(f"Starting update for {len(devices)} devices")
-        
+
+        env = os.environ.copy()
+        env.update({
+            "HACOAP_NON_INTERACTIVE": "true",
+            "HACOAP_CONNECTION": "UDP",
+            "HACOAP_DEVICES": " ".join(f"{d['name']}={d['address']}" for d in devices),
+            "HACOAP_BUILD_DIR": build_dir,
+            "HACOAP_UPDATE_MODE": update_mode,
+            "HACOAP_STALL_TIMEOUT": str(stall_timeout),
+        })
+
         try:
-            # Create a temporary script to run updates in non-interactive mode
-            with tempfile.NamedTemporaryFile(delete=False, mode='w', suffix='.sh') as temp_script:
-                # Write device addresses to the temp script
-                device_addresses = [device['address'] for device in devices]
-                addresses_str = " ".join(device_addresses)
-                
-                # Set script mode
-                temp_script.write("#!/bin/bash\n\n")
-                temp_script.write(f"export BUILD_DIR=\"{build_dir}\"\n")
-                temp_script.write(f"export DEVICE_ADDRESSES=\"{addresses_str}\"\n")
-                temp_script.write(f"export UPDATE_MODE=\"{update_mode}\"\n")
-                temp_script.write(f"export STALL_TIMEOUT=\"{stall_timeout}\"\n")
-                temp_script.write(f"export NON_INTERACTIVE=\"true\"\n\n")
-                temp_script.write(f"cd {os.path.dirname(self.update_script)}\n")
-                temp_script.write(f"bash {self.update_script}\n")
-                
-                temp_script_path = temp_script.name
-            
-            # Make the temporary script executable
-            os.chmod(temp_script_path, 0o755)
-            
-            # Run the update process and capture output
-            logger.info(f"Running update script: {temp_script_path}")
-            
-            # Start process with line buffering to get real-time output
-            self.update_process = subprocess.Popen(
-                [temp_script_path], 
-                stdout=subprocess.PIPE, 
-                stderr=subprocess.STDOUT, 
-                text=True, 
-                bufsize=1
-            )
-            
-            # Monitor process output for progress updates
-            log_file = None
-            current_device = None
-            
-            for line in iter(self.update_process.stdout.readline, ''):
-                line = line.strip()
-                
-                # Extract log file name when created
-                log_file_match = re.search(r'Log file: (flash_logs_[0-9_]+\.log)', line)
-                if log_file_match:
-                    log_file = log_file_match.group(1)
-                    self.current_status["log_file"] = log_file
-                
-                # Track current device being processed
-                device_match = re.search(r'===== Processing device: ([\w-]+)', line)
-                if device_match:
-                    current_device = device_match.group(1)
-                    self.current_status["current_device"] = current_device
-                
-                # Track upload progress
-                progress_match = re.search(r'(\d+\.\d+) KiB / (\d+\.\d+) KiB .* (\d+\.\d+)%', line)
-                if progress_match:
-                    current = float(progress_match.group(1))
-                    total = float(progress_match.group(2))
-                    percent = float(progress_match.group(3))
-                    self.current_status["upload_progress"] = percent
-                
-                # Track completed devices
-                if "Flash process completed for" in line or "Device already has the current image" in line:
-                    self.current_status["completed_devices"] += 1
-                
-                # Track successful updates
-                if "Upload completed successfully" in line:
-                    self.current_status["successful_updates"] += 1
-                
-                # Track failed updates
-                if "Failed to" in line or "Error" in line:
-                    self.current_status["failed_updates"] += 1
-                
-                # Track skipped updates
-                if "already has the current image installed" in line:
-                    self.current_status["skipped_updates"] += 1
-                
-                # Update timestamp
-                self.current_status["last_update"] = datetime.now().isoformat()
-                
-                # Emit status update via socket.io
-                self.emit_status_update(line)
-                
-                logger.debug(line)
-            
-            # Wait for process to complete
-            self.update_process.wait()
-            
+            with open(os.path.join(self.log_dir, log_name), 'w') as log_file:
+                process = subprocess.Popen(
+                    ["bash", self.update_script],
+                    cwd=self.script_dir,
+                    env=env,
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    bufsize=1
+                )
+
+                # Monitor process output for progress updates
+                for line in iter(process.stdout.readline, ''):
+                    line = line.rstrip()
+                    log_file.write(line + '\n')
+                    log_file.flush()
+
+                    self._parse_line(line)
+                    self.current_status["last_update"] = datetime.now().isoformat()
+                    self.emit_status_update(line)
+                    logger.debug(line)
+
+                returncode = process.wait()
+
             # Update final status
-            self.current_status["state"] = "completed"
-            self.current_status["upload_progress"] = 100
-            self.emit_status_update("Update process completed")
-            
-            # Clean up temp script
-            os.unlink(temp_script_path)
-            
+            if returncode == 0:
+                self.current_status["state"] = "completed"
+                self.current_status["upload_progress"] = 100
+                self.emit_status_update("Update process completed")
+            else:
+                self.current_status["state"] = "error"
+                self.emit_status_update(f"Update script exited with code {returncode}")
+
         except Exception as e:
             logger.error(f"Error during update process: {str(e)}")
             self.current_status["state"] = "error"
             self.emit_status_update(f"Error during update: {str(e)}")
-        
+
         finally:
             self.update_in_progress = False
-    
+
+    def _parse_line(self, line):
+        """Update the status from one line of script output"""
+        # Track current device being processed
+        device_match = re.search(r'===== Processing device: (\S+)', line)
+        if device_match:
+            self.current_status["current_device"] = device_match.group(1)
+            self.current_status["upload_progress"] = 0
+
+        # Track upload progress
+        progress_match = re.search(r'(\d+\.\d+) KiB / (\d+\.\d+) KiB .* (\d+\.\d+)%', line)
+        if progress_match:
+            self.current_status["upload_progress"] = float(progress_match.group(3))
+
+        # One RESULT line per device: success, skipped or failed
+        result_match = re.search(r'RESULT (\S+) (success|skipped|failed)\b', line)
+        if result_match:
+            counter = {
+                "success": "successful_updates",
+                "skipped": "skipped_updates",
+                "failed": "failed_updates",
+            }[result_match.group(2)]
+            self.current_status[counter] += 1
+            self.current_status["completed_devices"] += 1
+
     def get_status(self):
         """Get the current update status"""
         return self.current_status
-    
+
     def get_log_files(self):
-        """Get list of available log files"""
-        log_files = glob.glob("flash_logs_*.log")
-        return sorted(log_files, key=os.path.getmtime, reverse=True)
-    
+        """Get list of available log files, newest first"""
+        log_files = [f for f in os.listdir(self.log_dir) if LOG_FILE_RE.match(f)]
+        return sorted(log_files, key=lambda f: os.path.getmtime(os.path.join(self.log_dir, f)), reverse=True)
+
+    def read_log(self, log_file):
+        """Return the contents of one of our log files, or None if it isn't one"""
+        if not LOG_FILE_RE.match(os.path.basename(log_file)) or os.path.basename(log_file) != log_file:
+            return None
+        path = os.path.join(self.log_dir, log_file)
+        if not os.path.isfile(path):
+            return None
+        with open(path, 'r') as f:
+            return f.read()
+
     def emit_status_update(self, message):
         """Emit a status update via socket.io"""
         self.socketio.emit('status_update', {

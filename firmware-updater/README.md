@@ -57,6 +57,34 @@ A web interface for updating firmware on Thread-based IoT devices using the mcum
 
 3. Use the interface to discover devices, configure updates, and monitor progress.
 
+### Server settings
+
+The updater can flash firmware onto every device it can reach, so by default it only
+listens on localhost with Flask debug mode off. Environment variables:
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `HACOAP_UPDATER_HOST` | `127.0.0.1` | Address to listen on (`0.0.0.0` exposes it to your network) |
+| `HACOAP_UPDATER_PORT` | `5000` | Port to listen on |
+| `HACOAP_UPDATER_DEBUG` | off | `true` enables Flask debug mode (never on a shared network) |
+| `HACOAP_UPDATER_SECRET_KEY` | random per run | Flask secret key |
+
+### How updates run
+
+The web app runs `../scripts/mcumgr-update-all.sh` in its non-interactive mode and passes
+the settings as `HACOAP_*` environment variables (see the top of the script). The same mode
+can be used from a shell:
+
+```
+HACOAP_NON_INTERACTIVE=true \
+HACOAP_DEVICES="ha-coap-88a24c28=fd49:969:3c3c:1:88a2:4c28:69ec:34f7" \
+HACOAP_BUILD_DIR=../application/build \
+HACOAP_UPDATE_MODE=test \
+./mcumgr-update-all.sh
+```
+
+Each run's output is saved in `logs/update_YYYYmmdd_HHMMSS.log`, which the dashboard lists.
+
 ## Configuration
 
 - **Build Directory**: Path to the directory containing your firmware image

@@ -1,22 +1,37 @@
 #!/usr/bin/env python3
 # app.py - Main Flask application for firmware updates
 
-from flask import Flask, render_template, request, jsonify, redirect, url_for
-from flask_socketio import SocketIO, emit
+from flask import Flask, render_template, request, jsonify
+from flask_socketio import SocketIO
+import ipaddress
 import os
-import subprocess
+import re
 import logging
+import secrets
 import threading
 from update_manager import UpdateManager
-import time
-import json
+
+# Server settings. The updater can flash firmware onto every device it can reach, so it
+# only listens on localhost unless HACOAP_UPDATER_HOST says otherwise (e.g. 0.0.0.0).
+HOST = os.environ.get('HACOAP_UPDATER_HOST', '127.0.0.1')
+PORT = int(os.environ.get('HACOAP_UPDATER_PORT', '5000'))
+DEBUG = os.environ.get('HACOAP_UPDATER_DEBUG', '').lower() in ('1', 'true', 'yes')
+
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+LOG_DIR = os.path.join(BASE_DIR, 'logs')
+DEFAULT_BUILD_DIR = '../application/build'
+
+# Request validation
+DEVICE_NAME_RE = re.compile(r'^[A-Za-z0-9._-]+$')
+UPDATE_MODES = ('test', 'confirm')
+MAX_STALL_TIMEOUT_S = 3600
 
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler("web_updater.log"),
+        logging.FileHandler(os.path.join(BASE_DIR, 'web_updater.log')),
         logging.StreamHandler()
     ]
 )
@@ -24,11 +39,58 @@ logger = logging.getLogger(__name__)
 
 # Initialize Flask app
 app = Flask(__name__)
-app.config['SECRET_KEY'] = 'firmware-updater-secret-key'
+app.config['SECRET_KEY'] = os.environ.get('HACOAP_UPDATER_SECRET_KEY') or secrets.token_hex(32)
 socketio = SocketIO(app)
 
 # Create update manager
-update_manager = UpdateManager(socketio)
+update_manager = UpdateManager(socketio, LOG_DIR)
+
+
+def resolve_build_dir(build_dir):
+    """Return the absolute build directory, or raise ValueError if it has no update image.
+
+    Relative paths are resolved against this directory, not the server's working directory."""
+    path = os.path.realpath(os.path.join(BASE_DIR, build_dir))
+    if not os.path.isdir(path):
+        raise ValueError(f"Build directory not found: {build_dir}")
+    if not os.path.isfile(os.path.join(path, 'zephyr', 'app_update.bin')):
+        raise ValueError(f"Firmware image not found: {os.path.join(build_dir, 'zephyr', 'app_update.bin')}")
+    return path
+
+
+def validate_devices(device_list):
+    """Return [{'name', 'address'}] for the requested devices, or raise ValueError."""
+    if not isinstance(device_list, list) or not device_list:
+        raise ValueError("No devices selected")
+
+    devices = []
+    for device in device_list:
+        if not isinstance(device, dict):
+            raise ValueError("Invalid device entry")
+        name = str(device.get('name', ''))
+        address = str(device.get('address', ''))
+        if not DEVICE_NAME_RE.match(name):
+            raise ValueError(f"Invalid device name: {name!r}")
+        try:
+            address = str(ipaddress.IPv6Address(address))
+        except ValueError:
+            raise ValueError(f"Invalid IPv6 address: {address!r}")
+        if not re.fullmatch(r'[0-9a-f:]+', address):
+            raise ValueError(f"Unsupported IPv6 address: {address!r}")
+        devices.append({"name": name, "address": address})
+    return devices
+
+
+def validate_stall_timeout(value):
+    """Return the stall timeout in seconds, or raise ValueError."""
+    try:
+        timeout = int(value)
+    except (TypeError, ValueError):
+        raise ValueError(f"Invalid stall timeout: {value!r}")
+    if not 0 <= timeout <= MAX_STALL_TIMEOUT_S:
+        raise ValueError(f"Stall timeout must be between 0 and {MAX_STALL_TIMEOUT_S} seconds")
+    return timeout
+
 
 # Routes
 @app.route('/')
@@ -44,7 +106,7 @@ def devices():
 @app.route('/update')
 def update():
     """Render the update page"""
-    build_dir = request.args.get('build_dir', '../application/build')
+    build_dir = request.args.get('build_dir', DEFAULT_BUILD_DIR)
     return render_template('update.html', build_dir=build_dir)
 
 # API Endpoints
@@ -62,35 +124,28 @@ def discover_devices():
 def start_update():
     """API endpoint to start the update process"""
     try:
-        data = request.json
-        device_list = data.get('devices', [])
-        build_dir = data.get('build_dir', '../application/build')
-        update_mode = data.get('update_mode', 'confirm')
-        stall_timeout = data.get('stall_timeout', 300)
-        
-        # Validate inputs
-        if not device_list:
-            return jsonify({"success": False, "error": "No devices selected"})
-        
-        if not os.path.isdir(build_dir):
-            return jsonify({"success": False, "error": f"Build directory not found: {build_dir}"})
-            
-        image_path = os.path.join(build_dir, "zephyr/app_update.bin")
-        if not os.path.isfile(image_path):
-            return jsonify({"success": False, "error": f"Firmware image not found: {image_path}"})
-        
-        # Start update in a background thread
-        update_thread = threading.Thread(
-            target=update_manager.start_update,
-            args=(device_list, build_dir, update_mode, stall_timeout)
-        )
-        update_thread.daemon = True
-        update_thread.start()
-        
-        return jsonify({"success": True, "message": "Update process started"})
-    except Exception as e:
-        logger.error(f"Error starting update: {str(e)}")
+        data = request.get_json(silent=True) or {}
+        device_list = validate_devices(data.get('devices', []))
+        build_dir = resolve_build_dir(data.get('build_dir', DEFAULT_BUILD_DIR))
+        update_mode = data.get('update_mode', 'test')
+        if update_mode not in UPDATE_MODES:
+            raise ValueError(f"Invalid update mode: {update_mode!r}")
+        stall_timeout = validate_stall_timeout(data.get('stall_timeout', 300))
+    except ValueError as e:
         return jsonify({"success": False, "error": str(e)})
+
+    if update_manager.update_in_progress:
+        return jsonify({"success": False, "error": "Update already in progress"})
+
+    # Start update in a background thread
+    update_thread = threading.Thread(
+        target=update_manager.start_update,
+        args=(device_list, build_dir, update_mode, stall_timeout)
+    )
+    update_thread.daemon = True
+    update_thread.start()
+
+    return jsonify({"success": True, "message": "Update process started"})
 
 @app.route('/api/update_status', methods=['GET'])
 def update_status():
@@ -100,22 +155,19 @@ def update_status():
 
 @app.route('/api/logs', methods=['GET'])
 def get_logs():
-    """API endpoint to retrieve update logs"""
+    """API endpoint to retrieve update logs (only files from the updater's log directory)"""
     try:
         log_file = request.args.get('log_file')
-        if log_file and os.path.isfile(log_file):
-            with open(log_file, 'r') as f:
-                logs = f.read()
-            return jsonify({"success": True, "logs": logs})
-        else:
-            # Get the most recent log file
+        if not log_file:
             log_files = update_manager.get_log_files()
-            if log_files:
-                with open(log_files[0], 'r') as f:
-                    logs = f.read()
-                return jsonify({"success": True, "logs": logs, "log_file": log_files[0]})
-            else:
+            if not log_files:
                 return jsonify({"success": False, "error": "No log files found"})
+            log_file = log_files[0]
+
+        logs = update_manager.read_log(log_file)
+        if logs is None:
+            return jsonify({"success": False, "error": "Log file not found"})
+        return jsonify({"success": True, "logs": logs, "log_file": log_file})
     except Exception as e:
         logger.error(f"Error retrieving logs: {str(e)}")
         return jsonify({"success": False, "error": str(e)})
@@ -141,25 +193,15 @@ def handle_disconnect():
 
 # Main execution
 if __name__ == '__main__':
-    # Define script directory path (in parent directory)
-    script_dir = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '../scripts'))
-    
-    # Make sure script directory exists
-    if not os.path.exists(script_dir):
-        logger.warning(f"Script directory not found: {script_dir}")
-        os.makedirs(script_dir, exist_ok=True)
-        logger.info(f"Created script directory: {script_dir}")
-    
-    # Check if update script exists
-    script_path = os.path.join(script_dir, 'mcumgr-update-all.sh')
+    script_path = update_manager.update_script
     if os.path.exists(script_path):
-        # Ensure the update script is executable
-        os.chmod(script_path, 0o755)  # Set executable permission
         logger.info(f"Found update script: {script_path}")
     else:
         logger.warning(f"Update script not found: {script_path}")
-        logger.info("Please copy your update script to the ../scripts directory")
-    
+
+    if HOST not in ('127.0.0.1', 'localhost', '::1'):
+        logger.warning(f"Listening on {HOST}: anyone who can reach this port can flash your devices")
+
     # Start the app
-    logger.info("Starting Firmware Update Web Interface")
-    socketio.run(app, host='0.0.0.0', port=5000, debug=True)
+    logger.info(f"Starting Firmware Update Web Interface on http://{HOST}:{PORT}")
+    socketio.run(app, host=HOST, port=PORT, debug=DEBUG)
