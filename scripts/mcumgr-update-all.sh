@@ -6,20 +6,43 @@
 # ========================================================================
 
 # ----------------------
+# Non-interactive mode
+# ----------------------
+# Used by the web updater (../firmware-updater). Set HACOAP_NON_INTERACTIVE=true
+# and pass the settings through these environment variables instead of prompts:
+#   HACOAP_BUILD_DIR      build directory containing zephyr/app_update.bin
+#   HACOAP_DEVICES        space-separated "name=address" entries (IPv6 address for
+#                         UDP, /dev/tty* for USB); "address" alone also works
+#   HACOAP_CONNECTION     UDP (default) or USB
+#   HACOAP_UPDATE_MODE    test (default) or confirm
+#   HACOAP_STALL_TIMEOUT  seconds before a stalled upload is cancelled (0 disables)
+#   HACOAP_MAX_RETRIES    upload attempts per device
+# Each device ends with a machine-readable "RESULT <name> success|skipped|failed" line.
+NON_INTERACTIVE="${HACOAP_NON_INTERACTIVE:-false}"
+
+# ----------------------
 # Terminal color definitions
 # ----------------------
-declare -r RED='\033[0;31m'
-declare -r GREEN='\033[0;32m'
-declare -r YELLOW='\033[0;33m'
-declare -r BLUE='\033[0;34m'
-declare -r PURPLE='\033[0;35m'
-declare -r CYAN='\033[0;36m'
-declare -r BOLD='\033[1m'
-declare -r DIM='\033[2m'
-declare -r NC='\033[0m' # No Color
-declare -r BG_BLUE='\033[44m'
-declare -r BG_GREEN='\033[42m'
-declare -r BG_RED='\033[41m'
+if [ "$NON_INTERACTIVE" = true ]; then
+    # Plain output for log files and the web UI
+    RED=''; GREEN=''; YELLOW=''; BLUE=''; PURPLE=''; CYAN=''
+    BOLD=''; DIM=''; NC=''
+    BG_BLUE=''; BG_GREEN=''; BG_RED=''; BG_YELLOW=''
+else
+    RED='\033[0;31m'
+    GREEN='\033[0;32m'
+    YELLOW='\033[0;33m'
+    BLUE='\033[0;34m'
+    PURPLE='\033[0;35m'
+    CYAN='\033[0;36m'
+    BOLD='\033[1m'
+    DIM='\033[2m'
+    NC='\033[0m' # No Color
+    BG_BLUE='\033[44m'
+    BG_GREEN='\033[42m'
+    BG_RED='\033[41m'
+    BG_YELLOW='\033[43m'
+fi
 
 # ----------------------
 # Configuration variables
@@ -41,6 +64,7 @@ SUCCESSFUL_UPDATES=0
 FAILED_UPDATES=0
 SKIPPED_UPDATES=0
 BUILD_DIR=""
+DEVICE_RESULT="" # outcome of the last update_device call: success, skipped or failed
 TEST_MODE=true
 CONNECTION_TYPE="" # New variable to store connection type (USB or UDP)
 SERIAL_PORT="" # New variable to store the selected serial port
@@ -159,8 +183,10 @@ function log() {
 # Function: print_banner
 # Description: Displays a stylized banner at the start of the script
 function print_banner() {
-    clear
-    
+    if [ "$NON_INTERACTIVE" != true ]; then
+        clear
+    fi
+
     echo ""
     echo -e "${BLUE}+----------------------------------------------------+${NC}"
     echo -e "${BLUE}|                                                    |${NC}"
@@ -756,7 +782,10 @@ function update_device() {
     local retry_count=0
     local upload_success=false
     local connection_id=""
-    
+    DEVICE_RESULT="failed"
+    current_hash=""
+    new_image_hash=""
+
     # Draw a nice box for this device
     echo ""
     draw_box "Updating Device: ${BOLD}${device_name}${NC}" "${BLUE}"
@@ -809,7 +838,7 @@ function update_device() {
         
         # Get the hash of the image we're about to upload
         echo -ne "${CYAN}�${NC} Getting hash of new image... "
-        new_image_hash=$(./get-image-hash.sh 2>/dev/null)
+        new_image_hash=$(./get-image-hash.sh "$BUILD_DIR" 2>/dev/null)
         
         if [ -z "$new_image_hash" ]; then
             echo -e "${YELLOW}Not available${NC}"
@@ -827,6 +856,7 @@ function update_device() {
                 mcumgr conn remove "$connection_id" > /dev/null 2>&1
                 # Increment skipped updates count
                 SKIPPED_UPDATES=$((SKIPPED_UPDATES + 1))
+                DEVICE_RESULT="skipped"
                 return 0
             fi
         fi
@@ -1109,6 +1139,7 @@ function update_device() {
         
         echo -e "${GREEN}${BOLD} Flash process completed successfully for ${device_name}${NC}"
         log "SUCCESS" "Flash process completed for ${device_name}"
+        DEVICE_RESULT="success"
         return 0
     fi
     
@@ -1431,6 +1462,101 @@ function display_summary() {
 }
 
 # ----------------------
+# Non-interactive Configuration
+# ----------------------
+
+# Function: configure_non_interactive
+# Description: Reads the HACOAP_* environment variables (see the top of this file)
+# in place of the interactive prompts, and validates them
+function configure_non_interactive() {
+    draw_box "Non-interactive Configuration" "${BLUE}"
+
+    log "INFO" "Running in non-interactive mode"
+
+    CONNECTION_TYPE="${HACOAP_CONNECTION:-UDP}"
+    if [ "$CONNECTION_TYPE" != "UDP" ] && [ "$CONNECTION_TYPE" != "USB" ]; then
+        log "ERROR" "Invalid HACOAP_CONNECTION: ${CONNECTION_TYPE} (expected UDP or USB)"
+        exit 1
+    fi
+
+    DEVICE_NAMES=()
+    DEVICE_ADDRESSES=()
+    local entry name address
+    for entry in ${HACOAP_DEVICES:-}; do
+        if [[ "$entry" == *=* ]]; then
+            name="${entry%%=*}"
+            address="${entry#*=}"
+        else
+            name="$entry"
+            address="$entry"
+        fi
+
+        if ! [[ "$name" =~ ^[A-Za-z0-9._:/-]+$ ]]; then
+            log "ERROR" "Invalid device name: ${name}"
+            exit 1
+        fi
+        if [ "$CONNECTION_TYPE" = "UDP" ] && ! [[ "$address" =~ ^[0-9A-Fa-f:]+$ ]]; then
+            log "ERROR" "Invalid IPv6 address for ${name}: ${address}"
+            exit 1
+        fi
+        if [ "$CONNECTION_TYPE" = "USB" ] && ! [[ "$address" =~ ^/dev/tty[A-Za-z0-9]+$ ]]; then
+            log "ERROR" "Invalid serial port for ${name}: ${address}"
+            exit 1
+        fi
+
+        DEVICE_NAMES+=("$name")
+        DEVICE_ADDRESSES+=("$address")
+    done
+
+    if [ ${#DEVICE_ADDRESSES[@]} -eq 0 ]; then
+        log "ERROR" "No devices given (set HACOAP_DEVICES)"
+        exit 1
+    fi
+    SELECTED_INDICES=("${!DEVICE_ADDRESSES[@]}")
+    log "INFO" "Selected ${#SELECTED_INDICES[@]} device(s) over ${CONNECTION_TYPE}"
+
+    BUILD_DIR="${HACOAP_BUILD_DIR:-../application/build}"
+    if [ ! -f "${BUILD_DIR}/zephyr/app_update.bin" ]; then
+        log "ERROR" "Firmware image not found at: ${BUILD_DIR}/zephyr/app_update.bin"
+        exit 1
+    fi
+    log "SUCCESS" "Firmware image found: ${BUILD_DIR}/zephyr/app_update.bin"
+
+    case "${HACOAP_UPDATE_MODE:-test}" in
+        test)
+            TEST_MODE=true
+            log "INFO" "Selected mode: Test mode (will revert if boot fails)"
+            ;;
+        confirm)
+            TEST_MODE=false
+            log "INFO" "Selected mode: Confirm immediately (permanent)"
+            ;;
+        *)
+            log "ERROR" "Invalid HACOAP_UPDATE_MODE: ${HACOAP_UPDATE_MODE} (expected test or confirm)"
+            exit 1
+            ;;
+    esac
+
+    if [ -n "${HACOAP_STALL_TIMEOUT:-}" ]; then
+        if ! [[ "$HACOAP_STALL_TIMEOUT" =~ ^[0-9]+$ ]]; then
+            log "ERROR" "Invalid HACOAP_STALL_TIMEOUT: ${HACOAP_STALL_TIMEOUT}"
+            exit 1
+        fi
+        UPLOAD_STALL_TIMEOUT=$HACOAP_STALL_TIMEOUT
+    fi
+    log "INFO" "Upload stall timeout: ${UPLOAD_STALL_TIMEOUT} seconds (0 = disabled)"
+
+    if [ -n "${HACOAP_MAX_RETRIES:-}" ]; then
+        if ! [[ "$HACOAP_MAX_RETRIES" =~ ^[0-9]+$ ]]; then
+            log "ERROR" "Invalid HACOAP_MAX_RETRIES: ${HACOAP_MAX_RETRIES}"
+            exit 1
+        fi
+        MAX_UPLOAD_RETRIES=$HACOAP_MAX_RETRIES
+    fi
+    log "INFO" "Maximum upload attempts: ${MAX_UPLOAD_RETRIES}"
+}
+
+# ----------------------
 # Main Function
 # ----------------------
 
@@ -1447,67 +1573,71 @@ function main() {
     # Verify all dependencies are installed
     check_dependencies
     
-    # Prompt for connection type selection
-    select_connection_type
-    
-    # Setup connection based on type
-    if [ "$CONNECTION_TYPE" = "UDP" ]; then
-        # Check if avahi-browse is available (required for UDP)
-        if ! command -v avahi-browse &> /dev/null; then
-            echo -e "${RED}L avahi-browse is required for UDP connections but not found!${NC}"
-            log "ERROR" "avahi-browse is required for UDP connections but not found"
-            exit 1
+    if [ "$NON_INTERACTIVE" = true ]; then
+        # All settings come from HACOAP_* environment variables
+        configure_non_interactive
+    else
+        # Prompt for connection type selection
+        select_connection_type
+        
+        # Setup connection based on type
+        if [ "$CONNECTION_TYPE" = "UDP" ]; then
+            # Check if avahi-browse is available (required for UDP)
+            if ! command -v avahi-browse &> /dev/null; then
+                echo -e "${RED}L avahi-browse is required for UDP connections but not found!${NC}"
+                log "ERROR" "avahi-browse is required for UDP connections but not found"
+                exit 1
+            fi
+            
+            # Discover available devices
+            discover_devices
+            
+            # Allow selection of which devices to update
+            select_devices
+        else  # USB connection
+            # Find and select serial port
+            list_serial_ports
+            select_serial_port
+            
+            # Setup a single device for USB connection
+            setup_usb_device
         fi
         
-        # Discover available devices
-        discover_devices
+        # Find the build directory
+        locate_build_directory
         
-        # Allow selection of which devices to update
-        select_devices
-    else  # USB connection
-        # Find and select serial port
-        list_serial_ports
-        select_serial_port
+        # Prompt for operation mode
+        prompt_for_mode
         
-        # Setup a single device for USB connection
-        setup_usb_device
+        # Configure stall timeout and retry settings
+        configure_settings
     fi
     
-    # Find the build directory
-    locate_build_directory
-    
-    # Prompt for operation mode
-    prompt_for_mode
-    
-    # Configure stall timeout and retry settings
-    configure_settings
-    
-    # Confirm before proceeding
     total_devices=${#SELECTED_INDICES[@]}
-    echo ""
-    echo -e "${YELLOW}? You are about to update firmware on ${total_devices} devices. Continue? (y/n):${NC} "
-    read -r confirm
     
-    if [[ "$confirm" != "y" && "$confirm" != "Y" ]]; then
-        log "INFO" "Operation cancelled by user."
-        exit 0
+    # Confirm before proceeding (the web updater asks for confirmation itself)
+    if [ "$NON_INTERACTIVE" != true ]; then
+        echo ""
+        echo -e "${YELLOW}? You are about to update firmware on ${total_devices} devices. Continue? (y/n):${NC} "
+        read -r confirm
+        
+        if [[ "$confirm" != "y" && "$confirm" != "Y" ]]; then
+            log "INFO" "Operation cancelled by user."
+            exit 0
+        fi
     fi
     
     # Process each selected device
     for i in "${SELECTED_INDICES[@]}"; do
         update_device "${DEVICE_NAMES[$i]}" "${DEVICE_ADDRESSES[$i]}" "$TEST_MODE" "$CONNECTION_TYPE"
-        result=$?
         
-        if [ $result -eq 0 ]; then
-            if [ "$current_hash" == "$new_image_hash" ]; then
-                # Already counted in the update_device function
-                :
-            else
-                SUCCESSFUL_UPDATES=$((SUCCESSFUL_UPDATES + 1))
-            fi
-        else
-            FAILED_UPDATES=$((FAILED_UPDATES + 1))
-        fi
+        # Skipped devices are already counted in update_device
+        case "$DEVICE_RESULT" in
+            success) SUCCESSFUL_UPDATES=$((SUCCESSFUL_UPDATES + 1)) ;;
+            skipped) ;;
+            *) FAILED_UPDATES=$((FAILED_UPDATES + 1)) ;;
+        esac
+        log "INFO" "RESULT ${DEVICE_NAMES[$i]} ${DEVICE_RESULT}"
         
         # Add a small delay between devices to avoid network congestion
         sleep 2

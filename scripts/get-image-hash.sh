@@ -3,9 +3,12 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+# Usage: get-image-hash.sh [build_dir]   (default: ../application/build)
+BUILD_DIR="${1:-../application/build}"
+
 # Change to the appropriate directory
-cd ../application/build || {
-    echo "Error: Unable to change to directory ../application/build"
+cd "$BUILD_DIR" || {
+    echo "Error: Unable to change to directory $BUILD_DIR"
     echo "Please ensure the directory exists"
     exit 1
 }
@@ -15,7 +18,7 @@ IMG_HDR_MAGIC=0x96f3b83d
 IMAGE_F_RAM_LOAD=0x00000020
 TLV_INFO_MAGIC=6907  # Removed 0x prefix for comparison
 
-# Hardcoded path for the image file (path is now relative to ../application/build)
+# Path of the image file, relative to the build directory
 IMAGE_FILE="zephyr/app_update.bin"
 
 # Check if the file exists
