@@ -336,7 +336,7 @@ void pump_request_handler(void *context, otMessage *message, const otMessageInfo
 void data_request_handler(void *context, otMessage *message, const otMessageInfo *message_info)
 {
 	otMessageInfo msg_info;
-	const int8_t *data_buf;
+	const uint8_t *data_buf;
 
 	ARG_UNUSED(context);
 
@@ -384,7 +384,7 @@ void info_request_handler(void *context, otMessage *message, const otMessageInfo
 
 		info = srv_context.on_info_request(); // get 'info' strings from coap_server.c
 		len = snprintf(info_output, sizeof(info_output), "%s,%s,%s",
-			       info.fw_version_buf, info.hw_version_buf, info.device_id_buf);
+			       info.fw_version, info.hw_version, info.device_id);
 		if (len < 0)
 		{
 			return;

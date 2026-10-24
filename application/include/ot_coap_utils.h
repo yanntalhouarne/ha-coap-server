@@ -58,9 +58,9 @@ enum ping_command
 */
 typedef uint8_t (*pumpdc_request_callback_t)(uint8_t data);
 typedef void (*pump_request_callback_t)(uint8_t cmd);
-typedef int8_t *(*data_request_callback_t)();
-typedef struct info_data (*info_request_callback_t)();
-typedef void (*ping_request_callback_t)();
+typedef const uint8_t *(*data_request_callback_t)(void); // returns DATA_PAYLOAD_SIZE bytes
+typedef struct info_data (*info_request_callback_t)(void);
+typedef void (*ping_request_callback_t)(uint8_t cmd);
 
 /*
 ███████ ████████ ██████  ██    ██  ██████ ████████ ███████
@@ -82,23 +82,12 @@ struct server_context
     ping_request_callback_t on_ping_request;
 };
 
-/* FW version data struct */
+/* 'info' resource strings, sent as "<fw_version>,<hw_version>,<device_id>" */
 struct info_data
 {
-    // FW version
-    const char *fw_version_buf;
-    uint8_t fw_version_size;
-
-    // HW version
-    const char *hw_version_buf;
-    uint8_t hw_version_size;
-
-    // Device ID
-    const char *device_id_buf;
-    uint8_t device_id_size;
-
-    // Total string length
-    uint8_t total_size;
+    const char *fw_version;
+    const char *hw_version;
+    const char *device_id;
 };
 
 /*

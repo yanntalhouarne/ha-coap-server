@@ -19,12 +19,14 @@
 	zephyr,user {
 		io-channels = <&adc 0>;
 	};
+	/* LEDs only: the DK library drives every child of this node, by index. */
 	leds {
 		compatible = "gpio-leds";
 		led1: led_1 {
 			gpios = <&gpio0 13 GPIO_ACTIVE_HIGH>;
 			label = "USR BLUE LED";
 		};
+		/* RGB LED on the ACN52840 module */
 		radio_red_led: radio_red_led {
 			gpios = <&gpio1 2 GPIO_ACTIVE_LOW>;
 			label = "RADIO RED LED";
@@ -37,20 +39,20 @@
 			gpios = <&gpio1 6 GPIO_ACTIVE_LOW>;
 			label = "RADIO GREEN LED";
 		};
+	};
+	/* Other digital outputs, driven by the application through their aliases. */
+	outputs {
+		compatible = "gpio-leds";
 		pump1: pump_1 {
 			gpios = <&gpio0 17 GPIO_ACTIVE_HIGH>;
 			label = "Water pump";
 		};
-		tofen: tof_en {
-			gpios = <&gpio0 9 (GPIO_PULL_UP | GPIO_ACTIVE_HIGH)>;
-			label = "TOF enable";
-		};
-		sensoren: senor_en {
-			gpios = <&gpio0 28 (GPIO_ACTIVE_HIGH)>;
+		sensoren: sensor_en {
+			gpios = <&gpio0 28 GPIO_ACTIVE_HIGH>;
 			label = "Sensor enable";
 		};
 		sensorpwr: sensor_pwr {
-			gpios = <&gpio1 15 (GPIO_PULL_DOWN | GPIO_ACTIVE_HIGH)>; // if sensor_pwr = 0, VCC is selected. Otherwise, VCC_MCU is.
+			gpios = <&gpio1 15 GPIO_ACTIVE_HIGH>; // FPF1320 SEL: 0 selects VINA (VCC), 1 selects VINB (VCC_MCU).
 			label = "Sensor pwr";
 		};
 	};
@@ -87,7 +89,6 @@
 		radio-blue-led = &radio_blue_led;
 		radio-green-led = &radio_green_led;
 		pump1 = &pump1;
-		tofen = &tofen;
 		sensor-en = &sensoren;
 		sensor-pwr = &sensorpwr;
 		pwm-buzzer= &pwm_buzzer;
@@ -154,10 +155,14 @@
 		compatible = "ti,hdc","ti,hdc1080";
 		reg = <0x40>;
 	};
-	vl53l0x@30 {
+	/* Unused for now. Disabled so that nothing drives XSHUT (P0.09): R30 holds it high
+	 * and the sensor idles in standby. The driver controls XSHUT once enabled.
+	 */
+	vl53l0x@29 {
 		compatible = "st,vl53l0x";
-		reg = <0x30>;
-		label = "VL53L0X";
+		status = "disabled";
+		reg = <0x29>;
+		xshut-gpios = <&gpio0 9 GPIO_ACTIVE_HIGH>;
 	};
 	lsm6dsl@6a {
 		compatible = "st,lsm6dsl";

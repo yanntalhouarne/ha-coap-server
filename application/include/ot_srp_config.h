@@ -1,3 +1,6 @@
+#ifndef __OT_SRP_CONFIG_H__
+#define __OT_SRP_CONFIG_H__
+
 // un-comment macro below to append a random number to the SRP service hostname - CHOOSE ONE OF THE THREE OPTIONS BELOW
 //#define SRP_CLIENT_RNG 1
 #define SRP_CLIENT_UNIQUE 1
@@ -11,3 +14,5 @@
 #define SRP_CLIENT_RAND_SIZE 8
 #define SRP_CLIENT_UNIQUE_SIZE 8
 #define SRP_SERVICE_NAME "_ot._udp"
+
+#endif // __OT_SRP_CONFIG_H__
