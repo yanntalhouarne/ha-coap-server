@@ -10,3 +10,8 @@
         zephyr,console = &uart0;
     };
 };
+
+/* uart0 is disabled in the board DTS to save power; enable it for console builds. */
+&uart0 {
+    status = "okay";
+};

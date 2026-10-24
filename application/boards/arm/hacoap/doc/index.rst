@@ -25,7 +25,7 @@ Nordic Semiconductor nRF52840 ARM Cortex-M4F CPU and the following devices:
 * :abbr:`USB (Universal Serial Bus)`
 * :abbr:`WDT (Watchdog Timer)`
 
-.. figure:: img/hacoap.jpg
+.. figure:: img/hacoap.png
      :align: center
      :alt: ha coap
 

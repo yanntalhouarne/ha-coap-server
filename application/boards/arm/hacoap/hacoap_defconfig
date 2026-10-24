@@ -19,5 +19,8 @@ CONFIG_GPIO=y
 # additional board options
 CONFIG_GPIO_AS_PINRESET=y
 
+# P0.09 (TOF_SHNn) and P0.10 (TOF_INT) are wired as GPIOs, not to an NFC antenna
+CONFIG_NFCT_PINS_AS_GPIOS=y
+
 CONFIG_PINCTRL=y
 

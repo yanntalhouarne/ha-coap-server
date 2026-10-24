@@ -127,9 +127,12 @@
 	status = "okay";
 };
 
+/* Disabled by default: an enabled UARTE keeps its receiver running, which costs
+ * current in sleep. boards/uart.overlay enables it for console builds.
+ */
 &uart0 {
     compatible = "nordic,nrf-uarte";
-    status = "okay";
+    status = "disabled";
     current-speed = <115200>;
     pinctrl-0 = <&uart0_default>;
     pinctrl-1 = <&uart0_sleep>;
