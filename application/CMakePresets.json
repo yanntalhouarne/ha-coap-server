@@ -13,7 +13,7 @@
             "cacheVariables": {
                 "NCS_TOOLCHAIN_VERSION": "NONE",
                 "BOARD": "hacoap",
-                "BOARD_ROOT": "/home/yann/openthread_coap_server/application;${sourceDir}/",
+                "BOARD_ROOT": "${sourceDir}/",
                 "CONFIG_DEBUG_OPTIMIZATIONS": "y",
                 "CONFIG_DEBUG_THREAD_INFO": "y",
                 "CACHED_CONF_FILE": "${sourceDir}/prj.conf",
