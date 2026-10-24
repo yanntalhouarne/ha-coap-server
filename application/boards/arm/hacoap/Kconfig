@@ -11,6 +11,8 @@ config BOARD_ENABLE_DCDC
 	  Run the nRF52840's main regulator (REG1) in DC/DC mode instead of LDO
 	  mode, which roughly halves the current drawn by the radio and CPU.
 	  The ACN52840 module includes the inductor the DC/DC converter needs.
-	  Set this to n if a board does not boot with it enabled.
+	  If a board does not boot with it enabled, turn it off for both images
+	  (MCUboot does not inherit the application's setting):
+	  -DCONFIG_BOARD_ENABLE_DCDC=n -Dmcuboot_CONFIG_BOARD_ENABLE_DCDC=n
 
 endif # BOARD_HACOAP

@@ -120,6 +120,7 @@ enum
 	FUEL_GAUGE_PROP_STATE_OF_CHARGE,
 	FUEL_GAUGE_PROP_VOLTAGE,
 };
+static bool props_fuel_gauge_valid; // set once fuel_gauge_get_prop() has filled props_fuel_gauge
 static struct fuel_gauge_get_property props_fuel_gauge[] = {
 	[FUEL_GAUGE_PROP_RUNTIME_TO_EMPTY] = {.property_type = FUEL_GAUGE_RUNTIME_TO_EMPTY},
 	[FUEL_GAUGE_PROP_RUNTIME_TO_FULL] = {.property_type = FUEL_GAUGE_RUNTIME_TO_FULL},
@@ -221,8 +222,9 @@ static void pump_set(bool on)
 /* Runs the pump for 'pump_dc' seconds. Restarts the timer if the pump is already running. */
 static void pump_start(void)
 {
-	pump_set(true);
+	/* Restart the timer first, so an expiry of the previous run cannot turn the pump back off. */
 	k_timer_start(&pump_timer, K_SECONDS(pump_dc), K_NO_WAIT);
+	pump_set(true);
 	buzzer_play(&pump_pattern);
 }
 
@@ -319,8 +321,10 @@ static int read_battery_soc(uint8_t *soc)
 	if (err < 0)
 	{
 		LOG_ERR("Cannot read fuel gauge properties (%d)", err);
+		props_fuel_gauge_valid = false;
 		return err;
 	}
+	props_fuel_gauge_valid = true;
 	if (err != 0)
 	{
 		LOG_WRN("Some fuel gauge properties failed");
@@ -374,6 +378,10 @@ static int read_air(uint8_t *humidity, uint8_t *temperature)
 /* Logs the fuel gauge properties fetched by the last read_battery_soc() call. */
 static void log_fuel_gauge(void)
 {
+	if (!props_fuel_gauge_valid)
+	{
+		return;
+	}
 	if (props_fuel_gauge[FUEL_GAUGE_PROP_RUNTIME_TO_EMPTY].status == 0)
 	{
 		LOG_INF("Time to empty %u", (unsigned int)props_fuel_gauge[FUEL_GAUGE_PROP_RUNTIME_TO_EMPTY].value.runtime_to_empty);
@@ -812,6 +820,9 @@ static int watchdog_init(void)
 		return err;
 	}
 
+	/* The nRF52 watchdog keeps running across soft resets (e.g. mcumgr reset), so it may
+	 * already be counting down from the previous image: feed it right away. */
+	wdt_feed(wdt_dev, wdt_channel);
 	k_work_schedule(&wdt_feed_work, K_MSEC(WDT_FEED_PERIOD));
 
 	return 0;
