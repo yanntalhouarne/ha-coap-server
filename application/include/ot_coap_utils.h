@@ -32,6 +32,10 @@
 #define DATA_URI_PATH "data"
 #define INFO_URI_PATH "info"
 #define PING_URI_PATH "ping"
+/* 'data' payload: soil moisture (%), battery state of charge (%), air humidity (%), temperature (degC, int8) */
+#define DATA_PAYLOAD_SIZE 4
+/* Maximum size of the 'info' payload ("<fw>,<hw>,<device id>" plus NUL terminator) */
+#define INFO_PAYLOAD_MAX_SIZE 64
 /* Enumeration describing PUMP commands. */
 enum pump_command
 {
@@ -114,30 +118,8 @@ void pump_request_handler(void *context, otMessage *message, const otMessageInfo
 void data_request_handler(void *context, otMessage *message, const otMessageInfo *message_info);
 /**@brief Info request handler (GET) */
 void info_request_handler(void *context, otMessage *message, const otMessageInfo *message_info);
-/**@brief Ping request handler (GET) */
+/**@brief Ping request handler (PUT) */
 void ping_request_handler(void *context, otMessage *message, const otMessageInfo *message_info);
-
-/*
-██████  ███████ ███████ ██████   ██████  ███    ██ ███████ ███████     ██   ██  █████  ███    ██ ██████  ██      ███████ ██████  ███████
-██   ██ ██      ██      ██   ██ ██    ██ ████   ██ ██      ██          ██   ██ ██   ██ ████   ██ ██   ██ ██      ██      ██   ██ ██
-██████  █████   ███████ ██████  ██    ██ ██ ██  ██ ███████ █████       ███████ ███████ ██ ██  ██ ██   ██ ██      █████   ██████  ███████
-██   ██ ██           ██ ██      ██    ██ ██  ██ ██      ██ ██          ██   ██ ██   ██ ██  ██ ██ ██   ██ ██      ██      ██   ██      ██
-██   ██ ███████ ███████ ██       ██████  ██   ████ ███████ ███████     ██   ██ ██   ██ ██   ████ ██████  ███████ ███████ ██   ██ ███████
-*/
-/**@brief Pumpdc PUT response with pump state date. */
-otError pumpdc_put_response_send(otMessage *request_message, const otMessageInfo *message_info, uint8_t new_pumpdc);
-/**@brief Pumpdc GET response with pump state date. */
-otError pumpdc_get_response_send(otMessage *request_message, const otMessageInfo *message_info);
-/**@brief Pump PUT response with pump state date. */
-otError pump_put_response_send(otMessage *request_message, const otMessageInfo *message_info);
-/**@brief Pump GET response with pump state date. */
-otError pump_get_response_send(otMessage *request_message, const otMessageInfo *message_info);
-/**@brief CoAp response with all sensors' data. */
-otError data_response_send(otMessage *request_message, const otMessageInfo *message_info);
-/**@brief CoAp response with device info data. */
-otError info_response_send(otMessage *request_message, const otMessageInfo *message_info);
-/**@brief CoAp response for a ping request */
-otError ping_response_send(otMessage *request_message, const otMessageInfo *message_info);
 
 /*
 ███████ ██   ██ ████████ ███████ ██████  ███    ██  █████  ██          ███████ ██    ██ ███    ██  ██████ ████████ ██  ██████  ███    ██ ███████
