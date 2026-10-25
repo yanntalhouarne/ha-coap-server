@@ -15,17 +15,28 @@ This project is meant to be run on the [ha-coap-pcb](https://github.com/yanntalh
 Everything the build needs is pinned in this repository: the board definition, the SDK revisions (`application/west.yml`) and the toolchain version (nRF Connect SDK v2.4.3).
 
 ### On a new PC
-1. Clone the repository. On Windows, keep the path short (for example `C:\dev\ha-coap-server`) to stay clear of path-length limits.
-2. Run the setup script once. It installs `nrfutil` and the v2.4.3 toolchain if needed, then fetches the SDK into `external/` (a few minutes):
-   - Windows: `powershell -ExecutionPolicy Bypass -File scripts\setup.ps1`
-   - Linux: `scripts/setup.sh` (on macOS, install [nRF Util](https://www.nordicsemi.com/Products/Development-tools/nRF-Util) first)
-3. Build:
-   - Windows: `powershell -ExecutionPolicy Bypass -File scriptsuild.ps1`
+The only prerequisite is [Git](https://git-scm.com/). Everything else is installed by the setup script.
+
+1. **Clone** the repository. On Windows, keep the path short (for example `C:\dev\ha-coap-server`) to stay clear of path-length limits:
+   ```
+   git clone https://github.com/yanntalhouarne/ha-coap-server.git
+   cd ha-coap-server
+   ```
+2. **Set up**, once per PC. The script downloads `nrfutil` if it isn't installed, installs the nRF Connect SDK v2.4.3 toolchain (about 1 GB), and fetches the pinned SDK into `external/`. Allow 5–15 minutes on a first run:
+   - Windows (PowerShell): `powershell -ExecutionPolicy Bypass -File scripts\setup.ps1`
+   - Linux: `scripts/setup.sh`
+   - macOS: install [nRF Util](https://www.nordicsemi.com/Products/Development-tools/nRF-Util) first, then `scripts/setup.sh`
+3. **Build** the production firmware (about 1–2 minutes):
+   - Windows (PowerShell): `powershell -ExecutionPolicy Bypass -File scripts\build.ps1`
    - Linux/macOS: `scripts/build.sh`
 
-The firmware update image is `application/build/zephyr/app_update.bin`, which is where the update scripts look, and `merged.hex` next to it is the full image (MCUboot + application) for SWD.
+   Or build from VS Code instead: see [In VS Code](#in-vs-code) below.
 
-Run the setup script again whenever `application/west.yml` changes.
+The result is in `application/build/zephyr/`:
+- `app_update.bin`: the signed update image, for USB or over-the-air updates with mcumgr (the update scripts look here).
+- `merged.hex`: MCUboot plus the application, for a first flash over SWD.
+
+Run the setup script again after pulling a change to `application/west.yml` (a new SDK pin). It skips whatever is already installed.
 
 ### Variants
 `prj.conf` is the production firmware: Thread sleepy end device, with firmware updates over USB and over Thread (mcumgr on UDP port 1337). The other variants add to it:
@@ -37,7 +48,7 @@ Run the setup script again whenever `application/west.yml` changes.
 | `uart-console` | `application/build_uart_console` | Console and logs on the J4 UART (`overlay-uart.conf`, `overlay-logging.conf`, `boards/uart.overlay`) |
 | `debug` | `application/build_debug` | Asserts, `-Og` and thread info (`overlay-debug.conf`) |
 
-For example `scriptsuild.ps1 usb-logging`. Extra arguments go to CMake, for example `scripts/build.sh battery -DCONFIG_HACOAP_SENSOR_SAMPLE_PERIOD_S=900`. The scripts always build from a clean build directory.
+For example `scripts\build.ps1 usb-logging` or `scripts/build.sh usb-logging`. Extra arguments go to CMake, for example `scripts/build.sh battery -DCONFIG_HACOAP_SENSOR_SAMPLE_PERIOD_S=900`. The scripts always build from a clean build directory.
 
 ### In VS Code
 1. Open the repository folder and install the recommended **nRF Connect for VS Code Extension Pack** when prompted.
