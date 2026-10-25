@@ -27,6 +27,19 @@ mcumgr -c serial image confirm             # once the board is back and working
 ```
 **Over the air:** the same commands with a UDP connection instead, `mcumgr conn add udp type="udp" connstring="[<device IPv6>]:1337"`, and `-c udp`. Find the address with `avahi-browse -r _ot._udp`, or use `scripts/mcumgr-update-all.sh`.
 
+**With the scripts instead** (from the `scripts` folder, in bash; they use `application/build`):
+- On Linux, with `avahi-utils` and `mcumgr` installed (for example the Home Assistant host or a Raspberry Pi):
+  - `./mcumgr-dfu.sh`: guided update of one device, found automatically, over USB or the air.
+  - `./mcumgr-update-all.sh`: the same for several devices at once, with upload retries.
+- On Windows, the guided modes don't work, because they need `avahi-browse` and Linux serial ports. Over the air, `mcumgr-update-all.sh` works from Git Bash in non-interactive mode, with the device addresses given by hand:
+  ```
+  cd scripts
+  HACOAP_NON_INTERACTIVE=true HACOAP_UPDATE_MODE=test HACOAP_DEVICES="plant1=<device IPv6> plant2=<device IPv6>" ./mcumgr-update-all.sh
+  ```
+  Each device ends with a `RESULT <name> success|skipped|failed` line.
+
+After a `test` update, check the device, then make it permanent with `mcumgr -c <connection> image confirm` (or update with `HACOAP_UPDATE_MODE=confirm` to skip the trial boot).
+
 If an update uploads but the board keeps its old firmware, the image was signed with a different key. Build on a PC that has your key.
 
 ## 3. Test on the boards
