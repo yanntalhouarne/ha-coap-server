@@ -115,7 +115,7 @@ static void check_response(otCoapType type, otCoapCode code, const void *payload
 	CHECK_EQ(fake_response.code, code);
 	CHECK_EQ(fake_response.payload_marker, length > 0);
 	CHECK_EQ(fake_response.length, length);
-	CHECK(memcmp(fake_response.bytes, payload, length) == 0);
+	CHECK((length == 0) || (memcmp(fake_response.bytes, payload, length) == 0));
 }
 
 #define CON OT_COAP_TYPE_CONFIRMABLE
