@@ -33,6 +33,8 @@ mcumgr -c serial image confirm             # once the board is back and working
 
 They need `mcumgr` and Python 3.7+. To find devices on the network automatically, they also need `zeroconf` (Windows: `py -m pip install zeroconf`; macOS: `python3 -m pip install --user zeroconf`) or, on Linux, `avahi-utils`. Without it, they ask for the device addresses. See README → Firmware updates → Scripts.
 
+**With the web updater instead** (over the air, from a browser; Linux, macOS or Windows): see `firmware-updater/README.md`. Set it up once with `python -m venv .venv` and `pip install -r requirements.txt`, run `python app.py`, open http://127.0.0.1:5000, and check the Dashboard first.
+
 After a `test` update, check the device, then make it permanent with `mcumgr -c <connection> image confirm` (or update with `HACOAP_UPDATE_MODE=confirm` to skip the trial boot).
 
 If an update uploads but the board keeps its old firmware, the image was signed with a different key. Build on a PC that has your key.
