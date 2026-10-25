@@ -10,4 +10,5 @@ First version: the plan's phases 0, 1, 2, 5 and 6. Tested against a simulated de
 - **Builds:** build profiles (variant and settings, from the firmware's Kconfig), checks for the toolchain and signing key, builds with a live log.
 - **Network:** a map of the Thread mesh from the border router's REST API: routers, children, your boards by name, link strength as line colour and length, and a log of parent changes.
 - **Data:** backups (one file; daily automatic ones, and one before every restore), restore, and the device list as CSV.
+- Dark mode by default, with a switch to light.
 - Answers only on this computer (127.0.0.1).

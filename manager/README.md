@@ -35,6 +35,8 @@ Options: `--port 8710` (the next free port is used if it's taken), `--data-dir <
 
 ## Using it
 
+The page is dark by default; the **☀ Light** / **☾ Dark** button in the menu bar switches it, and the browser remembers the choice.
+
 **Devices.** **Find devices** asks the network for every `ha-coap-*` device (the border router answers for them). You can also add one by its IPv6 address. Each device shows:
 - its firmware (the git commit, from `info`)
 - the running image's version and hash, once read over mcumgr
@@ -136,7 +138,7 @@ Then, in the app, add a device at address `127.0.0.1`. To try an update, add any
 | `hacoap_manager/db.py` | The SQLite database |
 | `hacoap_manager/simdevice.py` | The simulated device |
 | `hacoap_manager/static/` | The page: plain JavaScript and Bootstrap, no build step, nothing loaded from the internet |
-| `tests/` | Tests against the simulated device |
+| `tests/` | Tests against the simulated device, and every tab opened in a headless browser (Chrome, Chromium or Edge, when installed) |
 
 ```
 pip install -r requirements-dev.txt

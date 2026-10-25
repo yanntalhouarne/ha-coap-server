@@ -105,7 +105,10 @@ function renderDevices() {
   const count = state.selected.size;
   document.getElementById('selection-count').textContent = count ? `${count} selected` : '';
   document.getElementById('update-selected').disabled = count === 0;
-  async function showDeviceHistory(device) {
+  document.getElementById('select-all').checked = count > 0 && count === state.devices.size;
+}
+
+async function showDeviceHistory(device) {
   document.getElementById('slots-title').textContent = `Update history: ${deviceName(device)}`;
   const body = document.getElementById('slots-body');
   body.replaceChildren(h('p', {}, 'Loading…'));
@@ -118,9 +121,6 @@ function renderDevices() {
       h('td', {}, h('span', { class: `badge text-bg-${statusClass[r.result] || 'secondary'}` }, r.result)),
       h('td', { class: 'small' }, r.message)))))
     : h('p', { class: 'text-body-secondary' }, 'No updates yet.'));
-}
-
-document.getElementById('select-all').checked = count > 0 && count === state.devices.size;
 }
 
 function deviceRow(device) {
@@ -395,7 +395,7 @@ function svg(tag, attrs = {}, ...children) {
 }
 
 const nodeStyles = {
-  'border router': { r: 18, color: '#212529', label: 'Border router' },
+  'border router': { r: 18, color: 'var(--bs-emphasis-color)', label: 'Border router' },
   router: { r: 15, color: '#0d6efd', label: 'Router' },
   'FTD child': { r: 11, color: '#6f42c1', label: 'FTD child (can become a router)' },
   MED: { r: 9, color: '#fd7e14', label: 'MED (end device, always listening)' },
@@ -514,8 +514,8 @@ function renderNetwork() {
   const groups = layout.nodes.map((n) => {
     const style = nodeStyle(n.node);
     const shape = n.node.border_router
-      ? svg('rect', { x: -style.r, y: -style.r, width: 2 * style.r, height: 2 * style.r, rx: 4, fill: style.color })
-      : svg('circle', { r: style.r, fill: style.color, stroke: n.node.device_id ? '#ffc107' : 'none', 'stroke-width': 3 });
+      ? svg('rect', { x: -style.r, y: -style.r, width: 2 * style.r, height: 2 * style.r, rx: 4, style: `fill: ${style.color}` })
+      : svg('circle', { r: style.r, style: `fill: ${style.color}`, stroke: n.node.device_id ? '#ffc107' : 'none', 'stroke-width': 3 });
     const group = svg('g', { class: `node${net.selected === n.node.id ? ' selected' : ''}`, transform: `translate(${n.x},${n.y})` },
       shape, svg('text', { y: style.r + 14, 'text-anchor': 'middle' }, nodeLabel(n.node)), svg('title', {}, nodeLabel(n.node)));
     n.group = group;
@@ -609,7 +609,7 @@ function renderNetworkLegend() {
   const kinds = ['border router', 'router', 'FTD child', 'MED', 'SED'].map((k) => [nodeStyles[k].color, nodeStyles[k].label]);
   document.getElementById('network-legend').replaceChildren(
     ...kinds.flatMap(([color, label]) => [h('span', { class: 'legend-swatch', style: `background:${color}` }), label]),
-    h('span', { class: 'legend-swatch', style: 'background:#fff;border:3px solid #ffc107' }), 'your board',
+    h('span', { class: 'legend-swatch', style: 'background:var(--bs-body-bg);border:3px solid #ffc107' }), 'your board',
     h('div', { class: 'mt-1' }, 'Solid lines: router to router. Dashed: child to its parent. Green, amber, red: strong, ',
       'fair, weak. Shorter lines are stronger links: it shows radio closeness, not distance (walls and antennas count). ',
       'Your boards never link to each other: each one talks only to its parent. Drag nodes to tidy up.'));
@@ -959,7 +959,23 @@ function connectEvents(delay = 1000) {
   });
 }
 
+// ------------------------------------------------------------------ colour mode
+
+function showThemeButton() {
+  const dark = document.documentElement.getAttribute('data-bs-theme') !== 'light';
+  document.getElementById('theme-toggle').textContent = dark ? '☀ Light' : '☾ Dark';
+}
+
+document.getElementById('theme-toggle').addEventListener('click', () => {
+  const mode = document.documentElement.getAttribute('data-bs-theme') === 'light' ? 'dark' : 'light';
+  document.documentElement.setAttribute('data-bs-theme', mode);
+  try { localStorage.setItem('hacoap-theme', mode); } catch (error) { /* not remembered */ }
+  showThemeButton();
+});
+
 // ------------------------------------------------------------------ start
+
+showThemeButton();
 
 showTab((location.hash || '#devices').slice(1));
 connectEvents();
