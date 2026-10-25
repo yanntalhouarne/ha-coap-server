@@ -2,7 +2,7 @@
 
 ![Build](https://github.com/yanntalhouarne/ha-coap-server/actions/workflows/build.yml/badge.svg)
 ![Version](https://img.shields.io/badge/nRF%20SDK-v2.4.3-blue)
-![License](https://img.shields.io/badge/license-MIT-green)
+[![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 *Firmware for the ha-coap plant node: a battery-powered Thread device that reports soil moisture, air temperature, humidity and battery level, and runs a water pump, over CoAP.*
 
@@ -307,3 +307,7 @@ The SDK comes from forks of `sdk-nrf` and `sdk-zephyr`, pinned to exact commits 
 - [nRF Connect SDK v2.4.3 Documentation](https://developer.nordicsemi.com/nRF_Connect_SDK/doc/2.4.3/nrf/index.html)
 - [CoAP Protocol RFC 7252](https://tools.ietf.org/html/rfc7252)
 - [mcumgr CLI](https://github.com/apache/mynewt-mcumgr-cli)
+
+## ⚖️ License
+
+This project is licensed under the [MIT License](LICENSE). Files that come from Nordic Semiconductor or Zephyr (marked with their own `SPDX-License-Identifier` headers) keep their original licenses.
