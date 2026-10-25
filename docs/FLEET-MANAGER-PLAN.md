@@ -2,7 +2,7 @@
 
 A cross-platform application (Windows, Linux, macOS) to manage, maintain and update the firmware on a fleet of ha-coap devices: find them, commission new ones, configure them, build firmware and update it over USB or over the air.
 
-Status: proposed (2026-10-25). Decisions so far:
+Status: proposed (2026-10-25), no code yet. Where things stand overall, and what to do first: `docs/NEXT-STEPS.md`. Decisions so far:
 - **Form:** a local web app (Python backend, browser UI), packaged as one download per OS.
 - **Where it runs:** on your PC when you need it, listening only on that computer (no login needed).
 - **Settings:** build-time (Kconfig) and runtime (changed on a running device, no reflash).
@@ -37,7 +37,25 @@ Status: proposed (2026-10-25). Decisions so far:
 - **UI:** plain JavaScript modules and Bootstrap, bundled with the app (no CDN, so it works offline). No Node.js build step.
 - **Packaging:** PyInstaller, one executable per OS, built by CI on every release. Starting it opens the browser. The builds aren't code-signed, so Windows SmartScreen and macOS Gatekeeper warn the first time.
 - **Building firmware** needs the nRF Connect SDK toolchain, installed by the existing setup scripts. Everything else works without it, using images built elsewhere.
-- **Security:** the server only listens on this computer. The signing key and PSKds stay on this computer.
+- **Security:** the server only listens on this computer (see [Where it runs](#where-it-runs) for remote access). The signing key and PSKds stay on this computer.
+
+## Where it runs
+
+The app runs on the PC you start it on, which hosts the page for itself: the app contains a small web server, listening only on that computer (`http://127.0.0.1:<port>`), and opens it in the browser. The browser is only the screen. Closing the app stops everything; nothing runs on the internet, on the border router or in Home Assistant.
+
+That PC talks to the boards (USB serial, or UDP through the border router), to the border router (mDNS for discovery, REST on port 8081 for commissioning) and to the local toolchain for builds. So it must be on the same network as the border router.
+
+### Remote access (to decide)
+
+Other computers can't open the app as planned. To use it from another PC's browser, the options are:
+
+| Option | What it takes | Trade-offs |
+|---|---|---|
+| **Remote mode** (proposed: off by default) | When turned on, the app listens on the LAN, requires a password, and serves HTTPS with a self-signed certificate (each browser warns once) | The host must stay on with the app running. USB boards plug into the host. A firewall prompt on Windows. Without the password, anyone on the network could flash or wipe every device |
+| **Always-on host** | The same remote mode, on a Raspberry Pi (for example the border router's) | Linux packaging is already planned. USB updates need the board plugged into the Pi |
+| **Remote Desktop / SSH tunnel** | Nothing | For occasional use |
+
+If remote mode is chosen, it goes into Phase 0 (login, HTTPS, listen-address setting), so every later feature is built behind the login from the start.
 
 ## Firmware changes
 
@@ -71,6 +89,8 @@ Each phase ends with a working, tested app. Tests run in CI on Linux, macOS and 
 The command-line scripts stay, for automation and as a fallback.
 
 ## Open questions
+
+- **Remote access.** Add remote mode (see [Remote access](#remote-access-to-decide)) or keep the app local-only?
 
 - **Border router API.** Commissioning needs the REST API's commissioner endpoints (`/node/commissioner/state`, `/node/commissioner/joiner`), which are recent additions to ot-br-posix. On the border router, these show what it supports:
   ```
