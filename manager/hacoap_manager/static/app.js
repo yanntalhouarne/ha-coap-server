@@ -78,6 +78,7 @@ function showTab(name) {
   for (const section of document.querySelectorAll('.tab')) section.classList.toggle('d-none', section.id !== `tab-${name}`);
   if (name === 'updates') { renderUpdateForm(); loadHistory(); }
   if (name === 'images') { loadImages(); loadBuilds(); }
+  if (name === 'builds') loadBuildsTab();
   if (name === 'settings') loadSettings();
 }
 
@@ -328,7 +329,7 @@ async function loadImages() {
 
 async function loadBuilds() {
   const container = document.getElementById('builds');
-  const builds = await api('GET', '/api/builds');
+  const builds = await api('GET', '/api/build-outputs');
   if (!builds.length) {
     container.replaceChildren(h('p', { class: 'text-body-secondary mb-0' },
       'None found. Builds show here when the app runs from the ha-coap-server folder after a build (scripts/build).'));
@@ -339,7 +340,7 @@ async function loadBuilds() {
     h('td', { class: 'small' }, when(b.modified)),
     h('td', {}, b.in_library ? h('span', { class: 'text-body-secondary small' }, 'in library') :
       h('button', { class: 'btn btn-sm btn-outline-primary', onclick: async (e) => busy(e.target, async () => {
-        await api('POST', `/api/builds/${encodeURIComponent(b.variant)}/import`);
+        await api('POST', `/api/build-outputs/${encodeURIComponent(b.variant)}/import`);
         loadImages(); loadBuilds();
       }) }, 'Add')))))));
 }
@@ -355,6 +356,211 @@ document.getElementById('upload-image').addEventListener('click', (event) => bus
   document.getElementById('image-notes').value = '';
   loadImages(); loadBuilds();
 }));
+
+// ------------------------------------------------------------------ builds
+
+const builds = { schema: [], variants: [], profiles: [], profile: null, buildId: null };
+
+async function loadBuildsTab() {
+  const [schema, profiles, checks, history] = await Promise.all([
+    api('GET', '/api/kconfig'), api('GET', '/api/profiles'), api('GET', '/api/build-checks'), api('GET', '/api/firmware-builds')]);
+  builds.schema = schema.schema;
+  builds.variants = schema.variants;
+  builds.profiles = profiles;
+  const select = document.getElementById('profile-select');
+  const keep = builds.profile ? builds.profile.name : (profiles[0] && profiles[0].name);
+  select.replaceChildren(...profiles.map((p) => h('option', { value: p.name }, p.name)));
+  if (keep && profiles.some((p) => p.name === keep)) select.value = keep;
+  document.getElementById('profile-variant').replaceChildren(...builds.variants.map((v) => h('option', { value: v }, v)));
+  showProfile(select.value);
+  renderChecks(checks);
+  renderBuildHistory(history);
+  const running = history.find((b) => b.result === 'running');
+  if (running) showBuildLog(running.id);
+}
+
+function showProfile(name) {
+  builds.profile = builds.profiles.find((p) => p.name === name) || null;
+  const container = document.getElementById('profile-settings');
+  if (!builds.profile) { container.replaceChildren(h('p', {}, 'No profile.')); return; }
+  document.getElementById('profile-variant').value = builds.profile.variant;
+  document.getElementById('profile-notes').value = builds.profile.notes || '';
+  const groups = new Map();
+  for (const symbol of builds.schema) {
+    if (!groups.has(symbol.menu)) groups.set(symbol.menu, []);
+    groups.get(symbol.menu).push(symbol);
+  }
+  container.replaceChildren(...[...groups.entries()].map(([menu, symbols]) =>
+    h('fieldset', {}, h('legend', {}, menu), h('div', { class: 'row g-3' }, symbols.map(settingField)))));
+  updateChangeCount();
+}
+
+function defaultText(symbol) {
+  if (symbol.type === 'bool') return symbol.default ? 'yes' : 'no';
+  if (symbol.type === 'choice') return (symbol.options.find((o) => o.name === symbol.default) || {}).prompt || symbol.default;
+  return String(symbol.default);
+}
+
+function settingField(symbol) {
+  const value = builds.profile.settings[symbol.name];
+  const id = `setting-${symbol.name}`;
+  let input;
+  if (symbol.type === 'int') {
+    input = h('input', { class: 'form-control', type: 'number', step: 1, id, placeholder: defaultText(symbol),
+      min: symbol.range ? symbol.range[0] : null, max: symbol.range ? symbol.range[1] : null,
+      value: value === undefined ? null : value });
+  } else if (symbol.type === 'string') {
+    input = h('input', { class: 'form-control', id, placeholder: defaultText(symbol), maxlength: 64,
+      value: value === undefined ? null : value });
+  } else {
+    const options = symbol.type === 'bool' ? [{ name: 'true', prompt: 'Yes' }, { name: 'false', prompt: 'No' }] : symbol.options;
+    input = h('select', { class: 'form-select', id },
+      h('option', { value: '' }, `Default (${defaultText(symbol)})`),
+      options.map((o) => h('option', { value: o.name, selected: value !== undefined && String(value) === o.name }, o.prompt)));
+  }
+  input.dataset.symbol = symbol.name;
+  input.addEventListener('input', updateChangeCount);
+  const dependency = symbol.depends_on ? builds.schema.flatMap((s) => s.options || []).find((o) => o.name === symbol.depends_on) : null;
+  return h('div', { class: 'col-md-6' },
+    h('label', { class: 'form-label small', for: id, title: `CONFIG_${symbol.name}` }, symbol.prompt),
+    input,
+    symbol.help ? h('div', { class: 'form-text' }, symbol.help) : null,
+    dependency ? h('div', { class: 'form-text fst-italic' }, `Only used with: ${dependency.prompt}`) : null);
+}
+
+function profileSettings() {
+  const settings = {};
+  for (const input of document.querySelectorAll('#profile-settings [data-symbol]')) {
+    if (input.value === '') continue;
+    const symbol = builds.schema.find((s) => s.name === input.dataset.symbol);
+    settings[symbol.name] = symbol.type === 'int' ? Number(input.value) : symbol.type === 'bool' ? input.value === 'true' : input.value;
+  }
+  return settings;
+}
+
+function updateChangeCount() {
+  let count = 0;
+  for (const input of document.querySelectorAll('#profile-settings [data-symbol]')) {
+    input.classList.toggle('setting-changed', input.value !== '');
+    if (input.value !== '') count++;
+  }
+  document.getElementById('profile-changes').textContent =
+    count ? `${count} setting(s) changed from the firmware's defaults` : 'All settings at the firmware\'s defaults';
+}
+
+async function saveProfile(name, variant, settings, notes) {
+  const saved = await api('PUT', `/api/profiles/${encodeURIComponent(name)}`, { variant, settings, notes });
+  builds.profile = saved;
+  await loadBuildsTab();
+  return saved;
+}
+
+document.getElementById('profile-select').addEventListener('change', (e) => showProfile(e.target.value));
+
+document.getElementById('profile-form').addEventListener('submit', (event) => {
+  event.preventDefault();
+  if (!builds.profile) return;
+  busy(event.submitter, async () => {
+    await saveProfile(builds.profile.name, document.getElementById('profile-variant').value, profileSettings(),
+      document.getElementById('profile-notes').value);
+    notify('Profile saved', 'success', 2000);
+  });
+});
+
+document.getElementById('profile-new').addEventListener('click', async () => {
+  const name = prompt('Name of the new profile (for example "Greenhouse" or "Debug logs")');
+  if (!name) return;
+  await saveProfile(name.trim(), 'battery', {}, '').catch(() => {});
+});
+
+document.getElementById('profile-copy').addEventListener('click', async () => {
+  if (!builds.profile) return;
+  const name = prompt('Name of the copy', `${builds.profile.name} copy`);
+  if (!name) return;
+  await saveProfile(name.trim(), builds.profile.variant, builds.profile.settings, builds.profile.notes).catch(() => {});
+});
+
+document.getElementById('profile-delete').addEventListener('click', async () => {
+  if (!builds.profile || !confirm(`Delete the profile ${builds.profile.name}?`)) return;
+  await api('DELETE', `/api/profiles/${encodeURIComponent(builds.profile.name)}`).catch(() => {});
+  builds.profile = null;
+  loadBuildsTab();
+});
+
+function renderChecks(checks) {
+  document.getElementById('build-checks').replaceChildren(...checks.map((c) => h('li', { class: 'mb-1' },
+    h('span', { class: c.ok ? 'text-success' : (c.required ? 'text-danger' : 'text-warning') }, c.ok ? '✓ ' : (c.required ? '✗ ' : '! ')),
+    h('b', {}, c.name), ': ', c.detail)));
+}
+
+const buildBadge = { running: 'primary', done: 'success', failed: 'danger', cancelled: 'warning' };
+
+function renderBuildHistory(history) {
+  document.querySelector('#builds-table tbody').replaceChildren(...history.map((b) => h('tr', {},
+    h('td', { class: 'small' }, when(b.started)), h('td', {}, `${b.profile} (${b.variant})`),
+    h('td', {}, h('span', { class: `badge text-bg-${buildBadge[b.result] || 'secondary'}`, title: b.message }, b.result)),
+    h('td', { class: b.signing === 'development' ? 'text-danger small' : 'small' }, b.signing),
+    h('td', { class: 'mono small' }, shortHash(b.image_hash)),
+    h('td', {}, h('button', { class: 'btn btn-sm btn-link p-0', onclick: () => showBuildLog(b.id) }, 'Log')))));
+}
+
+async function showBuildLog(id) {
+  const build = await api('GET', `/api/firmware-builds/${id}`);
+  builds.buildId = build.id;
+  const log = document.getElementById('build-log');
+  log.textContent = build.log || '';
+  log.scrollTop = log.scrollHeight;
+  renderBuildStatus(build);
+}
+
+function renderBuildStatus(build) {
+  const running = build.result === 'running';
+  document.getElementById('build-start').disabled = running;
+  document.getElementById('build-cancel').classList.toggle('d-none', !running);
+  document.getElementById('build-status').replaceChildren(
+    h('span', { class: `badge text-bg-${buildBadge[build.result] || 'secondary'} me-1` }, build.result),
+    `${build.profile} (${build.variant}) `, build.message || '');
+}
+
+async function startBuild(allowDevelopmentKey = false) {
+  if (!builds.profile) return;
+  try {
+    const build = await api('POST', '/api/firmware-builds', { profile: builds.profile.name, allow_development_key: allowDevelopmentKey },
+      { quiet: true });
+    builds.buildId = build.id;
+    document.getElementById('build-log').textContent = '';
+    renderBuildStatus(build);
+  } catch (error) {
+    if (!allowDevelopmentKey && error.message.startsWith('No private signing key') &&
+        confirm(`${error.message}\n\nBuild with the development key?`)) {
+      return startBuild(true);
+    }
+    notify(error.message, 'danger');
+  }
+}
+
+document.getElementById('build-start').addEventListener('click', () => startBuild());
+document.getElementById('build-cancel').addEventListener('click', () => api('POST', '/api/firmware-builds/cancel').catch(() => {}));
+
+function onBuildLog(event) {
+  if (event.id !== builds.buildId) return;
+  const log = document.getElementById('build-log');
+  const atBottom = log.scrollTop + log.clientHeight >= log.scrollHeight - 20;
+  log.append(event.line + '\n');
+  if (atBottom) log.scrollTop = log.scrollHeight;
+}
+
+function onBuild(event) {
+  const build = event.build;
+  if (builds.buildId === null || build.id === builds.buildId) {
+    builds.buildId = build.id;
+    renderBuildStatus(build);
+  }
+  if (build.result !== 'running') {
+    notify(`Build ${build.result}: ${build.message}`, build.result === 'done' ? 'success' : 'warning');
+    api('GET', '/api/firmware-builds').then(renderBuildHistory, () => {});
+  }
+}
 
 // ------------------------------------------------------------------ settings
 
@@ -414,6 +620,10 @@ function connectEvents(delay = 1000) {
       renderDevices();
     } else if (event.type === 'devices') {
       loadDevices().catch(() => {});
+    } else if (event.type === 'build-log') {
+      onBuildLog(event);
+    } else if (event.type === 'build') {
+      onBuild(event);
     } else if (event.type === 'job') {
       const finished = state.jobs.get(event.job.id)?.state === 'running' && event.job.state !== 'running';
       state.jobs.set(event.job.id, event.job);

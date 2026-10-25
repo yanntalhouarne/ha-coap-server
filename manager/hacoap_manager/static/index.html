@@ -15,6 +15,7 @@
       <li class="nav-item"><a class="nav-link active" href="#devices" data-tab="devices">Devices</a></li>
       <li class="nav-item"><a class="nav-link" href="#updates" data-tab="updates">Updates</a></li>
       <li class="nav-item"><a class="nav-link" href="#images" data-tab="images">Images</a></li>
+      <li class="nav-item"><a class="nav-link" href="#builds" data-tab="builds">Builds</a></li>
       <li class="nav-item"><a class="nav-link" href="#settings" data-tab="settings">Settings</a></li>
     </ul>
     <span class="navbar-text small" id="connection" title="Live updates from the app">●</span>
@@ -127,6 +128,68 @@
         <div class="table-responsive">
           <table class="table table-sm align-middle" id="images-table">
             <thead><tr><th>Version</th><th>Hash</th><th>Size</th><th>Added</th><th>Notes</th><th></th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Builds -->
+  <section id="tab-builds" class="tab d-none">
+    <div class="row g-4">
+      <div class="col-xl-7">
+        <div class="card">
+          <div class="card-header d-flex flex-wrap align-items-center gap-2">
+            <span>Build profile</span>
+            <select class="form-select form-select-sm w-auto" id="profile-select"></select>
+            <button class="btn btn-sm btn-outline-secondary" id="profile-new">New…</button>
+            <button class="btn btn-sm btn-outline-secondary" id="profile-copy">Copy…</button>
+            <button class="btn btn-sm btn-outline-danger" id="profile-delete">Delete</button>
+          </div>
+          <div class="card-body">
+            <form id="profile-form">
+              <div class="row g-3 mb-3">
+                <div class="col-sm-5">
+                  <label class="form-label" for="profile-variant">Variant</label>
+                  <select class="form-select" id="profile-variant"></select>
+                </div>
+                <div class="col-sm-7">
+                  <label class="form-label" for="profile-notes">Notes</label>
+                  <input class="form-control" id="profile-notes" placeholder="What this profile is for">
+                </div>
+              </div>
+              <p class="form-text">Leave a setting empty to keep the firmware's default (shown in grey). Only the
+                settings you change are saved in the profile. The PSKd and the signing key stay in
+                <code>application/local.conf</code> and <code>application/keys/</code>.</p>
+              <div id="profile-settings"></div>
+              <div class="d-flex align-items-center gap-3 mt-3">
+                <button class="btn btn-primary" type="submit">Save profile</button>
+                <span class="small text-body-secondary" id="profile-changes"></span>
+              </div>
+            </form>
+          </div>
+        </div>
+      </div>
+      <div class="col-xl-5">
+        <div class="card mb-4">
+          <div class="card-header">Build</div>
+          <div class="card-body">
+            <ul class="list-unstyled small mb-3" id="build-checks"></ul>
+            <div class="d-flex align-items-center gap-2 mb-2">
+              <button class="btn btn-success" id="build-start">Build with this profile</button>
+              <button class="btn btn-outline-danger d-none" id="build-cancel">Cancel</button>
+              <span id="build-status" class="small"></span>
+            </div>
+            <div class="form-text mb-2">Runs <code>scripts/build</code>, like a terminal would (about 2 minutes), into
+              the variant's usual build folder, then adds the image to the library.</div>
+            <pre class="build-log" id="build-log"></pre>
+          </div>
+        </div>
+        <h6>Recent builds</h6>
+        <div class="table-responsive">
+          <table class="table table-sm align-middle" id="builds-table">
+            <thead><tr><th>Started</th><th>Profile</th><th>Result</th><th>Key</th><th>Image</th><th></th></tr></thead>
             <tbody></tbody>
           </table>
         </div>

@@ -224,6 +224,7 @@ If an option is set in several places, the later one wins: the default in `Kconf
 | For one build | `scripts\build.ps1 battery "-DCONFIG_HACOAP_SENSOR_SAMPLE_PERIOD_S=1800"` or `scripts/build.sh battery -DCONFIG_HACOAP_SENSOR_SAMPLE_PERIOD_S=1800`. In PowerShell, quote arguments that contain a dot or a semicolon. |
 | In VS Code | In the build configuration, add it under extra CMake arguments, or put it in a `.conf` file and add that under Kconfig fragments |
 | For a group of boards | Put your lines in a file such as `application/greenhouse.conf` and pass `-DEXTRA_CONF_FILE=greenhouse.conf` |
+| From the fleet manager | Make a build profile on its **Builds** tab. It passes the settings to `scripts/build` in a file named by the `HACOAP_EXTRA_CONF` environment variable, which `CMakeLists.txt` merges after `local.conf` |
 
 - String options need quotes: `CONFIG_HACOAP_HW_VERSION="v2.1"`.
 - Out-of-range values stop the build (`Aborting due to Kconfig warnings`, naming the option), and so do inconsistent ones (a dry soil voltage not above the wet one, or a watchdog feed period not shorter than its timeout).
@@ -313,7 +314,7 @@ Older versions of this repository had a Thread network key and network name in `
 | `application/tests/unit/` | Unit tests of the firmware's logic, run on a PC |
 | `scripts/` | Setup, key generation, build and firmware update scripts |
 | `firmware-updater/` | Web interface for batch updates |
-| `manager/` | The fleet manager app (inventory and updates; see its README) |
+| `manager/` | The fleet manager app (inventory, updates, builds; see its README) |
 | `docs/` | Schematic, code and power reviews (PDF) |
 | `external/` | The SDK, fetched by the setup script (not in git) |
 
@@ -386,7 +387,7 @@ The SDK comes from forks of `sdk-nrf` and `sdk-zephyr`, pinned to exact commits 
 
 - [ ] Implement dynamic SRP client hostname reassignment when duplicates are detected
 - [x] Refactor SRP functionality out of `coap_server.c` (now `src/srp.c`)
-- [ ] Fleet manager: one app for Windows, macOS and Linux to find, commission, configure, build and update the whole fleet. Inventory and updates are built (`manager/`, see [its README](manager/README.md)), not yet tried on boards; commissioning, runtime settings and builds are next. Plan: `docs/FLEET-MANAGER-PLAN.md`
+- [ ] Fleet manager: one app for Windows, macOS and Linux to find, commission, configure, build and update the whole fleet. Inventory, updates and firmware builds are done (`manager/`, see [its README](manager/README.md)), not yet tried on boards; runtime settings and commissioning are next. Plan: `docs/FLEET-MANAGER-PLAN.md`
 
 ## 📚 References
 

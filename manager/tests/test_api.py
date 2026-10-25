@@ -170,3 +170,33 @@ def test_events_refuse_other_origins(services):
         with pytest.raises(Exception):
             with client.websocket_connect("ws://127.0.0.1:8710/api/events", headers={"Origin": "http://evil.example"}) as socket:
                 socket.receive_json()
+
+
+async def test_build_profiles(client):
+    schema = (await client.get("/api/kconfig")).json()
+    assert "battery" in schema["variants"]
+    assert any(s["name"] == "HACOAP_SENSOR_SAMPLE_PERIOD_S" for s in schema["schema"])
+    assert [p["name"] for p in (await client.get("/api/profiles")).json()] == ["Production"]
+
+    response = await client.put("/api/profiles/Greenhouse", headers=CHANGE,
+                                json={"variant": "usb-logging", "settings": {"HACOAP_SENSOR_SAMPLE_PERIOD_S": 600}})
+    assert response.status_code == 200, response.text
+    assert response.json()["settings"] == {"HACOAP_SENSOR_SAMPLE_PERIOD_S": 600}
+
+    for name, body in [("Greenhouse", {"settings": {"HACOAP_SENSOR_SAMPLE_PERIOD_S": 1}}),
+                       ("Greenhouse", {"variant": "fast"}),
+                       ("../evil", {}),
+                       ("a" * 41, {})]:
+        response = await client.put(f"/api/profiles/{name}", json=body, headers=CHANGE)
+        assert response.status_code in (400, 404, 405), (name, body)
+
+    assert (await client.delete("/api/profiles/Greenhouse", headers=CHANGE)).status_code == 200
+    assert (await client.delete("/api/profiles/Greenhouse", headers=CHANGE)).status_code == 404
+
+
+async def test_build_checks_and_history(client):
+    checks = (await client.get("/api/build-checks")).json()
+    assert checks[0]["name"] == "Firmware checkout"
+    assert (await client.get("/api/firmware-builds")).json() == []
+    assert (await client.get("/api/firmware-builds/99")).status_code == 404
+    assert (await client.post("/api/firmware-builds/cancel", headers=CHANGE)).status_code == 400

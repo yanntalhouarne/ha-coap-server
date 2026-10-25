@@ -1,10 +1,10 @@
 # HA-CoAP Fleet Manager
 
-One application for Windows, macOS and Linux to look after a fleet of ha-coap devices. It finds them on the network, shows their status, keeps a library of firmware images, and updates devices over the air or over USB.
+One application for Windows, macOS and Linux to look after a fleet of ha-coap devices. It finds them on the network, shows their status, builds firmware with the settings you choose, keeps a library of firmware images, and updates devices over the air or over USB.
 
 It runs on your PC when you need it. The app starts a small web server that only this computer can reach (`http://127.0.0.1:8710`), and opens it in your browser. Close the app's window and everything stops.
 
-**Status (2026-10-25):** the plan's phases 0–2 (foundations, inventory, updates). Tested against a simulated device on Windows, macOS and Linux, **not yet with real boards**. Runtime settings, commissioning and firmware builds come later (see [the plan](../docs/FLEET-MANAGER-PLAN.md)). Until it has updated real boards, keep using the scripts or the web updater for anything important.
+**Status (2026-10-25):** the plan's phases 0–2 and 5 (foundations, inventory, updates, builds). Tested against a simulated device on Windows, macOS and Linux, and a real firmware build on Windows, **not yet with real boards**. Runtime settings and commissioning come later (see [the plan](../docs/FLEET-MANAGER-PLAN.md)). Until it has updated real boards, keep using the scripts or the web updater for anything important.
 
 ## Getting it
 
@@ -62,6 +62,12 @@ Devices are updated one at a time. By default the update stops at the first fail
 
 While a device is being updated, it polls its parent every 100 ms instead of every 3 s (firmware on the `claude` branch and later), so uploads aren't slowed by its sleep schedule. Firmware older than that is about three times slower to update.
 
+**Builds.** Builds firmware on this computer, with settings you choose. It needs the app to run from the ha-coap-server folder, which has been set up for building (scripts/setup, see the main README); the packaged app works too if you start it from inside that folder.
+- **Build profiles** are named sets of firmware settings: a variant (battery, usb-logging, uart-console or debug) and the values you want to change. The form comes from `application/Kconfig` (the "ha-coap application" options: pump, sensors, LEDs, watchdog, SRP names) plus the Thread poll period. An empty field keeps the firmware's default; only the settings you change are saved, so a profile keeps following the repository's defaults for the rest. The app checks ranges and the rules the firmware enforces (dry soil voltage above wet, and so on) when you save.
+- **Build with this profile** runs the repository's own `scripts/build.ps1` or `scripts/build.sh`, exactly as from a terminal, into the variant's usual build folder (`application/build` for battery). The profile's settings go in through a small `.conf` file (`HACOAP_EXTRA_CONF`, which `application/CMakeLists.txt` merges after `local.conf`; a variant's own overlay still wins on the few options it sets). The log streams live, and the finished image goes into the library, named after its profile.
+- **Checks** first: the toolchain, the SDK, your signing key and your PSKd. Without your private signing key, the app asks before building with the public development key, and marks such images *DEVELOPMENT KEY*: boards flashed with your bootloader refuse them.
+- The PSKd and the signing key never go into profiles: they stay in `application/local.conf` and `application/keys/`.
+
 **Settings.** Ports, timeouts, the mcumgr packet size (1280 bytes over the air, which fits Thread without IP fragmentation; 512 over USB), how long a device counts as online, and the automatic refresh.
 
 ## Where things are kept
@@ -99,6 +105,7 @@ Then, in the app, add a device at address `127.0.0.1`. To try an update, add any
 | `hacoap_manager/coap.py` | A small CoAP client for `info`, `data` and `ping` |
 | `hacoap_manager/discovery.py` | mDNS/DNS-SD (zeroconf) |
 | `hacoap_manager/mcuboot.py` | Reads an image's version and hash |
+| `hacoap_manager/builds.py`, `kconfig.py` | Build profiles (from `application/Kconfig`), checks, the build runner |
 | `hacoap_manager/db.py` | The SQLite database |
 | `hacoap_manager/simdevice.py` | The simulated device |
 | `hacoap_manager/static/` | The page: plain JavaScript and Bootstrap, no build step, nothing loaded from the internet |
@@ -112,4 +119,4 @@ dist/hacoap-manager --self-test
 ```
 CI runs the tests and builds the packaged app on Windows, macOS and Linux (job `fleet-manager`).
 
-**Not covered by the tests yet:** USB serial (there's no simulated serial port), and real Thread timing. Both need a board.
+**Not covered by the tests yet:** USB serial (there's no simulated serial port), and real Thread timing. Both need a board. Builds are tested with a stand-in for the build script (CI has no nRF toolchain for the app's tests); a real build through the app was checked on Windows.

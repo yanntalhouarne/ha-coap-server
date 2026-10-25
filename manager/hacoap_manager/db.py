@@ -1,5 +1,7 @@
-"""The app's database (SQLite, in the user's data folder): devices, images and update history."""
+"""The app's database (SQLite, in the user's data folder): devices, images, update history,
+build profiles and builds."""
 
+import json
 import sqlite3
 import threading
 import time
@@ -42,6 +44,26 @@ CREATE TABLE IF NOT EXISTS updates (
     finished      REAL,
     result        TEXT NOT NULL,              -- updated, already-current, failed, cancelled, skipped
     message       TEXT NOT NULL DEFAULT ''
+);
+CREATE TABLE IF NOT EXISTS profiles (
+    name     TEXT PRIMARY KEY,
+    variant  TEXT NOT NULL,
+    settings TEXT NOT NULL,                    -- JSON: {Kconfig symbol: value}, only the changed ones
+    notes    TEXT NOT NULL DEFAULT '',
+    updated  REAL NOT NULL
+);
+CREATE TABLE IF NOT EXISTS builds (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    profile    TEXT NOT NULL,
+    variant    TEXT NOT NULL,
+    settings   TEXT NOT NULL,                  -- JSON, as built
+    started    REAL NOT NULL,
+    finished   REAL,
+    result     TEXT NOT NULL,                  -- running, done, failed, cancelled
+    message    TEXT NOT NULL DEFAULT '',
+    image_hash TEXT NOT NULL DEFAULT '',
+    signing    TEXT NOT NULL DEFAULT '',       -- private, development, unknown
+    log        TEXT NOT NULL DEFAULT ''
 );
 """
 
@@ -131,3 +153,56 @@ class Database:
         if device_id is None:
             return self._query("SELECT * FROM updates ORDER BY id DESC LIMIT ?", (limit,))
         return self._query("SELECT * FROM updates WHERE device_id = ? ORDER BY id DESC LIMIT ?", (device_id, limit))
+
+    # ------------------------------------------------------------ build profiles
+
+    @staticmethod
+    def _profile(row):
+        return {**row, "settings": json.loads(row["settings"])}
+
+    def profiles(self):
+        return [self._profile(r) for r in self._query("SELECT * FROM profiles ORDER BY name")]
+
+    def profile(self, name):
+        rows = self._query("SELECT * FROM profiles WHERE name = ?", (name,))
+        return self._profile(rows[0]) if rows else None
+
+    def save_profile(self, name, variant, settings, notes=""):
+        self._execute("INSERT OR REPLACE INTO profiles (name, variant, settings, notes, updated) VALUES (?, ?, ?, ?, ?)",
+                      (name, variant, json.dumps(settings), notes, time.time()))
+        return self.profile(name)
+
+    def delete_profile(self, name):
+        return self._execute("DELETE FROM profiles WHERE name = ?", (name,)).rowcount > 0
+
+    # ------------------------------------------------------------ builds
+
+    BUILD_COLUMNS = "id, profile, variant, settings, started, finished, result, message, image_hash, signing"
+
+    @staticmethod
+    def _build(row):
+        return {**row, "settings": json.loads(row["settings"])}
+
+    def add_build(self, profile, variant, settings):
+        cursor = self._execute("INSERT INTO builds (profile, variant, settings, started, result) VALUES (?, ?, ?, ?, ?)",
+                               (profile, variant, json.dumps(settings), time.time(), "running"))
+        return cursor.lastrowid
+
+    def build(self, build_id, with_log=False):
+        columns = self.BUILD_COLUMNS + (", log" if with_log else "")
+        rows = self._query(f"SELECT {columns} FROM builds WHERE id = ?", (build_id,))
+        return self._build(rows[0]) if rows else None
+
+    def update_build(self, build_id, **fields):
+        assignments = ", ".join(f"{name} = ?" for name in fields)
+        self._execute(f"UPDATE builds SET {assignments} WHERE id = ?", (*fields.values(), build_id))
+        return self.build(build_id)
+
+    def builds(self, limit=100):
+        return [self._build(r) for r in self._query(f"SELECT {self.BUILD_COLUMNS} FROM builds ORDER BY id DESC LIMIT ?",
+                                                    (limit,))]
+
+    def interrupted_builds(self):
+        """Marks builds left 'running' by an app that was closed mid-build."""
+        self._execute("UPDATE builds SET result = 'failed', message = 'The app was closed during the build' "
+                      "WHERE result = 'running'")

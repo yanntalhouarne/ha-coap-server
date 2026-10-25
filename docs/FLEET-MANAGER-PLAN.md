@@ -2,7 +2,7 @@
 
 A cross-platform application (Windows, Linux, macOS) to manage, maintain and update the firmware on a fleet of ha-coap devices: find them, commission new ones, configure them, build firmware and update it over USB or over the air.
 
-Status (2026-10-25): **phases 0–2 are built** in `manager/` (see `manager/README.md`), tested against a simulated device on Windows, macOS and Linux, **not yet with boards**. Where things stand overall, and what to do first: `docs/NEXT-STEPS.md`. Decisions so far:
+Status (2026-10-25): **phases 0–2 and 5 are built** in `manager/` (see `manager/README.md`), tested against a simulated device on Windows, macOS and Linux, **not yet with boards**. Where things stand overall, and what to do first: `docs/NEXT-STEPS.md`. Decisions so far:
 - **Form:** a local web app (Python backend, browser UI), packaged as one download per OS.
 - **Where it runs:** on your PC when you need it, listening only on that computer (no login needed). Remote access: not for now (decided 2026-10-25), maybe later.
 - **Settings:** build-time (Kconfig) and runtime (changed on a running device, no reflash).
@@ -83,7 +83,7 @@ Each phase ends with a working, tested app. Tests run in CI on Linux, macOS and 
 | **2. Updates** | USB and over-the-air updates through smpclient, an image library, test, verify, confirm, staged rollout, history. Replaces `firmware-updater/` | Done; replaces the web updater once it has updated real boards |
 | **3. Runtime settings** | Firmware settings and the `hacoap` mcumgr group. Settings pages for one device or the fleet | |
 | **4. Commissioning** | Border router integration, a USB provisioning wizard with a PSKd per device, optional first SWD flash, credential reset | |
-| **5. Builds** | Kconfig editor, profiles, build runner, image library integration, signing-key checks | |
+| **5. Builds** | Kconfig editor, profiles, build runner, image library integration, signing-key checks | Done (build-time settings: the `HACOAP_*` options and the poll period) |
 | **6. Polish** | Export/import, backups, docs, release downloads | |
 
 The command-line scripts stay, for automation and as a fallback.

@@ -19,6 +19,12 @@ if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/local.conf)
     set(EXTRA_CONF_FILE ${CMAKE_CURRENT_SOURCE_DIR}/local.conf)
 endif()
 
+# Settings from the file named by $HACOAP_EXTRA_CONF (the fleet manager's build profiles),
+# merged after local.conf.
+if(DEFINED ENV{HACOAP_EXTRA_CONF})
+    list(APPEND EXTRA_CONF_FILE $ENV{HACOAP_EXTRA_CONF})
+endif()
+
 # MCUboot signing key: $HACOAP_SIGNING_KEY if set, else keys/mcuboot-signing-key.pem
 # (not in git; create it with scripts/keygen). MCUboot embeds the public half, and the
 # application images are signed with it, so a board only accepts updates signed with the

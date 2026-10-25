@@ -17,7 +17,10 @@ from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconn
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import __version__, config, discovery, mcuboot, serial_ports
+import re
+
+from . import __version__, config, discovery, kconfig, mcuboot, serial_ports
+from .builds import VARIANTS, BuildError, BuildRunner
 from .db import Database
 from .events import EventBus
 from .images import ImageLibrary, build_images, find_repository
@@ -41,6 +44,7 @@ class Services:
     images: ImageLibrary
     updates: UpdateManager
     repository: Path
+    builds: BuildRunner
 
 
 def create_services(data_dir, discover=discovery.discover):
@@ -52,7 +56,12 @@ def create_services(data_dir, discover=discovery.discover):
     inventory = Inventory(db, settings, events, discover)
     images = ImageLibrary(data_dir, db)
     updates = UpdateManager(db, images, inventory, settings, events)
-    return Services(data_dir, settings, db, events, inventory, images, updates, find_repository())
+    repository = find_repository()
+    builds = BuildRunner(repository, data_dir, db, images, events)
+    db.interrupted_builds()
+    if not db.profiles():
+        db.save_profile("Production", "battery", {}, "The firmware as configured in the repository")
+    return Services(data_dir, settings, db, events, inventory, images, updates, repository, builds)
 
 
 def _host_name(host_header):
@@ -196,8 +205,8 @@ def create_app(services, auto_refresh=True):
         except mcuboot.ImageError as exc:
             raise _bad_request(exc)
 
-    @app.get("/api/builds")
-    async def builds():
+    @app.get("/api/build-outputs")
+    async def build_outputs():
         """Images built in this checkout (application/build*/zephyr/app_update.bin)."""
         result = []
         for variant, path in build_images(s.repository):
@@ -210,7 +219,7 @@ def create_app(services, auto_refresh=True):
                            "in_library": s.db.image(info.hash) is not None})
         return result
 
-    @app.post("/api/builds/{variant}/import")
+    @app.post("/api/build-outputs/{variant}/import")
     async def import_build(variant: str):
         for name, path in build_images(s.repository):
             if name == variant:
@@ -234,6 +243,70 @@ def create_app(services, auto_refresh=True):
         if not s.images.delete(image_hash):
             raise HTTPException(404, "Unknown image")
         return {"deleted": image_hash}
+
+    # ------------------------------------------------------------ build profiles and builds
+
+    @app.get("/api/kconfig")
+    async def kconfig_schema():
+        try:
+            return {"schema": s.builds.schema(), "variants": list(VARIANTS)}
+        except OSError as exc:
+            raise _bad_request(exc)
+
+    @app.get("/api/profiles")
+    async def profiles():
+        return s.db.profiles()
+
+    @app.put("/api/profiles/{name}")
+    async def save_profile(name: str, body: dict):
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9 ._-]{0,39}", name):
+            raise _bad_request("A profile name has 1 to 40 letters, digits, spaces, dots, dashes or underscores")
+        variant = body.get("variant", "battery")
+        if variant not in VARIANTS:
+            raise _bad_request(f"Unknown variant {variant}")
+        try:
+            settings = kconfig.validate(s.builds.schema(), dict(body.get("settings", {})))
+        except kconfig.KconfigError as exc:
+            raise _bad_request(exc)
+        return s.db.save_profile(name, variant, settings, str(body.get("notes", "")))
+
+    @app.delete("/api/profiles/{name}")
+    async def delete_profile(name: str):
+        if not s.db.delete_profile(name):
+            raise HTTPException(404, "Unknown profile")
+        return {"deleted": name}
+
+    @app.get("/api/build-checks")
+    async def build_checks():
+        return s.builds.checks()
+
+    @app.get("/api/firmware-builds")
+    async def firmware_builds():
+        return s.db.builds()
+
+    @app.get("/api/firmware-builds/{build_id}")
+    async def firmware_build(build_id: int):
+        if s.builds.running() and s.builds.current["id"] == build_id:
+            return {**s.builds.current, "log": "\n".join(s.builds.log)}
+        build = s.db.build(build_id, with_log=True)
+        if build is None:
+            raise HTTPException(404, "Unknown build")
+        return build
+
+    @app.post("/api/firmware-builds")
+    async def start_build(body: dict):
+        try:
+            return s.builds.start(str(body.get("profile", "")), bool(body.get("allow_development_key", False)))
+        except (BuildError, kconfig.KconfigError, OSError) as exc:
+            raise _bad_request(exc)
+
+    @app.post("/api/firmware-builds/cancel")
+    async def cancel_build():
+        try:
+            s.builds.cancel()
+        except BuildError as exc:
+            raise _bad_request(exc)
+        return {"cancelling": True}
 
     # ------------------------------------------------------------ updates
 
