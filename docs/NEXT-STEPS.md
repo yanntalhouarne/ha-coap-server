@@ -27,16 +27,11 @@ mcumgr -c serial image confirm             # once the board is back and working
 ```
 **Over the air:** the same commands with a UDP connection instead, `mcumgr conn add udp type="udp" connstring="[<device IPv6>]:1337"`, and `-c udp`. Find the address with `avahi-browse -r _ot._udp`, or use `scripts/mcumgr-update-all.sh`.
 
-**With the scripts instead** (from the `scripts` folder, in bash; they use `application/build`):
-- On Linux, with `avahi-utils` and `mcumgr` installed (for example the Home Assistant host or a Raspberry Pi):
-  - `./mcumgr-dfu.sh`: guided update of one device, found automatically, over USB or the air.
-  - `./mcumgr-update-all.sh`: the same for several devices at once, with upload retries.
-- On Windows, the guided modes don't work, because they need `avahi-browse` and Linux serial ports. Over the air, `mcumgr-update-all.sh` works from Git Bash in non-interactive mode, with the device addresses given by hand:
-  ```
-  cd scripts
-  HACOAP_NON_INTERACTIVE=true HACOAP_UPDATE_MODE=test HACOAP_DEVICES="plant1=<device IPv6> plant2=<device IPv6>" ./mcumgr-update-all.sh
-  ```
-  Each device ends with a `RESULT <name> success|skipped|failed` line.
+**With the scripts instead** (Linux, macOS, or Git Bash on Windows; they use `application/build`):
+- `scripts/mcumgr-dfu.sh`: guided update of one device, over USB or the air.
+- `scripts/mcumgr-update-all.sh`: the same for several devices at once, with upload retries.
+
+They need `mcumgr` and Python 3.7+. To find devices on the network automatically, they also need `zeroconf` (Windows: `py -m pip install zeroconf`; macOS: `python3 -m pip install --user zeroconf`) or, on Linux, `avahi-utils`. Without it, they ask for the device addresses. See README → Firmware updates → Scripts.
 
 After a `test` update, check the device, then make it permanent with `mcumgr -c <connection> image confirm` (or update with `HACOAP_UPDATE_MODE=confirm` to skip the trial boot).
 

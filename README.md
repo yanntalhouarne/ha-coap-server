@@ -230,7 +230,7 @@ Values that aren't meant to change between builds, like the buzzer tones or whic
 
 ## 📲 Firmware updates
 
-Updates go through MCUboot with [mcumgr](https://github.com/apache/mynewt-mcumgr-cli), over USB or over Thread. A board only installs images signed with the same key as its bootloader: build updates on a PC that has your [signing key](#private-settings-signing-key-and-pskd). Install the mcumgr CLI with `go install github.com/apache/mynewt-mcumgr-cli/mcumgr@latest`, or with `scripts/install-dependencies.sh` on Linux.
+Updates go through MCUboot with [mcumgr](https://github.com/apache/mynewt-mcumgr-cli), over USB or over Thread. A board only installs images signed with the same key as its bootloader: build updates on a PC that has your [signing key](#private-settings-signing-key-and-pskd). Install the mcumgr CLI with Go (`go install github.com/apache/mynewt-mcumgr-cli/mcumgr@latest`, then add Go's `bin` directory to your PATH), or with `scripts/install-dependencies.sh` on Debian or Ubuntu.
 
 ### Connections
 - **USB**: the board's first USB serial port (the `usb-logging` variant adds a second one for the console).
@@ -256,9 +256,24 @@ mcumgr -c serial image confirm                                # keep it
 If the new image doesn't work and the device resets (including through the watchdog) before it's confirmed, MCUboot goes back to the previous image. `scripts/get-image-hash.sh` prints the hash of a built image.
 
 ### Scripts
-- `scripts/mcumgr-dfu.sh`: guided update of one device.
-- `scripts/mcumgr-update-all.sh`: updates several devices, discovered with `avahi-browse`. It also runs non-interactively from environment variables (`HACOAP_NON_INTERACTIVE`, `HACOAP_DEVICES`, `HACOAP_UPDATE_MODE`, …; see the top of the script).
+The update scripts run on Linux, macOS and Windows (in Git Bash), from any folder, and use `application/build` unless `HACOAP_BUILD_DIR` says otherwise.
+
+- `scripts/mcumgr-dfu.sh`: guided update of one device, over USB or over the air.
+- `scripts/mcumgr-update-all.sh`: updates several devices at once, with upload retries and stall detection. It also runs non-interactively from environment variables (`HACOAP_NON_INTERACTIVE`, `HACOAP_DEVICES`, `HACOAP_UPDATE_MODE`, …; see the top of the script).
 - `firmware-updater/`: a web interface that drives `mcumgr-update-all.sh`. See [firmware-updater/README.md](firmware-updater/README.md).
+
+What they need:
+
+| | Linux | macOS | Windows |
+|---|---|---|---|
+| Shell | bash | the built-in bash | [Git Bash](https://git-scm.com/) |
+| mcumgr | Go, then `go install …` (above) | `brew install go`, then `go install …` | `winget install GoLang.Go`, then `go install …` |
+| Python 3.7+ | usually installed | `xcode-select --install` | `winget install Python.Python.3.12` |
+| Device discovery (optional) | `sudo apt install avahi-utils` | `python3 -m pip install --user zeroconf` | `py -m pip install zeroconf` |
+
+- **Without device discovery**, the scripts ask for the devices' IPv6 addresses instead.
+- **For USB**, they list the serial ports, with the board's first when they can tell (always on Windows, and with `pip install pyserial` on Linux and macOS). If they list nothing, type the port name: `COM7` on Windows, `/dev/ttyACM0` on Linux, `/dev/cu.usbmodem…` on macOS.
+- **Tests:** `scripts/tests/test-scripts.sh` runs them against a fake `mcumgr`. CI runs it on all three systems.
 
 ### Keeping updates compatible
 - MCUboot itself can't be updated with mcumgr. A new application image must fit the bootloader already on the boards: sign it with the same key, keep the same partition layout, and don't change MCUboot's size or the partition settings.

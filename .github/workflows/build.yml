@@ -49,3 +49,31 @@ jobs:
           path: |
             application/build/zephyr/app_update.bin
             application/build/zephyr/merged.hex
+
+  # The update scripts on each OS users run them on, with a fake mcumgr. macOS runs them
+  # with its own /bin/bash 3.2, Windows with Git Bash.
+  scripts:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Test the update scripts
+        run: /bin/bash scripts/tests/test-scripts.sh
+
+      # The optional packages change how devices and serial ports are found
+      - name: Run the helper with zeroconf and pyserial
+        run: |
+          python3 -m venv "$RUNNER_TEMP/venv" || python -m venv "$RUNNER_TEMP/venv"
+          py="$RUNNER_TEMP/venv/bin/python"
+          [ -x "$py" ] || py="$RUNNER_TEMP/venv/Scripts/python.exe"
+          "$py" -m pip install --quiet zeroconf pyserial
+          "$py" scripts/hacoap_tools.py discover --timeout 2
+          "$py" scripts/hacoap_tools.py serial-ports
