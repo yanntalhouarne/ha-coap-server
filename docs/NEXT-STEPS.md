@@ -7,18 +7,19 @@ Start here when you come back. To pick up with Claude, say: *"Resume from docs/N
 | Branch | What's on it | State |
 |---|---|---|
 | `main` | The firmware as it was before this work | Unchanged |
-| `claude` | Firmware fixes and refactor, reproducible builds, private signing key and PSKd, cross-platform update scripts, working web updater, reviews in `docs/` | [PR #6](https://github.com/yanntalhouarne/ha-coap-server/pull/6), **not merged: no board has run it yet**. CI passes on Linux, macOS and Windows |
-| `fleet-manager` | `claude` plus the plan for a fleet management app (`docs/FLEET-MANAGER-PLAN.md`) | Plan only, no app code yet |
+| `claude` | Firmware fixes and refactor, the power changes from step 4, reproducible builds, private signing key and PSKd, cross-platform update scripts, working web updater, firmware unit tests, reviews in `docs/` | [PR #6](https://github.com/yanntalhouarne/ha-coap-server/pull/6), **not merged: no board has run it yet**. CI passes on Linux, macOS and Windows |
+| `fleet-manager` | `claude` plus the fleet manager app (`manager/`): inventory and updates (plan phases 0–2) | Tested against a simulated device on all three OSes, **not on a board yet** |
 
 The order to go in:
 1. Test PR #6 on the boards (steps 1–3 below), then merge it.
 2. Answer the decisions still open (step 4).
-3. Start the fleet manager (step 6).
+3. Try the fleet manager on the boards (step 6), then go on with its next phases.
 
 ## 1. Before you start
 - `git checkout claude && git pull`
 - Check that `application/keys/mcuboot-signing-key.pem` and `application/local.conf` are on this PC. If not, restore them from your backup (they aren't in git).
 - Build: `powershell -ExecutionPolicy Bypass -File scripts\build.ps1`. The output should show your signing key and no PSKd warning.
+- Optional, no board needed: `python application/tests/unit/run.py` runs the firmware's unit tests (README → Unit tests). The first time, `python -m pip install ziglang` gives it a C compiler.
 
 ## 2. Flash a board
 Build first (step 1). The images are in `application/build/zephyr/`.
@@ -88,26 +89,34 @@ Share the test results and decisions with Claude. It updates the status tables i
 
 ## 6. Then: the fleet manager
 
-The plan is in `docs/FLEET-MANAGER-PLAN.md` on the `fleet-manager` branch (`git checkout fleet-manager`, or read it [on GitHub](https://github.com/yanntalhouarne/ha-coap-server/blob/fleet-manager/docs/FLEET-MANAGER-PLAN.md)).
+**What's built** (on the `fleet-manager` branch, in `manager/`): the plan's phases 0–2. It's a local web app for Windows, macOS and Linux that:
+- finds devices (or adds them by address) and shows their firmware, battery, readings and when they were last seen
+- keeps a library of firmware images, from files or from your builds
+- updates devices over the air or over USB: upload, trial boot, check the device comes back running it, confirm. One device at a time, stopping at the first failure, with a history
 
-**What it is:** one application for Windows, macOS and Linux to manage the whole fleet. It covers:
-- finding devices, and an inventory with their status
-- updates over USB or the air, with automatic confirm once the device comes back running the new version
-- commissioning new boards, each with its own PSKd
-- runtime and build-time settings
-- firmware builds
+It talks to the devices directly (no `mcumgr` tool needed). Details and instructions: `manager/README.md`. The plan, with what's next: `docs/FLEET-MANAGER-PLAN.md`.
 
-It replaces the web updater and `mcumgr` (it talks to devices directly), and keeps the scripts as a fallback.
-
-**Decided so far:**
-- A local web app with a browser interface, one download per OS.
-- It runs on your PC when you need it.
-- Settings both at build time (Kconfig) and at runtime (needs firmware changes).
+**Decided:**
+- A local web app, one download per OS, run on your PC when you need it.
+- Only that PC can open it (no remote access for now; Remote Desktop works if needed).
+- Settings both at build time and at runtime (runtime needs firmware changes, phase 3).
 - Your border router is a standalone OTBR (ot-br-posix).
 
-### Which machine runs it
+### Try it on the boards
+After PR #6's board tests (the fast polling during updates is in that firmware):
+1. Get it, either way:
+   - `git checkout fleet-manager`, then from `manager/`: `py -m venv .venv`, `.venv\Scripts\pip install -r requirements.txt`, `.venv\Scripts\python -m hacoap_manager`
+   - or the packaged `hacoap-manager.exe` from the latest CI run on `fleet-manager` (GitHub → Actions → Artifacts)
+2. In the browser page it opens:
+   - [ ] **Find devices** lists every board, and their status fills in (battery, readings)
+   - [ ] **Actions → Firmware slots** answers for a board
+   - [ ] **Images → Builds on this computer → Add** your latest build
+   - [ ] **Update** one board over the air: it goes through uploading, rebooting, waiting, confirming, and ends as *updated*. Note how long the upload takes.
+   - [ ] **Update** one board on USB (choose its serial port). This path has no simulated test, so it's the most likely to need a fix.
+3. Tell Claude what happened. Once it works, `fleet-manager` can become a pull request, and the web updater can go.
 
-The app runs on the PC you start it on. That PC hosts the web page for itself: the app starts a small web server inside itself, listening only on that computer (`http://127.0.0.1:...`), and opens it in your browser. The browser is only the screen. Close the app and the page stops; nothing runs in the background, on the internet, on the border router or in Home Assistant.
+### Which machine runs it
+The app runs on the PC you start it on. That PC hosts the page for itself: the app starts a small web server listening only on that computer (`http://127.0.0.1:8710`) and opens it in your browser. Close the app and everything stops; nothing runs on the internet, on the border router or in Home Assistant.
 
 That PC does all the talking:
 
@@ -116,39 +125,18 @@ That PC does all the talking:
 | Boards on USB | its USB serial ports |
 | Boards over the air | UDP to their IPv6 addresses, through the border router |
 | Device discovery | mDNS on your LAN (the border router answers for the Thread devices) |
-| Commissioning | the border router's REST API (port 8081) |
-| Builds | the nRF Connect toolchain installed on that PC (only if you build there) |
+| Commissioning (later) | the border router's REST API (port 8081) |
+| Builds (later) | the nRF Connect toolchain installed on that PC |
 
-So it needs to be on the same network as the border router, like the scripts today.
+So it needs to be on the same network as the border router, like the scripts.
 
-### Using it from another PC (to decide)
-
-As planned, other computers can't open the app: it only listens on its own PC. To use it from another PC's browser, there are three options:
-
-| Option | What it takes | Trade-offs |
-|---|---|---|
-| **Remote mode in the app** | A setting, off by default. When on, the app listens on the LAN and requires a password. Encryption (HTTPS) is recommended, with a self-signed certificate, so each browser warns once | The host PC must stay on with the app running. USB boards plug into the host, not the PC with the browser. Windows asks once to allow the app through its firewall. Without the password, anyone on your Wi-Fi could flash or wipe every device |
-| **Run it on an always-on machine** | The same remote mode, on a Raspberry Pi (possibly the border router's) | Nothing to keep on except the Pi. USB updates need the board plugged into the Pi |
-| **Remote Desktop / SSH tunnel** into the PC running it | Nothing to build | Fine for occasional use |
-
-Decide: should the plan include remote mode (off by default, password + HTTPS when on)? It's a modest addition to Phase 0.
-
-### Before starting it
-- **Check the border router's API.** Commissioning from the app needs the commissioner endpoints of the OTBR REST API, which are recent additions. On the border router:
+### Next phases
+- **3. Runtime settings, 4. Commissioning** need firmware changes (a settings store and a custom mcumgr group), so each needs a board test. Merge PR #6 first, so they build on tested firmware.
+- **Before phase 4, check the border router's API.** Commissioning from the app needs the commissioner endpoints of the OTBR REST API, which are recent additions. On the border router:
   ```
   curl http://<border-router>:8081/node
   curl http://<border-router>:8081/node/commissioner/state
   sudo ot-ctl version
   ```
   If `curl` from another computer fails but works on the border router itself, its REST API only listens locally (`otbr-agent` option `--rest-listen-address`). If the commissioner endpoints are missing, update ot-br-posix; otherwise the app falls back to showing the `ot-ctl` commands.
-- **Merge PR #6 first,** so the fleet manager builds on firmware that's been tested.
-- **The phases:**
-  - 0. Foundations
-  - 1. Inventory
-  - 2. Updates
-  - 3. Runtime settings
-  - 4. Commissioning
-  - 5. Builds
-  - 6. Polish
-
-  Phases 0–2 are tested against a simulated device, so they need no board. The firmware changes (version numbers in Phase 0, settings in Phase 3, commissioning in Phase 4) each need a board test.
+- **5. Builds and 6. Polish** need no firmware change.
