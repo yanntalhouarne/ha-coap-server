@@ -313,6 +313,7 @@ Older versions of this repository had a Thread network key and network name in `
 | `application/tests/unit/` | Unit tests of the firmware's logic, run on a PC |
 | `scripts/` | Setup, key generation, build and firmware update scripts |
 | `firmware-updater/` | Web interface for batch updates |
+| `manager/` | The fleet manager app (inventory and updates; see its README) |
 | `docs/` | Schematic, code and power reviews (PDF) |
 | `external/` | The SDK, fetched by the setup script (not in git) |
 
@@ -385,7 +386,7 @@ The SDK comes from forks of `sdk-nrf` and `sdk-zephyr`, pinned to exact commits 
 
 - [ ] Implement dynamic SRP client hostname reassignment when duplicates are detected
 - [x] Refactor SRP functionality out of `coap_server.c` (now `src/srp.c`)
-- [ ] Fleet manager: one app for Windows, macOS and Linux to find, commission, configure, build and update the whole fleet. See the plan in `docs/FLEET-MANAGER-PLAN.md` on the `fleet-manager` branch, and `docs/NEXT-STEPS.md` for where things stand
+- [ ] Fleet manager: one app for Windows, macOS and Linux to find, commission, configure, build and update the whole fleet. Inventory and updates are built (`manager/`, see [its README](manager/README.md)), not yet tried on boards; commissioning, runtime settings and builds are next. Plan: `docs/FLEET-MANAGER-PLAN.md`
 
 ## 📚 References
 

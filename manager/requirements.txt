@@ -1,0 +1,7 @@
+# HA-CoAP Fleet Manager: what the app needs to run (Python 3.10 or newer)
+fastapi~=0.162
+uvicorn~=0.54
+websockets~=17.3
+smpclient[serial]~=7.3
+zeroconf~=0.151
+platformdirs~=4.13

@@ -1,0 +1,8 @@
+.online-dot { display: inline-block; width: .6rem; height: .6rem; border-radius: 50%; margin-right: .35rem; }
+.online-dot.on { background: var(--bs-success); }
+.online-dot.off { background: var(--bs-secondary-bg); border: 1px solid var(--bs-secondary); }
+.mono { font-family: var(--bs-font-monospace); font-size: .875em; }
+#connection.live { color: var(--bs-success); }
+#connection.down { color: var(--bs-danger); }
+.job .progress { height: .5rem; min-width: 6rem; }
+td.error-text { color: var(--bs-danger); font-size: .875em; }

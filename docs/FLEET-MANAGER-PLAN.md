@@ -2,9 +2,9 @@
 
 A cross-platform application (Windows, Linux, macOS) to manage, maintain and update the firmware on a fleet of ha-coap devices: find them, commission new ones, configure them, build firmware and update it over USB or over the air.
 
-Status: proposed (2026-10-25), no code yet. Where things stand overall, and what to do first: `docs/NEXT-STEPS.md`. Decisions so far:
+Status (2026-10-25): **phases 0–2 are built** in `manager/` (see `manager/README.md`), tested against a simulated device on Windows, macOS and Linux, **not yet with boards**. Where things stand overall, and what to do first: `docs/NEXT-STEPS.md`. Decisions so far:
 - **Form:** a local web app (Python backend, browser UI), packaged as one download per OS.
-- **Where it runs:** on your PC when you need it, listening only on that computer (no login needed).
+- **Where it runs:** on your PC when you need it, listening only on that computer (no login needed). Remote access: not for now (decided 2026-10-25), maybe later.
 - **Settings:** build-time (Kconfig) and runtime (changed on a running device, no reflash).
 - **Border router:** a standalone OpenThread Border Router (ot-br-posix).
 
@@ -25,13 +25,13 @@ Status: proposed (2026-10-25), no code yet. Where things stand overall, and what
  Browser UI (served locally)   ── HTTP / WebSocket ──   Python backend (FastAPI)
                                                           ├─ inventory (SQLite, per-user data folder)
                                                           ├─ smpclient ── USB serial / UDP 1337 ── device: mcumgr (MCUboot)
-                                                          ├─ aiocoap ──── UDP 5683 ───────────── device: CoAP resources
+                                                          ├─ CoAP client ─ UDP 5683 ──────────── device: CoAP resources
                                                           ├─ zeroconf ─── mDNS/DNS-SD ────────── border router's SRP proxy
                                                           ├─ OTBR REST ── HTTP 8081 ──────────── border router (commissioner)
                                                           └─ build runner ─ scripts/build.* ──── NCS toolchain (optional)
 ```
 
-- **Backend:** Python with FastAPI and asyncio, because the device libraries (smpclient, aiocoap, zeroconf) are all asynchronous. It replaces the Flask web updater once it covers everything that does.
+- **Backend:** Python with FastAPI and asyncio, because the device libraries (smpclient, zeroconf) are asynchronous. CoAP uses a small built-in client (GET and PUT are all the devices need), which behaves the same on every OS. It replaces the Flask web updater once it covers everything that does.
 - **Device management:** [smpclient](https://github.com/intercreate/smpclient) speaks the mcumgr protocol directly over serial and UDP. The Go `mcumgr` tool is no longer needed.
 - **Device data:** CoAP, through the same resources Home Assistant uses (`info`, `data`).
 - **UI:** plain JavaScript modules and Bootstrap, bundled with the app (no CDN, so it works offline). No Node.js build step.
@@ -45,9 +45,9 @@ The app runs on the PC you start it on, which hosts the page for itself: the app
 
 That PC talks to the boards (USB serial, or UDP through the border router), to the border router (mDNS for discovery, REST on port 8081 for commissioning) and to the local toolchain for builds. So it must be on the same network as the border router.
 
-### Remote access (to decide)
+### Remote access (decided: not for now)
 
-Other computers can't open the app as planned. To use it from another PC's browser, the options are:
+The app stays local-only for now (2026-10-25); Remote Desktop to the PC running it covers occasional use. If that changes, the options are below. Other computers can't open the app as it is. To use it from another PC's browser, the options are:
 
 | Option | What it takes | Trade-offs |
 |---|---|---|
@@ -55,7 +55,7 @@ Other computers can't open the app as planned. To use it from another PC's brows
 | **Always-on host** | The same remote mode, on a Raspberry Pi (for example the border router's) | Linux packaging is already planned. USB updates need the board plugged into the Pi |
 | **Remote Desktop / SSH tunnel** | Nothing | For occasional use |
 
-If remote mode is chosen, it goes into Phase 0 (login, HTTPS, listen-address setting), so every later feature is built behind the login from the start.
+Remote mode would need a login, HTTPS and a listen-address setting in front of every API route.
 
 ## Firmware changes
 
@@ -74,23 +74,23 @@ All of it keeps the current partition layout and signing, so it ships as a norma
 
 ## Phases
 
-Each phase ends with a working, tested app. Tests run in CI on Linux, macOS and Windows against a simulated device: a small Python program that answers mcumgr requests over UDP and serial, and CoAP requests.
+Each phase ends with a working, tested app. Tests run in CI on Linux, macOS and Windows against a simulated device: a small Python program that answers mcumgr requests over UDP, and CoAP requests.
 
-| Phase | Delivers |
-|---|---|
-| **0. Foundations** | New `manager/` app skeleton, simulated device, CI packaging into executables for the 3 OSes, firmware version numbers |
-| **1. Inventory** | Discovery, inventory, live status (version, battery, sensors, online), device pages |
-| **2. Updates** | USB and over-the-air updates through smpclient, an image library, test, verify, confirm, staged rollout, history. Replaces `firmware-updater/` |
-| **3. Runtime settings** | Firmware settings and the `hacoap` mcumgr group. Settings pages for one device or the fleet |
-| **4. Commissioning** | Border router integration, a USB provisioning wizard with a PSKd per device, optional first SWD flash, credential reset |
-| **5. Builds** | Kconfig editor, profiles, build runner, image library integration, signing-key checks |
-| **6. Polish** | Export/import, backups, docs, release downloads |
+| Phase | Delivers | State |
+|---|---|---|
+| **0. Foundations** | New `manager/` app skeleton, simulated device, CI packaging into executables for the 3 OSes, firmware version numbers | Done, except the firmware version numbers (a firmware change: waits for a board) |
+| **1. Inventory** | Discovery, inventory, live status (version, battery, sensors, online), device pages | Done |
+| **2. Updates** | USB and over-the-air updates through smpclient, an image library, test, verify, confirm, staged rollout, history. Replaces `firmware-updater/` | Done; replaces the web updater once it has updated real boards |
+| **3. Runtime settings** | Firmware settings and the `hacoap` mcumgr group. Settings pages for one device or the fleet | |
+| **4. Commissioning** | Border router integration, a USB provisioning wizard with a PSKd per device, optional first SWD flash, credential reset | |
+| **5. Builds** | Kconfig editor, profiles, build runner, image library integration, signing-key checks | |
+| **6. Polish** | Export/import, backups, docs, release downloads | |
 
 The command-line scripts stay, for automation and as a fallback.
 
-## Open questions
+**What the first hardware test should check** (phases 1–2): Find devices lists every board; status refreshes; Firmware slots answers; an over-the-air update of one board goes through upload, reset, return and confirm; a USB update of one board does too (the USB path has no simulated test). Also note how long an over-the-air upload takes.
 
-- **Remote access.** Add remote mode (see [Remote access](#remote-access-to-decide)) or keep the app local-only?
+## Open questions
 
 - **Border router API.** Commissioning needs the REST API's commissioner endpoints (`/node/commissioner/state`, `/node/commissioner/joiner`), which are recent additions to ot-br-posix. On the border router, these show what it supports:
   ```

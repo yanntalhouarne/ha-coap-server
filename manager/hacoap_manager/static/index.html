@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>HA-CoAP Fleet Manager</title>
+  <link rel="stylesheet" href="/static/vendor/bootstrap.min.css">
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<nav class="navbar navbar-expand bg-body-tertiary border-bottom mb-3">
+  <div class="container-fluid">
+    <span class="navbar-brand">HA-CoAP Fleet Manager</span>
+    <ul class="navbar-nav me-auto" id="tabs">
+      <li class="nav-item"><a class="nav-link active" href="#devices" data-tab="devices">Devices</a></li>
+      <li class="nav-item"><a class="nav-link" href="#updates" data-tab="updates">Updates</a></li>
+      <li class="nav-item"><a class="nav-link" href="#images" data-tab="images">Images</a></li>
+      <li class="nav-item"><a class="nav-link" href="#settings" data-tab="settings">Settings</a></li>
+    </ul>
+    <span class="navbar-text small" id="connection" title="Live updates from the app">●</span>
+  </div>
+</nav>
+
+<main class="container-fluid">
+  <div id="alerts"></div>
+
+  <!-- Devices -->
+  <section id="tab-devices" class="tab">
+    <div class="d-flex flex-wrap gap-2 mb-3 align-items-center">
+      <button class="btn btn-primary" id="discover">Find devices</button>
+      <button class="btn btn-outline-secondary" id="refresh-all">Refresh all</button>
+      <form class="d-flex gap-2" id="add-device">
+        <input class="form-control" id="add-address" placeholder="Add by IPv6 address" size="28" required>
+        <button class="btn btn-outline-secondary" type="submit">Add</button>
+      </form>
+      <div class="ms-auto d-flex gap-2 align-items-center">
+        <span class="text-body-secondary small" id="selection-count"></span>
+        <button class="btn btn-success" id="update-selected" disabled>Update selected…</button>
+      </div>
+    </div>
+    <div class="table-responsive">
+      <table class="table table-hover align-middle" id="devices-table">
+        <thead><tr>
+          <th><input class="form-check-input" type="checkbox" id="select-all" title="Select all"></th>
+          <th>Name</th><th>Device ID</th><th>Address</th><th>Firmware</th>
+          <th class="text-end">Battery</th><th class="text-end">Soil</th><th class="text-end">Air</th>
+          <th class="text-end">Temp.</th><th>Last seen</th><th></th>
+        </tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+    <p class="text-body-secondary" id="devices-empty">No devices yet. <b>Find devices</b> looks for them on the network
+      (through the border router), or add one by its address.</p>
+  </section>
+
+  <!-- Updates -->
+  <section id="tab-updates" class="tab d-none">
+    <div class="card mb-4">
+      <div class="card-header">New update</div>
+      <div class="card-body">
+        <form id="update-form" class="row g-3">
+          <div class="col-md-6">
+            <label class="form-label" for="update-image">Image</label>
+            <select class="form-select" id="update-image" required></select>
+            <div class="form-text">Add images on the Images tab.</div>
+          </div>
+          <div class="col-md-6">
+            <label class="form-label">Devices</label>
+            <div class="form-check">
+              <input class="form-check-input" type="radio" name="update-transport" id="transport-udp" value="udp" checked>
+              <label class="form-check-label" for="transport-udp">Over the air: <span id="update-selection">no devices selected</span>
+                <span class="text-body-secondary">(select them on the Devices tab)</span></label>
+            </div>
+            <div class="form-check">
+              <input class="form-check-input" type="radio" name="update-transport" id="transport-serial" value="serial">
+              <label class="form-check-label" for="transport-serial">One board on USB:</label>
+            </div>
+            <div class="d-flex gap-2 ms-4">
+              <select class="form-select form-select-sm" id="serial-port"></select>
+              <button class="btn btn-sm btn-outline-secondary" type="button" id="refresh-ports">Refresh</button>
+            </div>
+          </div>
+          <div class="col-12 d-flex align-items-center gap-3">
+            <div class="form-check">
+              <input class="form-check-input" type="checkbox" id="stop-on-failure" checked>
+              <label class="form-check-label" for="stop-on-failure">Stop at the first failure</label>
+            </div>
+            <button class="btn btn-success ms-auto" type="submit" id="start-update">Start update</button>
+          </div>
+          <div class="col-12 form-text">Each device gets the image, boots it as a test, and keeps it only once it
+            comes back running it. If it doesn't, MCUboot puts the previous firmware back. Devices are updated one at a time.</div>
+        </form>
+      </div>
+    </div>
+    <h5>Update jobs</h5>
+    <div id="jobs"><p class="text-body-secondary">No updates since the app started.</p></div>
+    <h5 class="mt-4">History</h5>
+    <div class="table-responsive">
+      <table class="table table-sm" id="history-table">
+        <thead><tr><th>Finished</th><th>Device</th><th>Via</th><th>Image</th><th>Result</th><th>Message</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- Images -->
+  <section id="tab-images" class="tab d-none">
+    <div class="row g-4">
+      <div class="col-lg-5">
+        <div class="card mb-4">
+          <div class="card-header">Add an image</div>
+          <div class="card-body">
+            <input class="form-control mb-2" type="file" id="image-file" accept=".bin">
+            <input class="form-control mb-2" id="image-notes" placeholder="Notes (optional)">
+            <button class="btn btn-primary" id="upload-image">Add to library</button>
+            <div class="form-text">Use <code>app_update.bin</code> from a build
+              (<code>application/build/zephyr/</code>), signed with your key.</div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-header">Builds on this computer</div>
+          <div class="card-body" id="builds"></div>
+        </div>
+      </div>
+      <div class="col-lg-7">
+        <h5>Library</h5>
+        <div class="table-responsive">
+          <table class="table table-sm align-middle" id="images-table">
+            <thead><tr><th>Version</th><th>Hash</th><th>Size</th><th>Added</th><th>Notes</th><th></th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Settings -->
+  <section id="tab-settings" class="tab d-none">
+    <div class="row g-4">
+      <div class="col-lg-6">
+        <div class="card">
+          <div class="card-header">Settings</div>
+          <div class="card-body">
+            <form id="settings-form" class="row g-3"></form>
+          </div>
+        </div>
+      </div>
+      <div class="col-lg-6">
+        <div class="card">
+          <div class="card-header">About</div>
+          <div class="card-body"><dl class="row mb-0" id="about"></dl></div>
+        </div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<!-- Slots dialog -->
+<div class="modal fade" id="slots-modal" tabindex="-1">
+  <div class="modal-dialog modal-lg">
+    <div class="modal-content">
+      <div class="modal-header"><h5 class="modal-title">Firmware slots</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+      <div class="modal-body" id="slots-body"></div>
+    </div>
+  </div>
+</div>
+
+<script src="/static/vendor/bootstrap.bundle.min.js"></script>
+<script type="module" src="/static/app.js"></script>
+</body>
+</html>
