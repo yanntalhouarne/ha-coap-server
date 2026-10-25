@@ -8,10 +8,137 @@ menu "Zephyr Kernel"
 source "Kconfig.zephyr"
 endmenu
 
+menu "ha-coap application"
+
+config HACOAP_HW_VERSION
+	string "Hardware version"
+	default "v2.0"
+	help
+	  Board revision reported in the 'info' CoAP resource.
+
+config HACOAP_BOOT_DELAY_MS
+	int "Delay at the start of main() (ms)"
+	default 2150
+
+menu "Pump"
+
+config HACOAP_PUMP_DEFAULT_DURATION
+	int "Default pump run time (s)"
+	range 1 9
+	default 1
+	help
+	  How long the pump runs after a 'pump' PUT or a press of S1, until a
+	  'pumpdc' PUT changes it. Not stored across resets.
+
+config HACOAP_PUMP_MAX_DURATION
+	int "Longest pump run time a 'pumpdc' PUT can set (s)"
+	range 1 9
+	default 9
+	help
+	  The 'pumpdc' payload is a single ASCII digit, so 9 s is the upper limit.
+
+endmenu
+
+menu "Sensors"
+
+config HACOAP_SENSOR_SAMPLE_PERIOD_S
+	int "Sensor sampling period (s)"
+	range 10 86400
+	default 300
+	help
+	  The sensors are sampled at boot and then every period, from the system
+	  work queue. The 'data' resource returns the latest samples, so a CoAP
+	  request never waits on the sensors. A shorter period gives fresher data
+	  but powers the soil sensor more often (about 1 mC per sample).
+
+config HACOAP_SOIL_POWER_UP_MS
+	int "Soil sensor power-up time (ms)"
+	default 200
+	help
+	  Time between enabling the soil sensor supply (SENSOR_EN) and sampling it.
+
+config HACOAP_SOIL_DRY_MV
+	int "Soil sensor output when dry (mV)"
+	default 2200
+	help
+	  Reported as 0% moisture. Must be above HACOAP_SOIL_WET_MV.
+
+config HACOAP_SOIL_WET_MV
+	int "Soil sensor output when wet (mV)"
+	default 980
+	help
+	  Reported as 100% moisture.
+
+endmenu
+
+menu "Watchdog"
+
+config HACOAP_WDT_TIMEOUT_MS
+	int "Watchdog timeout (ms)"
+	default 30000
+	help
+	  The SoC resets if the watchdog is not fed within this time.
+
+config HACOAP_WDT_FEED_PERIOD_MS
+	int "Watchdog feed period (ms)"
+	default 10000
+	help
+	  How often the system work queue feeds the watchdog. Must be well below
+	  HACOAP_WDT_TIMEOUT_MS.
+
+endmenu
+
+menu "SRP service registration"
+
+config HACOAP_SRP_HOSTNAME
+	string "SRP host name prefix"
+	default "ha-coap"
+
+config HACOAP_SRP_SERVICE_INSTANCE
+	string "SRP service instance prefix"
+	default "ha-coap"
+
+config HACOAP_SRP_SERVICE_NAME
+	string "SRP service name"
+	default "_ot._udp"
+	help
+	  The Home Assistant integration discovers devices through this service.
+
+choice HACOAP_SRP_NAME_SUFFIX
+	prompt "Suffix appended to the host and instance names"
+	default HACOAP_SRP_SUFFIX_DEVICE_ID
+	help
+	  The SRP server rejects duplicate host names, so every device needs a
+	  unique name. The HA integration uses the part after the '-' as the
+	  device's unique ID.
+
+config HACOAP_SRP_SUFFIX_DEVICE_ID
+	bool "Factory device ID (FICR DEVICEID[0], in hex)"
+
+config HACOAP_SRP_SUFFIX_RANDOM
+	bool "Random number, new at every boot"
+
+config HACOAP_SRP_SUFFIX_MANUAL
+	bool "Fixed ID (HACOAP_SRP_MANUAL_ID)"
+
+config HACOAP_SRP_SUFFIX_NONE
+	bool "No suffix (one device per network only)"
+
+endchoice
+
+config HACOAP_SRP_MANUAL_ID
+	string "Fixed ID appended to the names"
+	depends on HACOAP_SRP_SUFFIX_MANUAL
+	default "87d7a063"
+
+endmenu
+
+endmenu
+
 module = COAP_SERVER
 module-str = CoAP server
 source "${ZEPHYR_BASE}/subsys/logging/Kconfig.template.log_config"
 
-module = OT_COAP_UTILS
-module-str = OpenThread CoAP utils
+module = COAP_RESOURCES
+module-str = CoAP resources
 source "${ZEPHYR_BASE}/subsys/logging/Kconfig.template.log_config"

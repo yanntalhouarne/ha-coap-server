@@ -41,13 +41,41 @@ Optional fragments and overlays:
 - **DC/DC regulator**: the board enables the nRF52840's DC/DC regulator (`CONFIG_BOARD_ENABLE_DCDC`, default `y`), since the ACN52840 module includes the converter components. If a board doesn't boot with it, turn it off for both the app and MCUboot (`-DCONFIG_BOARD_ENABLE_DCDC=n -Dmcuboot_CONFIG_BOARD_ENABLE_DCDC=n`) and reflash over SWD.
 - **Watchdog**: the application starts a 30 s hardware watchdog, fed every 10 s from the system work queue. A watchdog reset during an MCUboot test boot reverts to the previous image.
 - **Startup**: a missing sensor no longer stops the boot. It's logged, shown on the red LED (2 blinks: HDC1080, 3 blinks: fuel gauge) and reported as 0 in `data`, and the device still joins the network so it can be updated.
+- **Sensor sampling**: the sensors are sampled at boot and then every `CONFIG_HACOAP_SENSOR_SAMPLE_PERIOD_S` (default 300 s). A `data` request returns the latest samples immediately instead of reading the sensors in the OpenThread thread.
 - **Time-of-flight sensor**: the VL53L0X node is disabled in the board DTS while it's unused. To use it, set its `status` to `"okay"` and add `CONFIG_VL53L0X=y`.
+
+### Source layout
+
+| File | Purpose |
+|---|---|
+| `src/main.c` | Startup order, Thread state handling, and the glue between the CoAP API and the modules |
+| `src/coap_resources.c` | The CoAP API: one table entry per resource (`pumpdc`, `pump`, `data`, `info`, `ping`) |
+| `src/pump.c` | Timed pump runs, from CoAP or the S1 button |
+| `src/sensors.c` | Soil, battery and air readings, sampled periodically and cached |
+| `src/buzzer.c` | Beep patterns |
+| `src/status_led.c` | Network and error states on the module's RGB LED, and the user LED |
+| `src/srp.c` | SRP service registration |
+| `src/watchdog.c` | Hardware watchdog |
+
+### Application settings
+
+Tunables are Kconfig options (`application/Kconfig`, menu "ha-coap application"). Set them in a `.conf` fragment or on the command line, for example `-DCONFIG_HACOAP_SENSOR_SAMPLE_PERIOD_S=600`.
+
+| Option | Default | |
+|---|---|---|
+| `CONFIG_HACOAP_HW_VERSION` | `"v2.0"` | Reported in `info` |
+| `CONFIG_HACOAP_PUMP_DEFAULT_DURATION` / `_MAX_DURATION` | 1 s / 9 s | Pump run time |
+| `CONFIG_HACOAP_SENSOR_SAMPLE_PERIOD_S` | 300 | Sensor sampling period |
+| `CONFIG_HACOAP_SOIL_POWER_UP_MS` | 200 | Soil sensor settling time |
+| `CONFIG_HACOAP_SOIL_DRY_MV` / `_WET_MV` | 2200 / 980 | Soil sensor calibration |
+| `CONFIG_HACOAP_WDT_TIMEOUT_MS` / `_FEED_PERIOD_MS` | 30000 / 10000 | Watchdog |
+| `CONFIG_HACOAP_SRP_*` | see below | SRP names |
 
 ## 🔄 SRP Client Service Registration
 
 > **Important**: Each device requires a unique hostname to function properly.
 
-- Configure a unique hostname and service instance in `ot_srp_config.h` for each flashed device
+- The hostname and service instance are `ha-coap-<suffix>`. The suffix is the factory device ID by default (`CONFIG_HACOAP_SRP_SUFFIX_DEVICE_ID`). It can be a random number (`_SUFFIX_RANDOM`), a fixed ID (`_SUFFIX_MANUAL` with `CONFIG_HACOAP_SRP_MANUAL_ID`) or nothing (`_SUFFIX_NONE`), and the prefixes are set by `CONFIG_HACOAP_SRP_HOSTNAME` and `CONFIG_HACOAP_SRP_SERVICE_INSTANCE`
 - The SRP server will reject duplicate hostnames during registration
 - Note that OpenThread stores the SRP key in non-volatile memory
   - If the device is factory reset (`ot factoryreset`), the key will be erased
@@ -133,7 +161,7 @@ coap-client -m get coap://[fd49:969:3c3c:1:88a2:4c28:69ec:34f7]/pumpdc -v 6
 ## 📝 Roadmap
 
 - [ ] Implement dynamic SRP client hostname reassignment when duplicates are detected
-- [ ] Refactor SRP functionality out of `coap_server.c`
+- [x] Refactor SRP functionality out of `coap_server.c` (now `src/srp.c`)
 
 ## 📚 References
 
