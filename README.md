@@ -140,7 +140,7 @@ The device joins with Thread commissioning: at boot, if it has no network creden
    docker exec addon_core_openthread_border_router ot-ctl commissioner joiner add * <your PSKd>
    ```
 2. Reset or power-cycle the board. The joiner only runs at boot, so start the commissioner first. Joining can take a minute or two.
-3. Once attached, the device registers with SRP (blue LED, then three beeps) and the ha-coap integration discovers it.
+3. Once attached, the device registers with SRP (blue flashes, then three beeps) and the ha-coap integration discovers it.
 4. **Stop the commissioner** as soon as the device has joined, so nothing else can join with the PSKd: `ot-ctl commissioner stop` (with the `docker exec` prefix on Home Assistant). The joiner entry also expires on its own after 120 s.
 
 The credentials are stored in flash and survive resets, firmware updates and SWD flashing without `--erase`. A board only forgets them with a full chip erase.
@@ -157,7 +157,7 @@ All resources are on UDP port 5683 at the device's IPv6 address. Payloads are ra
 | `pumpdc` | GET, confirmable PUT | One ASCII digit: the pump run time in seconds (1 to `CONFIG_HACOAP_PUMP_MAX_DURATION`) | 1 byte: the run time in use. Out-of-range values keep the current one. Not kept across resets. |
 | `ping` | PUT | `'1'` beep, `'0'` quiet | none (2.04 Changed) |
 
-`data` returns the latest readings without waiting on the sensors. They are sampled at boot and then every `CONFIG_HACOAP_SENSOR_SAMPLE_PERIOD_S` (300 s by default), so a reading can be up to one period old.
+`data` returns the latest readings without waiting on the sensors. They are sampled at boot and then every `CONFIG_HACOAP_SENSOR_SAMPLE_PERIOD_S` (900 s by default), so a reading can be up to one period old.
 
 Examples with libcoap's `coap-client`:
 ```bash
@@ -168,7 +168,7 @@ coap-client -m put -e 5 coap://[fd49:969:3c3c:1:88a2:4c28:69ec:34f7]/pumpdc
 coap-client -m put -e 1 coap://[fd49:969:3c3c:1:88a2:4c28:69ec:34f7]/ping
 ```
 
-As a sleepy end device, the board picks up messages from its parent once per poll period (`CONFIG_OPENTHREAD_POLL_PERIOD`, 1 s), so responses can take up to a second.
+As a sleepy end device, the board picks up messages from its parent once per poll period (`CONFIG_OPENTHREAD_POLL_PERIOD`, 3 s), so responses can take up to 3 seconds. The integration waits 10 s for a reply, so this is within its limits. While mcumgr is in use, the device polls every 100 ms instead (see [Keeping updates compatible](#keeping-updates-compatible)).
 
 ### SRP registration
 - The SRP host name and service instance are `ha-coap-<suffix>`, and the service is `_ot._udp`. The integration uses the part after the `-` as the device's unique ID.
@@ -178,31 +178,35 @@ As a sleepy end device, the board picks up messages from its parent once per pol
 
 ## 💡 LEDs and sounds
 
+To save the battery, the RGB LED never stays on. It shows each state as a short flash every 5 s, and stops 5 minutes after the last change (`CONFIG_HACOAP_STATUS_LED_TIMEOUT_S`). To see the state again, reset the board.
+
 | Indication | Meaning |
 |---|---|
 | Green blinks with three rising beeps | Initialization done, starting Thread |
-| Red + green on | Not on a Thread network: not commissioned yet, or detached |
-| Blue on | Attached, waiting for the first SRP registration |
-| All off, three beeps | Registered with SRP: normal operation |
-| 2 red blinks at boot, then red on | HDC1080 (air sensor) not found |
-| 3 red blinks at boot, then red on | Fuel gauge not found |
-| Red on | Another initialization error (soil sensor, USB, pump, CoAP or Thread). The log says which. |
+| Red + green (yellow) flashes | Not on a Thread network: not commissioned yet, or detached |
+| Blue flashes | Attached, waiting for the first SRP registration |
+| No flashes, three beeps | Registered with SRP: normal operation |
+| 2 red blinks at boot, then red flashes | HDC1080 (air sensor) not found |
+| 3 red blinks at boot, then red flashes | Fuel gauge not found |
+| Red flashes | Another initialization error (soil sensor, USB, pump, CoAP or Thread). The log says which. |
 | User LED (blue, LED2) on, one beep | Pump running |
 | Six beeps | `ping` with `'1'` |
 
-A missing sensor doesn't stop the boot: the device still joins the network, so it stays reachable for updates. The red LED clears once it attaches.
+A missing sensor doesn't stop the boot: the device still joins the network, so it stays reachable for updates. Red is added to the flashes until the device attaches.
 
 ## ⚙️ Configuration
 
-The application's settings are Kconfig options, declared in `application/Kconfig` (menu "ha-coap application"). The build turns the chosen values into macros, such as `#define CONFIG_HACOAP_SENSOR_SAMPLE_PERIOD_S 300`, in a generated header that every source file includes. The code uses them like any other macro, so a setting can change without editing code. It's all compile time: a new value takes effect after a rebuild and a firmware update.
+The application's settings are Kconfig options, declared in `application/Kconfig` (menu "ha-coap application"). The build turns the chosen values into macros, such as `#define CONFIG_HACOAP_SENSOR_SAMPLE_PERIOD_S 900`, in a generated header that every source file includes. The code uses them like any other macro, so a setting can change without editing code. It's all compile time: a new value takes effect after a rebuild and a firmware update.
 
 | Option | Default | |
 |---|---|---|
 | `CONFIG_HACOAP_HW_VERSION` | `"v2.0"` | Board revision reported in `info` |
 | `CONFIG_HACOAP_BOOT_DELAY_MS` | 2150 | Delay at the start of `main()` |
+| `CONFIG_HACOAP_STATUS_LED_TIMEOUT_S` | 300 | How long the RGB LED flashes a state (s). 0 flashes for as long as the state lasts. |
+| `CONFIG_HACOAP_MCUMGR_POLL_PERIOD_MS` / `CONFIG_HACOAP_MCUMGR_POLL_TIMEOUT_S` | 100 / 30 | Thread poll period while mcumgr is in use, and how long it lasts after the last request |
 | `CONFIG_HACOAP_PUMP_DEFAULT_DURATION` | 1 | Pump run time after boot (s) |
 | `CONFIG_HACOAP_PUMP_MAX_DURATION` | 9 | Longest run time `pumpdc` can set (s, at most 9) |
-| `CONFIG_HACOAP_SENSOR_SAMPLE_PERIOD_S` | 300 | Sensor sampling period (s). Shorter means fresher data and more power. |
+| `CONFIG_HACOAP_SENSOR_SAMPLE_PERIOD_S` | 900 | Sensor sampling period (s). Shorter means fresher data and more power. |
 | `CONFIG_HACOAP_SOIL_POWER_UP_MS` | 200 | Soil sensor settling time before sampling |
 | `CONFIG_HACOAP_SOIL_DRY_MV` / `CONFIG_HACOAP_SOIL_WET_MV` | 2200 / 980 | Soil sensor calibration: output at 0% and 100% |
 | `CONFIG_HACOAP_WDT_TIMEOUT_MS` / `CONFIG_HACOAP_WDT_FEED_PERIOD_MS` | 30000 / 10000 | Watchdog timeout and feed period |
@@ -215,9 +219,9 @@ If an option is set in several places, the later one wins: the default in `Kconf
 
 | To change it… | Do this |
 |---|---|
-| For every build | Add a line to `application/prj.conf`: `CONFIG_HACOAP_SENSOR_SAMPLE_PERIOD_S=900` |
+| For every build | Add a line to `application/prj.conf`: `CONFIG_HACOAP_SENSOR_SAMPLE_PERIOD_S=1800` |
 | For every build, privately | Add it to `application/local.conf` (not in git, see [Private settings](#private-settings-signing-key-and-pskd)) |
-| For one build | `scripts\build.ps1 battery "-DCONFIG_HACOAP_SENSOR_SAMPLE_PERIOD_S=900"` or `scripts/build.sh battery -DCONFIG_HACOAP_SENSOR_SAMPLE_PERIOD_S=900`. In PowerShell, quote arguments that contain a dot or a semicolon. |
+| For one build | `scripts\build.ps1 battery "-DCONFIG_HACOAP_SENSOR_SAMPLE_PERIOD_S=1800"` or `scripts/build.sh battery -DCONFIG_HACOAP_SENSOR_SAMPLE_PERIOD_S=1800`. In PowerShell, quote arguments that contain a dot or a semicolon. |
 | In VS Code | In the build configuration, add it under extra CMake arguments, or put it in a `.conf` file and add that under Kconfig fragments |
 | For a group of boards | Put your lines in a file such as `application/greenhouse.conf` and pass `-DEXTRA_CONF_FILE=greenhouse.conf` |
 
@@ -279,6 +283,7 @@ What they need:
 - MCUboot itself can't be updated with mcumgr. A new application image must fit the bootloader already on the boards: sign it with the same key, keep the same partition layout, and don't change MCUboot's size or the partition settings.
 - An image signed with a different key uploads without error, but MCUboot refuses to boot it and keeps running the old image. To change keys, reflash over SWD (see [Moving existing boards to your own key](#-flashing-over-swd)).
 - An update only works over the air if the image running on the device includes mcumgr over UDP. All variants of this firmware do.
+- **Speed over the air:** the first mcumgr command can take up to one poll period (3 s) to reach the device. From then on, the device polls every 100 ms until 30 s after the last command, so the long poll period doesn't slow uploads down. Images built before this change don't do that, so the update that replaces them is slower.
 
 ## 🔒 Security
 
@@ -318,7 +323,8 @@ Older versions of this repository had a Thread network key and network name in `
 | `src/pump.c` | Timed pump runs, from CoAP or the S1 button |
 | `src/sensors.c` | Soil, battery and air readings, sampled periodically and cached |
 | `src/buzzer.c` | Beep patterns |
-| `src/status_led.c` | Network and error states on the module's RGB LED, and the user LED |
+| `src/status_led.c` | Network and error states on the module's RGB LED (as short flashes), and the user LED |
+| `src/mcumgr_poll.c` | Faster Thread polling while mcumgr is in use |
 | `src/srp.c` | SRP service registration |
 | `src/watchdog.c` | Hardware watchdog |
 
@@ -336,6 +342,8 @@ The SDK comes from forks of `sdk-nrf` and `sdk-zephyr`, pinned to exact commits 
 - **DC/DC regulator**: the board enables the nRF52840's DC/DC regulator (`CONFIG_BOARD_ENABLE_DCDC`, default `y`), since the ACN52840 module includes the converter components. If a board doesn't boot with it, turn it off for both the app and MCUboot (`-DCONFIG_BOARD_ENABLE_DCDC=n -Dmcuboot_CONFIG_BOARD_ENABLE_DCDC=n`) and reflash over SWD.
 - **Watchdog**: the application starts a 30 s hardware watchdog, fed every 10 s from the system work queue. A watchdog reset during an MCUboot test boot reverts to the previous image.
 - **UART0** is disabled unless the `uart-console` variant enables it, since its receiver draws current in sleep.
+- **User button**: S1 (P1.13) is listed in `sense-edge-mask` in the board DTS, so its interrupt uses the GPIO PORT event rather than a GPIOTE channel, which costs current in sleep.
+- **RAM power-down**: RAM sections above the C library's heap are powered off, and powered back on as the heap grows (`CONFIG_RAM_POWER_ADJUST_ON_HEAP_RESIZE`). This needs the full newlib rather than newlib-nano, which adds about 13 KB of flash. The `debug` variant goes back to newlib-nano without it, to fit.
 - **Time-of-flight sensor**: the VL53L0X node is disabled in the board DTS while it's unused. To use it, set its `status` to `"okay"` and add `CONFIG_VL53L0X=y`.
 
 ### Documentation
@@ -354,9 +362,9 @@ The SDK comes from forks of `sdk-nrf` and `sdk-zephyr`, pinned to exact commits 
 | `CONFIG_OPENTHREAD_JOINER_PSKD (...) must be 6 to 32 characters` | Fix the PSKd in `application/local.conf`: A–Z and 0–9 only, without I, O, Q and Z |
 | Warning: `No private signing key` | This build is signed with the public development key. Create your key with `scripts/keygen`, or copy it into `application/keys/` from your backup. |
 | `region 'FLASH' overflowed` | The image doesn't fit the 483 KB application slot. `-Og` (`overlay-debug.conf`) and logging don't fit together. |
-| The device doesn't join (red + green stay on) | Start the commissioner on the border router with the PSKd the firmware was built with, then reset the board: the joiner only runs at boot |
+| The device doesn't join (red + green flashes) | Start the commissioner on the border router with the PSKd the firmware was built with, then reset the board: the joiner only runs at boot |
 | An update uploads fine, but the board keeps running the old firmware | The image is signed with a different key than the board's bootloader (for example, built on a PC without your key, or taken from CI). Rebuild with your key. |
-| Blue LED stays on | SRP registration isn't succeeding: check that the border router is running, and look for a duplicate host name |
+| Blue flashes, and no three beeps | SRP registration isn't succeeding: check that the border router is running, and look for a duplicate host name |
 | A new board doesn't boot after the first flash | Try with DC/DC disabled (see [Board notes](#board-notes)) |
 | mcumgr over UDP times out | Check the route to the Thread network from the PC (`ping -6 <device address>`), and that the device is attached |
 

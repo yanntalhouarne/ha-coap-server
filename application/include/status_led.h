@@ -4,6 +4,7 @@
  * status_led.h
  *
  * The module's RGB LED (network and error states) and the blue user LED (pump).
+ * The RGB LED states show as a short flash every 5 s, for CONFIG_HACOAP_STATUS_LED_TIMEOUT_S.
  */
 
 #ifndef STATUS_LED_H_
@@ -11,7 +12,7 @@
 
 #include <stdbool.h>
 
-/* RGB LED states */
+/* RGB LED states, shown as flashes in these colors */
 enum status_led_state
 {
 	STATUS_LED_OFF,         // attached and registered
@@ -23,13 +24,13 @@ enum status_led_state
 /* Initializes the LEDs (all off). Call first, so later error indications work. */
 int status_led_init(void);
 
-/* Sets the RGB LED to 'state'. */
+/* Shows 'state' on the RGB LED, and restarts the flash timeout. */
 void status_led_show(enum status_led_state state);
 
-/* Turns the red LED on, leaving the others as they are. Cleared by the next status_led_show(). */
+/* Adds red to the flashes, and restarts the flash timeout. Cleared by the next status_led_show(). */
 void status_led_error(void);
 
-/* Blinks the red LED 'count' times (blocking), then leaves it on. */
+/* Blinks the red LED 'count' times (blocking), then adds red to the flashes. */
 void status_led_error_blink(int count);
 
 /* Turns the green LED on or off. For the boot jingle. */

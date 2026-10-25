@@ -20,6 +20,31 @@ config HACOAP_BOOT_DELAY_MS
 	int "Delay at the start of main() (ms)"
 	default 2150
 
+config HACOAP_STATUS_LED_TIMEOUT_S
+	int "How long the RGB LED shows a state (s)"
+	range 0 86400
+	default 300
+	help
+	  The RGB LED shows the network state (and errors) as a short flash
+	  every 5 s. It stops this long after the last change, to save power
+	  when the network stays down. 0 flashes for as long as the state lasts.
+
+config HACOAP_MCUMGR_POLL_PERIOD_MS
+	int "Thread poll period while mcumgr is in use (ms)"
+	range 10 10000
+	default 100
+	help
+	  A sleepy device receives a message only when it polls its parent, so
+	  with a long CONFIG_OPENTHREAD_POLL_PERIOD every mcumgr request (each
+	  chunk of an image upload) would wait up to a full period. The device
+	  polls at this period from the first mcumgr request until
+	  HACOAP_MCUMGR_POLL_TIMEOUT_S after the last one.
+
+config HACOAP_MCUMGR_POLL_TIMEOUT_S
+	int "Return to the normal poll period after this long without mcumgr requests (s)"
+	range 1 3600
+	default 30
+
 menu "Pump"
 
 config HACOAP_PUMP_DEFAULT_DURATION
@@ -44,7 +69,7 @@ menu "Sensors"
 config HACOAP_SENSOR_SAMPLE_PERIOD_S
 	int "Sensor sampling period (s)"
 	range 10 86400
-	default 300
+	default 900
 	help
 	  The sensors are sampled at boot and then every period, from the system
 	  work queue. The 'data' resource returns the latest samples, so a CoAP

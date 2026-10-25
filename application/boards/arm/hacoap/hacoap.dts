@@ -125,8 +125,12 @@
 	status = "okay";
 };
 
+/* The user button (S1, P1.13) uses the PORT event (sense) rather than a GPIOTE IN
+ * channel, which keeps the high-frequency clock running in sleep.
+ */
 &gpio1 {
 	status = "okay";
+	sense-edge-mask = <(1 << 13)>;
 };
 
 /* Disabled by default: an enabled UARTE keeps its receiver running, which costs
