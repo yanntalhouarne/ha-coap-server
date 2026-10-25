@@ -1,12 +1,15 @@
 # Fleet manager downloads: builds the packaged app for each OS and, for a tag named
 # manager-v<version> (for example manager-v0.2.0), publishes them as a GitHub release with
 # the notes from manager/CHANGELOG.md. Run by hand (Actions → Fleet manager release → Run
-# workflow), it only builds the packages, as artifacts, without a release.
+# workflow, once this file is on the default branch), or after a change to this file on the
+# fleet-manager branch, it only builds the packages, as artifacts, without a release.
 name: Fleet manager release
 
 on:
   push:
     tags: ["manager-v*"]
+    branches: [fleet-manager]
+    paths: [".github/workflows/manager-release.yml"]
   workflow_dispatch:
 
 jobs:
