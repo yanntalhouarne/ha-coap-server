@@ -21,10 +21,12 @@ This project is meant to be run on the [ha-coap-pcb](https://github.com/yanntalh
 - **Main config**: `prj.conf`
 - **Kconfig fragments**: `overlay-mtd.conf`
 - **Devicetree overlays**: `boards/usb.overlay`
-- **CMake arguments**:
-  ```
-  -DBOARD_ROOT="<path to this repo>/application"
-  ```
+- **Board root**: `CMakeLists.txt` adds `application/` to `BOARD_ROOT`, so the `hacoap` board is found without extra CMake arguments.
+
+In VS Code, install the nRF Connect for VS Code Extension Pack, then add a build configuration for `application` with board `hacoap`, the files above (plus `overlay-udp.conf` for over-the-air updates) and build directory `build`. From a terminal:
+```
+west build -b hacoap -d application/build application -- -DEXTRA_CONF_FILE="overlay-mtd.conf;overlay-udp.conf" -DDTC_OVERLAY_FILE=boards/usb.overlay
+```
 
 Optional fragments and overlays:
 
