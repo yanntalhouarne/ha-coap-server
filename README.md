@@ -310,6 +310,7 @@ Older versions of this repository had a Thread network key and network name in `
 | `application/boards/*.overlay`, `application/overlay-*.conf` | Add-ons for the [variants](#variants) |
 | `application/local.conf.example` | Template for `application/local.conf`, your private settings (not in git) |
 | `application/keys/` | Your signing key, created by `scripts/keygen` (not in git) |
+| `application/tests/unit/` | Unit tests of the firmware's logic, run on a PC |
 | `scripts/` | Setup, key generation, build and firmware update scripts |
 | `firmware-updater/` | Web interface for batch updates |
 | `docs/` | Schematic, code and power reviews (PDF) |
@@ -331,6 +332,18 @@ Older versions of this repository had a Thread network key and network name in `
 CoAP handlers run in the OpenThread thread and must not block: anything slow (like sampling the sensors) runs elsewhere and the handler returns cached data.
 
 To add a CoAP resource, add a row to the `resources` table in `coap_resources.c` with its URI, the requests it accepts and a handler, then a callback in `struct coap_resources_handlers` if it needs application data.
+
+### Unit tests
+The firmware's logic is tested on a PC, without a board: the CoAP API, the pump, the sensor conversions, the status LED patterns, the mcumgr polling, SRP names and the startup sequence. Each test compiles one real source file from `src/` against small fake versions of the Zephyr and OpenThread APIs (`application/tests/unit/fakes/`), with the same Kconfig values as the firmware build.
+
+```
+python application/tests/unit/run.py              # all tests
+python application/tests/unit/run.py test_pump    # one test file
+```
+
+They need a C compiler: gcc or clang if you have one, otherwise Zig's, installed with `python -m pip install ziglang` (works on Windows, macOS and Linux). CI runs them on all three systems, with sanitizers on Linux and macOS.
+
+To test a new module, add `application/tests/unit/test_<module>.c`: include the source file (`#include "../../src/<module>.c"`, which also gives access to its `static` functions), fake the other modules it calls, and add fakes to `fakes/fake.h` and `fakes/fakes.c` for any new Zephyr or OpenThread function.
 
 ### Logs
 Build the `usb-logging` variant and open the second USB serial port, or `uart-console` and use the J4 UART (115200 baud). Log levels are set in `overlay-logging.conf` (`CONFIG_COAP_SERVER_LOG_LEVEL_*` for the application, `CONFIG_COAP_RESOURCES_LOG_LEVEL_*` for the CoAP layer).
