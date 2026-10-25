@@ -69,6 +69,11 @@ Invoke-Checked "Fetching the SDK into external/ (west update)" {
 }
 
 Write-Host ""
-Write-Host "Setup done. Build the firmware with:"
+Write-Host "Setup done."
+if (-not (Test-Path (Join-Path $repo "application\keys\mcuboot-signing-key.pem"))) {
+    Write-Host "For boards you deploy, create your signing key (scripts\keygen.ps1) and your PSKd"
+    Write-Host "(copy application\local.conf.example to application\local.conf). See the README."
+}
+Write-Host "Build the firmware with:"
 Write-Host "    powershell -ExecutionPolicy Bypass -File scripts\build.ps1"
 Write-Host "or open the repository in VS Code with the nRF Connect extension."

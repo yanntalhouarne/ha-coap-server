@@ -49,4 +49,9 @@ echo "==> Fetching the SDK into external/ (west update)"
 "$NRFUTIL" toolchain-manager launch --ncs-version "$NCS_VERSION" --chdir "$REPO" -- west update --narrow -o=--depth=1
 
 echo
-echo "Setup done. Build the firmware with: scripts/build.sh"
+echo "Setup done."
+if [ ! -e "$REPO/application/keys/mcuboot-signing-key.pem" ]; then
+    echo "For boards you deploy, create your signing key (scripts/keygen.sh) and your PSKd"
+    echo "(copy application/local.conf.example to application/local.conf). See the README."
+fi
+echo "Build the firmware with: scripts/build.sh"

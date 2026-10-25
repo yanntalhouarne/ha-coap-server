@@ -17,12 +17,13 @@ The firmware runs on the [ha-coap-pcb](https://github.com/yanntalhouarne/ha-coap
 
 Contents:
 [Building](#️-building) ·
-[First flash](#-first-flash-swd) ·
+[Flashing](#-flashing-over-swd) ·
 [Joining a network](#-joining-a-thread-network) ·
 [CoAP API](#-coap-api) ·
 [LEDs and sounds](#-leds-and-sounds) ·
 [Configuration](#️-configuration) ·
 [Firmware updates](#-firmware-updates) ·
+[Security](#-security) ·
 [Development](#-development) ·
 [Troubleshooting](#-troubleshooting)
 
@@ -42,7 +43,8 @@ The only prerequisite is [Git](https://git-scm.com/). Everything else is install
    - Windows (PowerShell): `powershell -ExecutionPolicy Bypass -File scripts\setup.ps1`
    - Linux: `scripts/setup.sh`
    - macOS: install [nRF Util](https://www.nordicsemi.com/Products/Development-tools/nRF-Util) first, then `scripts/setup.sh`
-3. **Build** the production firmware (about 1–2 minutes):
+3. **Add your private settings**: a signing key and a joiner key, which stay out of git. See [Private settings](#private-settings-signing-key-and-pskd) below. This is optional for a test build, but needed for boards you deploy.
+4. **Build** the production firmware (about 1–2 minutes):
    - Windows (PowerShell): `powershell -ExecutionPolicy Bypass -File scripts\build.ps1`
    - Linux/macOS: `scripts/build.sh`
 
@@ -50,9 +52,29 @@ The only prerequisite is [Git](https://git-scm.com/). Everything else is install
 
 The result is in `application/build/zephyr/`:
 - `app_update.bin`: the signed update image, for USB or over-the-air updates with mcumgr (the update scripts look here).
-- `merged.hex`: MCUboot plus the application, for a first flash over SWD.
+- `merged.hex`: MCUboot plus the application, for flashing over SWD.
+
+Then [flash the board](#-flashing-over-swd) once over SWD, [join it to your Thread network](#-joining-a-thread-network), and use [firmware updates](#-firmware-updates) from then on.
 
 Run the setup script again after pulling a change to `application/west.yml` (a new SDK pin). It skips whatever is already installed.
+
+### Private settings: signing key and PSKd
+Two values must not be public, so they live in files that git ignores. Every build (scripts, VS Code or `west`) picks them up automatically:
+
+| File | What it is | Without it |
+|---|---|---|
+| `application/keys/mcuboot-signing-key.pem` | Your private MCUboot signing key. MCUboot is built with its public half and only boots images signed with it. | The build uses MCUboot's public development key (with a warning). Anyone can sign images for such a board. |
+| `application/local.conf` | Private Kconfig settings, merged after `prj.conf`. Mainly your joiner PSKd (`CONFIG_OPENTHREAD_JOINER_PSKD`). | The build uses the public PSKd `J01NU5` (with a warning). |
+
+To create them:
+1. **Signing key**, once for all your boards:
+   - Windows: `powershell -ExecutionPolicy Bypass -File scripts\keygen.ps1`
+   - Linux/macOS: `scripts/keygen.sh`
+
+   The script creates an ECDSA P-256 key and refuses to overwrite an existing one. **Back the key up** (password manager, encrypted drive). Your boards only accept updates signed with it: if it's lost, every board needs a reflash over SWD. To keep the key somewhere else, set the environment variable `HACOAP_SIGNING_KEY` to its path.
+2. **PSKd**: copy `application/local.conf.example` to `application/local.conf` and set your own `CONFIG_OPENTHREAD_JOINER_PSKD`: 6 to 32 characters, A–Z and 0–9, without I, O, Q and Z. The build stops if it's invalid.
+
+On another PC, copy both files into the same places in the clone.
 
 ### Variants
 `prj.conf` is the production firmware: Thread sleepy end device, with firmware updates over USB and over Thread (mcumgr on UDP port 1337). The other variants add to it:
@@ -83,39 +105,45 @@ west build -p -d application/build application
 The board defaults to `hacoap`, and `CMakeLists.txt` adds `application/` to the board roots, so no other arguments are needed.
 
 ### Continuous integration
-`.github/workflows/build.yml` runs `scripts/setup.sh` and builds every variant on each push and pull request, so a change that breaks a clean build is caught right away. The production `app_update.bin` and `merged.hex` are attached to each run as artifacts (Actions tab → the run → Artifacts).
+`.github/workflows/build.yml` runs `scripts/setup.sh` and builds every variant on each push and pull request, so a change that breaks a clean build is caught right away. The production `app_update.bin` and `merged.hex` are attached to each run as artifacts (Actions tab → the run → Artifacts). CI has no private key, so these are signed with the public development key: boards flashed with your key reject them. Build the images you deploy yourself.
 
-## 🔌 First flash (SWD)
+## 🔌 Flashing over SWD
 
-A new board, or one whose bootloader needs replacing, is flashed over SWD through the Tag-Connect footprint on the ACN52840 module. You need a J-Link (or an nRF52/nRF53 DK used as a programmer), plus SEGGER J-Link Software and Nordic's [nRF Command Line Tools](https://www.nordicsemi.com/Products/Development-tools/nRF-Command-Line-Tools) (`nrfjprog`).
+Flash over SWD to put a bootloader on a new board, or to replace one (for example, the first time you use your own signing key). Use the Tag-Connect footprint on the ACN52840 module. You need a J-Link (or an nRF52/nRF53 DK used as a programmer), plus SEGGER J-Link Software and Nordic's [nRF Command Line Tools](https://www.nordicsemi.com/Products/Development-tools/nRF-Command-Line-Tools) (`nrfjprog`).
 
 From a toolchain shell, after building:
-```
-west flash -d application/build --erase
-```
-or directly: `nrfjprog --program application/build/zephyr/merged.hex --chiperase --verify --reset`.
 
-`--erase` / `--chiperase` wipes the whole chip, including the stored Thread network credentials, so the board has to [join a network](#-joining-a-thread-network) again afterwards. After the first flash, use [firmware updates](#-firmware-updates) instead: they keep the credentials.
+| Board | Command | Thread credentials |
+|---|---|---|
+| New board, or a full reset | `west flash -d application/build --erase` | Erased: [join the network](#-joining-a-thread-network) afterwards |
+| Already on your network, getting a new bootloader or key | `west flash -d application/build` | Kept: only the flash pages in the image are erased |
+
+Without `west`: `nrfjprog --program application/build/zephyr/merged.hex --chiperase --verify --reset` (or `--sectorerase` instead of `--chiperase` to keep the credentials).
+
+Both write MCUboot and the application together, so the bootloader and the image always match. After that, use [firmware updates](#-firmware-updates).
+
+**Moving existing boards to your own key.** Boards flashed before you created a key run a bootloader that only trusts the public development key, and boards with your key's bootloader only trust your key. A key change can't go through mcumgr. Flash each board once over SWD with a build signed with your key (second row above). From then on, USB and over-the-air updates work as long as you sign with the same key.
 
 ## 🧵 Joining a Thread network
 
-The device joins with Thread commissioning: at boot, if it has no network credentials, it starts the **Joiner** with the pre-shared key `J01NU5` (`CONFIG_OPENTHREAD_JOINER_PSKD` in `prj.conf`).
+The device joins with Thread commissioning: at boot, if it has no network credentials, it starts the **Joiner** with its pre-shared key (PSKd). That's the value of `CONFIG_OPENTHREAD_JOINER_PSKD` in your `application/local.conf`, or the public `J01NU5` without it. The Thread network key itself comes from the border router when the device joins; no network credentials are built into the firmware.
 
-1. On the border router, start a commissioner and allow joiners:
+1. On the border router, start a commissioner and allow joiners with your PSKd:
    ```
    ot-ctl commissioner start
-   ot-ctl commissioner joiner add * J01NU5
+   ot-ctl commissioner joiner add * <your PSKd>
    ```
    On a standalone OTBR, run these as they are. With the Home Assistant OpenThread Border Router add-on, `ot-ctl` runs inside the add-on's container. From a shell on the Home Assistant host (on Home Assistant OS, the *Advanced SSH & Web Terminal* add-on with protection mode off), find the container's name, then prefix each command with `docker exec <name>`:
    ```
    docker ps --format '{{.Names}}' | grep -i openthread    # usually addon_core_openthread_border_router
    docker exec addon_core_openthread_border_router ot-ctl commissioner start
-   docker exec addon_core_openthread_border_router ot-ctl commissioner joiner add * J01NU5
+   docker exec addon_core_openthread_border_router ot-ctl commissioner joiner add * <your PSKd>
    ```
 2. Reset or power-cycle the board. The joiner only runs at boot, so start the commissioner first. Joining can take a minute or two.
 3. Once attached, the device registers with SRP (blue LED, then three beeps) and the ha-coap integration discovers it.
+4. **Stop the commissioner** as soon as the device has joined, so nothing else can join with the PSKd: `ot-ctl commissioner stop` (with the `docker exec` prefix on Home Assistant). The joiner entry also expires on its own after 120 s.
 
-The credentials are stored in flash and survive resets and firmware updates. A board only forgets them with a full chip erase.
+The credentials are stored in flash and survive resets, firmware updates and SWD flashing without `--erase`. A board only forgets them with a full chip erase.
 
 ## 📨 CoAP API
 
@@ -183,11 +211,12 @@ The application's settings are Kconfig options, declared in `application/Kconfig
 Standard Zephyr and OpenThread options work the same way, for example `CONFIG_OPENTHREAD_POLL_PERIOD` or `CONFIG_BOARD_ENABLE_DCDC`.
 
 ### Setting a value
-If an option is set in several places, the later one wins: the default in `Kconfig`, then `prj.conf`, then a variant's `.conf` files, then the command line.
+If an option is set in several places, the later one wins: the default in `Kconfig`, then `prj.conf`, then `local.conf` and a variant's `.conf` files, then the command line.
 
 | To change it… | Do this |
 |---|---|
 | For every build | Add a line to `application/prj.conf`: `CONFIG_HACOAP_SENSOR_SAMPLE_PERIOD_S=900` |
+| For every build, privately | Add it to `application/local.conf` (not in git, see [Private settings](#private-settings-signing-key-and-pskd)) |
 | For one build | `scripts\build.ps1 battery "-DCONFIG_HACOAP_SENSOR_SAMPLE_PERIOD_S=900"` or `scripts/build.sh battery -DCONFIG_HACOAP_SENSOR_SAMPLE_PERIOD_S=900`. In PowerShell, quote arguments that contain a dot or a semicolon. |
 | In VS Code | In the build configuration, add it under extra CMake arguments, or put it in a `.conf` file and add that under Kconfig fragments |
 | For a group of boards | Put your lines in a file such as `application/greenhouse.conf` and pass `-DEXTRA_CONF_FILE=greenhouse.conf` |
@@ -201,7 +230,7 @@ Values that aren't meant to change between builds, like the buzzer tones or whic
 
 ## 📲 Firmware updates
 
-Updates go through MCUboot with [mcumgr](https://github.com/apache/mynewt-mcumgr-cli), over USB or over Thread. Install the mcumgr CLI with `go install github.com/apache/mynewt-mcumgr-cli/mcumgr@latest`, or with `scripts/install-dependencies.sh` on Linux.
+Updates go through MCUboot with [mcumgr](https://github.com/apache/mynewt-mcumgr-cli), over USB or over Thread. A board only installs images signed with the same key as its bootloader: build updates on a PC that has your [signing key](#private-settings-signing-key-and-pskd). Install the mcumgr CLI with `go install github.com/apache/mynewt-mcumgr-cli/mcumgr@latest`, or with `scripts/install-dependencies.sh` on Linux.
 
 ### Connections
 - **USB**: the board's first USB serial port (the `usb-logging` variant adds a second one for the console).
@@ -232,9 +261,24 @@ If the new image doesn't work and the device resets (including through the watch
 - `firmware-updater/`: a web interface that drives `mcumgr-update-all.sh`. See [firmware-updater/README.md](firmware-updater/README.md).
 
 ### Keeping updates compatible
-- MCUboot itself can't be updated with mcumgr. A new application image must fit the bootloader already on the boards: keep the same signing key and partition layout, and don't change MCUboot's size or the partition settings.
-- Images are signed with MCUboot's **default development key**, which anyone with the SDK has. Anyone who can reach UDP port 1337 on the Thread network, or the USB port, could install firmware. Moving to a private key needs a bootloader reflash over SWD on every board.
+- MCUboot itself can't be updated with mcumgr. A new application image must fit the bootloader already on the boards: sign it with the same key, keep the same partition layout, and don't change MCUboot's size or the partition settings.
+- An image signed with a different key uploads without error, but MCUboot refuses to boot it and keeps running the old image. To change keys, reflash over SWD (see [Moving existing boards to your own key](#-flashing-over-swd)).
 - An update only works over the air if the image running on the device includes mcumgr over UDP. All variants of this firmware do.
+
+## 🔒 Security
+
+What protects a deployed device, and what's left open:
+
+| Area | Protection | What's still open |
+|---|---|---|
+| Thread network | Joined by commissioning: the network key comes from the border router and is stored on the device, never in the firmware or this repository | Anyone in radio range who knows the PSKd can join while the commissioner accepts joiners. Use your own PSKd ([Private settings](#private-settings-signing-key-and-pskd)) and stop the commissioner after each join. |
+| Firmware updates | MCUboot only boots images signed with your private key | mcumgr itself has no authentication: anyone who can reach UDP port 1337 (any device on your LAN, through the border router) or the USB port can upload or erase the update slot, or reset the device. They can't make it run their firmware. |
+| CoAP API | None | Anyone on your LAN can read the sensors and run the pump (9 s at a time). Put IoT devices on a separate network or VLAN if that matters. |
+| Physical access | None | Flash read-back protection is off: with a debugger on the SWD pads, someone can read the stored Thread network key. |
+
+Keep `application/keys/` and `application/local.conf` out of git (`.gitignore` already does), and back up the signing key.
+
+Older versions of this repository had a Thread network key and network name in `prj.conf`, and they're still in the git history. If your Thread network uses one of them (network names `Yann-OpenThread` or `ha-coap-ot`), create a new network in Home Assistant and commission your devices again.
 
 ## 🧑‍💻 Development
 
@@ -244,7 +288,9 @@ If the new image doesn't work and the device resets (including through the watch
 | `application/` | The Zephyr application, and the west manifest (`west.yml`) |
 | `application/boards/arm/hacoap/` | The `hacoap` board definition (devicetree, pin control, defconfig) |
 | `application/boards/*.overlay`, `application/overlay-*.conf` | Add-ons for the [variants](#variants) |
-| `scripts/` | Setup, build and firmware update scripts |
+| `application/local.conf.example` | Template for `application/local.conf`, your private settings (not in git) |
+| `application/keys/` | Your signing key, created by `scripts/keygen` (not in git) |
+| `scripts/` | Setup, key generation, build and firmware update scripts |
 | `firmware-updater/` | Web interface for batch updates |
 | `docs/` | Schematic, code and power reviews (PDF) |
 | `external/` | The SDK, fetched by the setup script (not in git) |
@@ -290,8 +336,11 @@ The SDK comes from forks of `sdk-nrf` and `sdk-zephyr`, pinned to exact commits 
 | PowerShell says running scripts is disabled | Run the scripts as `powershell -ExecutionPolicy Bypass -File scripts\setup.ps1` |
 | Errors about paths or files that don't exist, on Windows | The clone path is too long: clone to a short path like `C:\dev\ha-coap-server` |
 | `Aborting due to Kconfig warnings` | A configuration value is out of range or unknown; the lines above it name the option |
+| `CONFIG_OPENTHREAD_JOINER_PSKD (...) must be 6 to 32 characters` | Fix the PSKd in `application/local.conf`: A–Z and 0–9 only, without I, O, Q and Z |
+| Warning: `No private signing key` | This build is signed with the public development key. Create your key with `scripts/keygen`, or copy it into `application/keys/` from your backup. |
 | `region 'FLASH' overflowed` | The image doesn't fit the 483 KB application slot. `-Og` (`overlay-debug.conf`) and logging don't fit together. |
-| The device doesn't join (red + green stay on) | Start the commissioner on the border router, then reset the board: the joiner only runs at boot |
+| The device doesn't join (red + green stay on) | Start the commissioner on the border router with the PSKd the firmware was built with, then reset the board: the joiner only runs at boot |
+| An update uploads fine, but the board keeps running the old firmware | The image is signed with a different key than the board's bootloader (for example, built on a PC without your key, or taken from CI). Rebuild with your key. |
 | Blue LED stays on | SRP registration isn't succeeding: check that the border router is running, and look for a duplicate host name |
 | A new board doesn't boot after the first flash | Try with DC/DC disabled (see [Board notes](#board-notes)) |
 | mcumgr over UDP times out | Check the route to the Thread network from the PC (`ping -6 <device address>`), and that the device is attached |

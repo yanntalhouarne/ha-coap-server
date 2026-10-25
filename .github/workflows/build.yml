@@ -40,10 +40,12 @@ jobs:
       - name: Build debug
         run: scripts/build.sh debug
 
-      - name: Upload the production firmware
+      # CI has no private signing key, so these images are signed with MCUboot's public
+      # development key: boards whose bootloader has a private key reject them.
+      - name: Upload the production firmware (development key)
         uses: actions/upload-artifact@v7
         with:
-          name: hacoap-firmware-${{ github.sha }}
+          name: hacoap-firmware-devkey-${{ github.sha }}
           path: |
             application/build/zephyr/app_update.bin
             application/build/zephyr/merged.hex
