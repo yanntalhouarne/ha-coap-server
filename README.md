@@ -101,8 +101,14 @@ or directly: `nrfjprog --program application/build/zephyr/merged.hex --chiperase
 
 The device joins with Thread commissioning: at boot, if it has no network credentials, it starts the **Joiner** with the pre-shared key `J01NU5` (`CONFIG_OPENTHREAD_JOINER_PSKD` in `prj.conf`).
 
-1. On the border router, start a commissioner and allow joiners. With the Home Assistant OpenThread Border Router add-on, run these on the Home Assistant host (or `ot-ctl` directly on a standalone OTBR):
+1. On the border router, start a commissioner and allow joiners:
    ```
+   ot-ctl commissioner start
+   ot-ctl commissioner joiner add * J01NU5
+   ```
+   On a standalone OTBR, run these as they are. With the Home Assistant OpenThread Border Router add-on, `ot-ctl` runs inside the add-on's container. From a shell on the Home Assistant host (on Home Assistant OS, the *Advanced SSH & Web Terminal* add-on with protection mode off), find the container's name, then prefix each command with `docker exec <name>`:
+   ```
+   docker ps --format '{{.Names}}' | grep -i openthread    # usually addon_core_openthread_border_router
    docker exec addon_core_openthread_border_router ot-ctl commissioner start
    docker exec addon_core_openthread_border_router ot-ctl commissioner joiner add * J01NU5
    ```

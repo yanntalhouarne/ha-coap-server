@@ -11,12 +11,12 @@ jobs:
     runs-on: ubuntu-22.04
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # The toolchain (~/ncs/toolchains), the nrfutil commands (~/.nrfutil) and the SDK
       # (external/) only change with the setup script or the SDK pin.
       - name: Cache toolchain and SDK
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             ~/.local/bin/nrfutil
@@ -41,7 +41,7 @@ jobs:
         run: scripts/build.sh debug
 
       - name: Upload the production firmware
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: hacoap-firmware-${{ github.sha }}
           path: |
