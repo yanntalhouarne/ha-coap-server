@@ -364,6 +364,7 @@ The SDK comes from forks of `sdk-nrf` and `sdk-zephyr`, pinned to exact commits 
 
 - [ ] Implement dynamic SRP client hostname reassignment when duplicates are detected
 - [x] Refactor SRP functionality out of `coap_server.c` (now `src/srp.c`)
+- [ ] Fleet manager: one app for Windows, macOS and Linux to find, commission, configure, build and update the whole fleet. See the plan in `docs/FLEET-MANAGER-PLAN.md` on the `fleet-manager` branch, and `docs/NEXT-STEPS.md` for where things stand
 
 ## 📚 References
 
