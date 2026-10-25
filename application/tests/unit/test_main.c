@@ -1,0 +1,364 @@
+/*
+ * test_main.c
+ *
+ * Startup, and the glue between the CoAP API, the modules and OpenThread (src/main.c).
+ */
+
+#include "test.h"
+
+/* main.c's main() becomes firmware_main(), so this file can have its own. */
+#define main firmware_main
+#include "../../src/main.c"
+#undef main
+
+/* ---------------------------------------------------------------- fake modules */
+
+static struct
+{
+	int led_inits;
+	enum status_led_state led_state;
+	int led_shows;
+	int led_errors;
+	int led_error_blinks[4]; // calls per blink count
+	bool pump_running;
+	uint8_t pump_duration;
+	int pump_set_durations;
+	uint8_t pump_set_duration_arg;
+	int pump_starts;
+	int pump_stops;
+	uint32_t missing_sensors;
+	struct sensors_data sensors;
+	int sounds[3];        // plays per enum buzzer_sound
+	bool buzzer_busy;     // buzzer_play() fails
+	int srp_starts;
+	const char *srp_device_id;
+	srp_registered_cb_t srp_registered;
+	int mcumgr_poll_inits;
+	const struct coap_resources_handlers *coap;
+	int calls;            // order of the init calls
+	int led_init_call;
+	int coap_init_call;
+} fake_mod;
+
+int status_led_init(void)
+{
+	fake_mod.led_inits++;
+	fake_mod.led_init_call = ++fake_mod.calls;
+	return 0;
+}
+
+void status_led_show(enum status_led_state state)
+{
+	fake_mod.led_state = state;
+	fake_mod.led_shows++;
+}
+
+void status_led_error(void)
+{
+	fake_mod.led_errors++;
+}
+
+void status_led_error_blink(int count)
+{
+	fake_mod.led_error_blinks[count]++;
+}
+
+void status_led_boot(bool on)
+{
+	(void)on;
+}
+
+void status_led_user(bool on)
+{
+	(void)on;
+}
+
+int pump_init(void)
+{
+	++fake_mod.calls;
+	return 0;
+}
+
+void pump_start(void)
+{
+	fake_mod.pump_starts++;
+	fake_mod.pump_running = true;
+}
+
+void pump_stop(void)
+{
+	fake_mod.pump_stops++;
+	fake_mod.pump_running = false;
+}
+
+bool pump_is_running(void)
+{
+	return fake_mod.pump_running;
+}
+
+uint8_t pump_get_duration(void)
+{
+	return fake_mod.pump_duration;
+}
+
+bool pump_set_duration(uint8_t seconds)
+{
+	fake_mod.pump_set_durations++;
+	fake_mod.pump_set_duration_arg = seconds;
+	if ((seconds < 1) || (seconds > CONFIG_HACOAP_PUMP_MAX_DURATION))
+	{
+		return false;
+	}
+	fake_mod.pump_duration = seconds;
+	return true;
+}
+
+uint32_t sensors_init(void)
+{
+	++fake_mod.calls;
+	return fake_mod.missing_sensors;
+}
+
+void sensors_start(void)
+{
+}
+
+struct sensors_data sensors_get(void)
+{
+	return fake_mod.sensors;
+}
+
+bool buzzer_play(enum buzzer_sound sound)
+{
+	if (fake_mod.buzzer_busy)
+	{
+		return false;
+	}
+	fake_mod.sounds[sound]++;
+	return true;
+}
+
+void buzzer_tone(uint32_t frequency_khz, bool on)
+{
+	(void)frequency_khz;
+	(void)on;
+}
+
+void srp_start(otInstance *instance, const char *device_id, srp_registered_cb_t on_registered)
+{
+	(void)instance;
+	fake_mod.srp_starts++;
+	fake_mod.srp_device_id = device_id;
+	fake_mod.srp_registered = on_registered;
+}
+
+int watchdog_init(void)
+{
+	return 0;
+}
+
+void mcumgr_poll_init(void)
+{
+	fake_mod.mcumgr_poll_inits++;
+}
+
+int coap_resources_init(const struct coap_resources_handlers *handlers)
+{
+	fake_mod.coap = handlers;
+	fake_mod.coap_init_call = ++fake_mod.calls;
+	return 0;
+}
+
+/* ---------------------------------------------------------------- helpers */
+
+static void reset_module(void)
+{
+	memset(&fake_mod, 0, sizeof(fake_mod));
+	fake_mod.pump_duration = CONFIG_HACOAP_PUMP_DEFAULT_DURATION;
+	fake_mod.led_state = STATUS_LED_OFF;
+}
+
+static void role_changes_to(otDeviceRole role)
+{
+	fake_device_role = role;
+	fake_ot_state_cb->state_changed_cb(OT_CHANGED_THREAD_ROLE, &fake_ot_context, NULL);
+}
+
+/* ---------------------------------------------------------------- tests */
+
+static void test_boot_reaches_openthread(void)
+{
+	reset_module();
+	fake_ficr.DEVICEID[0] = 0x1a2b3c4d;
+	CHECK_EQ(firmware_main(), 0);
+
+	CHECK_EQ(fake_mod.led_init_call, 1); // first, so that error indications work
+	CHECK(fake_mod.coap == &coap_handlers);
+	CHECK_EQ(fake_mod.mcumgr_poll_inits, 1);
+	CHECK(fake_ot_state_cb != NULL);
+	CHECK(fake_ot_started);
+	CHECK_STR(device_id, "1a2b3c4d");
+	CHECK_EQ(fake_mod.led_errors, 0);
+}
+
+static void test_boot_continues_with_missing_sensors(void)
+{
+	reset_module();
+	fake_mod.missing_sensors = SENSOR_AIR | SENSOR_FUEL_GAUGE | SENSOR_SOIL;
+	CHECK_EQ(firmware_main(), 0);
+
+	CHECK_EQ(fake_mod.led_error_blinks[2], 1); // air sensor
+	CHECK_EQ(fake_mod.led_error_blinks[3], 1); // fuel gauge
+	CHECK_EQ(fake_mod.led_errors, 1);          // soil sensor
+	CHECK(fake_ot_started);
+}
+
+static void test_usb_already_enabled_is_not_an_error(void)
+{
+	if (!IS_ENABLED(CONFIG_USB_DEVICE_STACK))
+	{
+		return;
+	}
+	reset_module();
+	fake_usb_enable_ret = -EALREADY;
+	CHECK_EQ(firmware_main(), 0);
+	CHECK_EQ(fake_mod.led_errors, 0);
+
+	reset_module();
+	fake_usb_enable_ret = -EIO;
+	CHECK_EQ(firmware_main(), 0);
+	CHECK_EQ(fake_mod.led_errors, 1);
+	CHECK(fake_ot_started);
+}
+
+static void test_pumpdc_put_takes_one_ascii_digit(void)
+{
+	reset_module();
+	CHECK_EQ(on_pumpdc_put('5'), 5);
+	CHECK_EQ(fake_mod.pump_set_duration_arg, 5);
+
+	/* Not digits: ignored, and the run time stays */
+	CHECK_EQ(on_pumpdc_put('a'), 5);
+	CHECK_EQ(on_pumpdc_put(':'), 5);
+	CHECK_EQ(on_pumpdc_put('/'), 5);
+	CHECK_EQ(on_pumpdc_put(5), 5);
+	CHECK_EQ(fake_mod.pump_set_durations, 1);
+
+	/* '0' is a digit, but out of range for the pump */
+	CHECK_EQ(on_pumpdc_put('0'), 5);
+	CHECK_EQ(fake_mod.pump_set_duration_arg, 0);
+	CHECK_EQ(on_pumpdc_get(), 5);
+}
+
+static void test_pump_put_only_acts_on_a_change(void)
+{
+	reset_module();
+	on_pump_put(PUMP_CMD_ON);
+	on_pump_put(PUMP_CMD_ON); // already running: not restarted
+	CHECK_EQ(fake_mod.pump_starts, 1);
+	CHECK(on_pump_get());
+
+	on_pump_put(PUMP_CMD_OFF);
+	on_pump_put(PUMP_CMD_OFF);
+	CHECK_EQ(fake_mod.pump_stops, 1);
+	CHECK(!on_pump_get());
+
+	on_pump_put('x');
+	CHECK_EQ(fake_mod.pump_starts, 1);
+	CHECK_EQ(fake_mod.pump_stops, 1);
+}
+
+static void test_data_sends_the_temperature_as_a_signed_byte(void)
+{
+	uint8_t payload[DATA_PAYLOAD_SIZE];
+
+	reset_module();
+	fake_mod.sensors = (struct sensors_data){.soil_moisture = 42, .battery_soc = 87, .air_humidity = 55, .temperature = -5};
+	on_data_get(payload);
+	CHECK_EQ(payload[0], 42);
+	CHECK_EQ(payload[1], 87);
+	CHECK_EQ(payload[2], 55);
+	CHECK_EQ(payload[3], 251); // -5 as int8_t, which the integration decodes
+}
+
+static void test_info_reports_versions_and_device_id(void)
+{
+	struct coap_info info;
+
+	reset_module();
+	fake_ficr.DEVICEID[0] = 0xdeadbeef;
+	(void)firmware_main();
+	info = on_info_get();
+	CHECK_STR(info.fw_version, GIT_COMMIT_HASH);
+	CHECK_STR(info.hw_version, CONFIG_HACOAP_HW_VERSION);
+	CHECK_STR(info.device_id, "deadbeef");
+}
+
+static void test_ping_beeps_only_on_1(void)
+{
+	reset_module();
+	on_ping_put(PING_CMD_QUIET);
+	CHECK_EQ(fake_mod.sounds[BUZZER_PING], 0);
+	on_ping_put(PING_CMD_BUZZER);
+	CHECK_EQ(fake_mod.sounds[BUZZER_PING], 1);
+}
+
+/* One test, in order: srp_start() and the first-registration sound happen once per boot. */
+static void test_thread_states_and_srp(void)
+{
+	reset_module();
+	fake_ficr.DEVICEID[0] = 0x1a2b3c4d;
+	(void)firmware_main();
+
+	role_changes_to(OT_DEVICE_ROLE_DETACHED);
+	CHECK_EQ(fake_mod.led_state, STATUS_LED_NO_NETWORK);
+
+	/* Other changes are ignored. */
+	fake_mod.led_shows = 0;
+	fake_device_role = OT_DEVICE_ROLE_CHILD;
+	fake_ot_state_cb->state_changed_cb(BIT(0), &fake_ot_context, NULL);
+	CHECK_EQ(fake_mod.led_shows, 0);
+
+	/* Attached: SRP starts, with the device ID */
+	role_changes_to(OT_DEVICE_ROLE_CHILD);
+	CHECK_EQ(fake_mod.led_state, STATUS_LED_SRP_PENDING);
+	CHECK_EQ(fake_mod.srp_starts, 1);
+	CHECK_STR(fake_mod.srp_device_id, "1a2b3c4d");
+
+	/* First registration, while another sound plays: retried at the next one */
+	fake_mod.buzzer_busy = true;
+	fake_mod.srp_registered();
+	CHECK_EQ(fake_mod.led_state, STATUS_LED_OFF);
+	CHECK_EQ(fake_mod.sounds[BUZZER_CONNECTED], 0);
+	fake_mod.buzzer_busy = false;
+	fake_mod.srp_registered();
+	CHECK_EQ(fake_mod.sounds[BUZZER_CONNECTED], 1);
+	fake_mod.srp_registered();
+	CHECK_EQ(fake_mod.sounds[BUZZER_CONNECTED], 1); // only the first time
+
+	/* Detached and back: SRP keeps running on its own, so it isn't started again */
+	role_changes_to(OT_DEVICE_ROLE_DETACHED);
+	CHECK_EQ(fake_mod.led_state, STATUS_LED_NO_NETWORK);
+	role_changes_to(OT_DEVICE_ROLE_ROUTER);
+	CHECK_EQ(fake_mod.led_state, STATUS_LED_OFF);
+	CHECK_EQ(fake_mod.srp_starts, 1);
+
+	role_changes_to(OT_DEVICE_ROLE_DISABLED);
+	CHECK_EQ(fake_mod.led_state, STATUS_LED_NO_NETWORK);
+	role_changes_to(OT_DEVICE_ROLE_LEADER);
+	CHECK_EQ(fake_mod.led_state, STATUS_LED_OFF);
+}
+
+int main(void)
+{
+	RUN_TEST(test_boot_reaches_openthread);
+	RUN_TEST(test_boot_continues_with_missing_sensors);
+	RUN_TEST(test_usb_already_enabled_is_not_an_error);
+	RUN_TEST(test_pumpdc_put_takes_one_ascii_digit);
+	RUN_TEST(test_pump_put_only_acts_on_a_change);
+	RUN_TEST(test_data_sends_the_temperature_as_a_signed_byte);
+	RUN_TEST(test_info_reports_versions_and_device_id);
+	RUN_TEST(test_ping_beeps_only_on_1);
+	RUN_TEST(test_thread_states_and_srp);
+	return TEST_RESULT();
+}

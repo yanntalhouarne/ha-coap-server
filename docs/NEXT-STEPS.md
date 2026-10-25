@@ -12,7 +12,7 @@ Start here when you come back. To pick up with Claude, say: *"Resume from docs/N
 
 The order to go in:
 1. Test PR #6 on the boards (steps 1–3 below), then merge it.
-2. Answer the open decisions (step 4).
+2. Answer the decisions still open (step 4).
 3. Start the fleet manager (step 6).
 
 ## 1. Before you start
@@ -59,21 +59,32 @@ If an update uploads but the board keeps its old firmware, the image was signed 
 - [ ] One over-the-air update: upload, `image test`, reset, `image confirm` (README → Firmware updates)
 - [ ] Home Assistant shows data, and the pump and ping work
 
+Then the power changes from step 4:
+- [ ] The RGB LED flashes (every 5 s) instead of staying on, and stops flashing 5 minutes after the last state change. A board that can't reach the network shows red + green flashes.
+- [ ] A pump command from Home Assistant still works. It can take up to 3 s now.
+- [ ] Pressing S1 still starts the pump (its interrupt changed).
+- [ ] A second over-the-air update, from a board already running this firmware, is about as fast as before. The first update, from older firmware, is slower: the old image doesn't speed up its polling.
+- [ ] No resets or odd behavior over a day (the C library changed to save RAM power).
+- [ ] Below 0 °C, Home Assistant shows a negative temperature, once [ha-coap-integration PR #10](https://github.com/yanntalhouarne/ha-coap-integration/pull/10) is merged and HA reloaded.
+
 If a board doesn't boot, try a build with DC/DC disabled (README → Board notes).
 
-## 4. Decide (no boards needed)
-- **Status LEDs:** a short flash instead of solid colors, turned off after a few minutes, or left as they are?
-- **Thread poll period:** 1 s (now) or 2–3 s? Longer saves current but slows pump commands.
-- **Sensor sampling:** every 5 min (now) or 15 min?
-- **Button interrupt and RAM power-down:** both small power fixes, recommended.
-- **Integration:** fix negative temperatures in `ha-coap-integration` (they show as 251 °C)?
-- **Rev 2.1 hardware:** remove the power LED and rework SW2/R36, about 1.3 mA together?
+## 4. Decisions
+Decided on 2026-10-25, and done on `claude` (not on a board yet):
+- **Status LEDs:** a 20 ms flash every 5 s instead of solid colors, stopping 5 minutes after the last change (`CONFIG_HACOAP_STATUS_LED_TIMEOUT_S`).
+- **Thread poll period:** 3 s (was 1 s). The device now polls every 100 ms while mcumgr is in use, so over-the-air updates aren't three times slower.
+- **Sensor sampling:** every 15 min (was 5 min), matching how often Home Assistant asks.
+- **Button interrupt and RAM power-down:** both done. RAM power-down needs the full C library, which adds 13 KB of flash (now 82% full).
+- **Integration:** negative temperatures fixed in [ha-coap-integration PR #10](https://github.com/yanntalhouarne/ha-coap-integration/pull/10). Merge it when you're ready.
+
+Still to decide:
+- **Rev 2.1 hardware:** remove the power LED and rework SW2/R36, about 1.3 mA together? These loads are about 100 times what the firmware draws, so they decide the battery life.
 - **Current measurement:** do you have a PPK2 or a µA meter? It would confirm the power review's estimates.
 
 Details: `docs/firmware/ha-coap-node-power-review.pdf`.
 
 ## 5. Finish PR #6
-Share the test results and decisions with Claude. It updates the code review's status table and PR #6, then you merge PR #6 into `main`.
+Share the test results and decisions with Claude. It updates the status tables in the code and power reviews and PR #6, then you merge PR #6 into `main`.
 
 ## 6. Then: the fleet manager
 

@@ -11,6 +11,7 @@
  *     - sensors:        soil, battery and air readings, sampled periodically
  *     - buzzer:         beep patterns
  *     - status_led:     network and error states on the module's RGB LED
+ *     - mcumgr_poll:    faster Thread polling while mcumgr updates the device
  *     - srp:            service registration, so Home Assistant can discover the device
  *     - watchdog:       resets the SoC if the system work queue stalls
  */
@@ -26,6 +27,7 @@
 
 #include "buzzer.h"
 #include "coap_resources.h"
+#include "mcumgr_poll.h"
 #include "pump.h"
 #include "sensors.h"
 #include "srp.h"
@@ -250,6 +252,7 @@ int main(void)
 
 	snprintf(device_id, sizeof(device_id), "%x", (unsigned int)NRF_FICR->DEVICEID[0]);
 	sensors_start();
+	mcumgr_poll_init();
 
 	LOG_INF("Start CoAP-server sample");
 	ret = coap_resources_init(&coap_handlers);
