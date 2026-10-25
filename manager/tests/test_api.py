@@ -30,7 +30,7 @@ def services(tmp_path, found):
 
 @pytest.fixture
 async def client(services):
-    app = create_app(services, auto_refresh=False)
+    app = create_app(services, background_tasks=False)
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://127.0.0.1:8710") as client:
         yield client
 
@@ -156,7 +156,7 @@ async def test_settings_are_saved(client, services):
 
 def test_events_websocket(services):
     services.db.upsert_device("1a2b3c4d", address="127.0.0.1")
-    app = create_app(services, auto_refresh=False)
+    app = create_app(services, background_tasks=False)
     with TestClient(app, base_url="http://127.0.0.1:8710") as client:
         with client.websocket_connect("ws://127.0.0.1:8710/api/events", headers={"Origin": "http://127.0.0.1:8710"}) as socket:
             client.patch("/api/devices/1a2b3c4d", json={"name": "mint"}, headers=CHANGE)
@@ -165,7 +165,7 @@ def test_events_websocket(services):
 
 
 def test_events_refuse_other_origins(services):
-    app = create_app(services, auto_refresh=False)
+    app = create_app(services, background_tasks=False)
     with TestClient(app, base_url="http://127.0.0.1:8710") as client:
         with pytest.raises(Exception):
             with client.websocket_connect("ws://127.0.0.1:8710/api/events", headers={"Origin": "http://evil.example"}) as socket:

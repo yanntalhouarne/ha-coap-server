@@ -1,0 +1,93 @@
+# Fleet manager downloads: builds the packaged app for each OS and, for a tag named
+# manager-v<version> (for example manager-v0.2.0), publishes them as a GitHub release with
+# the notes from manager/CHANGELOG.md. Run by hand (Actions → Fleet manager release → Run
+# workflow), it only builds the packages, as artifacts, without a release.
+name: Fleet manager release
+
+on:
+  push:
+    tags: ["manager-v*"]
+  workflow_dispatch:
+
+jobs:
+  package:
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - { os: windows-latest, platform: windows-x64 }
+          - { os: macos-latest, platform: macos-arm64 }
+          # Built on the oldest supported Ubuntu, so it also runs on older Linux systems
+          - { os: ubuntu-22.04, platform: linux-x64 }
+          - { os: ubuntu-22.04-arm, platform: linux-arm64 }  # Raspberry Pi 4/5 with a 64-bit OS
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+        working-directory: manager
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Install the requirements
+        run: python -m pip install --quiet -r requirements-dev.txt
+
+      - name: Check the version
+        id: version
+        run: |
+          version=$(python -c "import hacoap_manager; print(hacoap_manager.__version__)")
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          if [[ "$GITHUB_REF" == refs/tags/manager-v* && "${GITHUB_REF_NAME#manager-v}" != "$version" ]]; then
+            echo "The tag ($GITHUB_REF_NAME) doesn't match hacoap_manager/__init__.py ($version)"
+            exit 1
+          fi
+
+      - name: Test
+        run: python -m pytest -q
+
+      - name: Package
+        run: |
+          python build_app.py
+          name="hacoap-manager-${{ steps.version.outputs.version }}-${{ matrix.platform }}"
+          mkdir -p "release/$name"
+          cp dist/hacoap-manager* "release/$name/"
+          cp README.md CHANGELOG.md "release/$name/"
+          exe=$(ls release/$name/hacoap-manager* | head -n 1)
+          "$exe" --self-test
+          cd release
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            7z a -tzip "$name.zip" "$name" > /dev/null
+          else
+            zip -qr "$name.zip" "$name"   # zip keeps the executable bit
+          fi
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: package-${{ matrix.platform }}
+          path: manager/release/*.zip
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/manager-v')
+    needs: package
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/download-artifact@v8
+        with:
+          path: packages
+          merge-multiple: true
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version="${GITHUB_REF_NAME#manager-v}"
+          python3 manager/release_notes.py "$version" > notes.md
+          gh release create "$GITHUB_REF_NAME" packages/*.zip --title "Fleet manager $version" --notes-file notes.md

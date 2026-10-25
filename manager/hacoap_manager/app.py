@@ -14,12 +14,12 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 import re
 
-from . import __version__, config, discovery, kconfig, mcuboot, serial_ports
+from . import __version__, backup, config, discovery, kconfig, mcuboot, serial_ports
 from .builds import VARIANTS, BuildError, BuildRunner
 from .db import Database
 from .events import EventBus
@@ -74,12 +74,14 @@ def _bad_request(exc):
     return HTTPException(status_code=400, detail=str(exc))
 
 
-def create_app(services, auto_refresh=True):
+def create_app(services, background_tasks=True):
     @contextlib.asynccontextmanager
     async def lifespan(app):
-        task = asyncio.create_task(_auto_refresh(services)) if auto_refresh else None
+        tasks = []
+        if background_tasks:
+            tasks = [asyncio.create_task(_auto_refresh(services)), asyncio.create_task(_auto_backup(services))]
         yield
-        if task is not None:
+        for task in tasks:
             task.cancel()
         services.db.close()
 
@@ -340,6 +342,56 @@ def create_app(services, auto_refresh=True):
     async def history(device_id: str = None):
         return s.db.updates(device_id)
 
+    # ------------------------------------------------------------ backups and export
+
+    def _busy():
+        if s.updates.running_job() is not None or s.builds.running():
+            raise _bad_request("Wait for the update or build in progress to finish")
+
+    @app.get("/api/backup")
+    async def download_backup():
+        data = await asyncio.to_thread(backup.create_backup, s.data_dir, s.db, s.settings)
+        name = f"hacoap-manager-backup-{time.strftime('%Y%m%d-%H%M')}.zip"
+        return Response(data, media_type="application/zip",
+                        headers={"Content-Disposition": f'attachment; filename="{name}"'})
+
+    @app.get("/api/backups")
+    async def saved_backups():
+        return backup.list_backups(s.data_dir)
+
+    @app.get("/api/backups/{name}")
+    async def saved_backup(name: str):
+        path = backup.backup_path(s.data_dir, name)
+        if path is None:
+            raise HTTPException(404, "Unknown backup")
+        return FileResponse(path, media_type="application/zip", filename=path.name)
+
+    @app.post("/api/restore")
+    async def restore(request: Request):
+        _busy()
+        data = await request.body()
+        try:
+            result = await asyncio.to_thread(backup.restore_backup, data, s.data_dir, s.db, s.settings)
+        except backup.BackupError as exc:
+            raise _bad_request(exc)
+        s.events.publish("devices")
+        return result
+
+    @app.get("/api/devices.csv")
+    async def devices_csv():
+        name = f"hacoap-devices-{time.strftime('%Y%m%d')}.csv"
+        return Response(backup.devices_csv(s.db), media_type="text/csv",
+                        headers={"Content-Disposition": f'attachment; filename="{name}"'})
+
+    @app.post("/api/devices/import")
+    async def import_devices(request: Request):
+        try:
+            result = backup.import_devices_csv((await request.body()).decode("utf-8", errors="replace"), s.db)
+        except backup.BackupError as exc:
+            raise _bad_request(exc)
+        s.events.publish("devices")
+        return result
+
     # ------------------------------------------------------------ live events
 
     @app.websocket("/api/events")
@@ -377,3 +429,13 @@ async def _auto_refresh(services):
                 await services.inventory.refresh_all()
             except Exception:  # noqa: BLE001 - try again next time
                 log.exception("automatic refresh")
+
+
+async def _auto_backup(services):
+    """A backup a day in the data folder's backups/, while the app runs."""
+    while True:
+        try:
+            await asyncio.to_thread(backup.auto_backup, services.data_dir, services.db, services.settings)
+        except Exception:  # noqa: BLE001 - try again later
+            log.exception("automatic backup")
+        await asyncio.sleep(6 * 3600)

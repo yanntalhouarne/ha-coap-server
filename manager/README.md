@@ -4,13 +4,15 @@ One application for Windows, macOS and Linux to look after a fleet of ha-coap de
 
 It runs on your PC when you need it. The app starts a small web server that only this computer can reach (`http://127.0.0.1:8710`), and opens it in your browser. Close the app's window and everything stops.
 
-**Status (2026-10-25):** the plan's phases 0–2 and 5 (foundations, inventory, updates, builds). Tested against a simulated device on Windows, macOS and Linux, and a real firmware build on Windows, **not yet with real boards**. Runtime settings and commissioning come later (see [the plan](../docs/FLEET-MANAGER-PLAN.md)). Until it has updated real boards, keep using the scripts or the web updater for anything important.
+**Status (2026-10-25):** version 0.1.0, the plan's phases 0–2, 5 and 6 (foundations, inventory, updates, builds, backups and releases). Tested against a simulated device on Windows, macOS and Linux, and a real firmware build on Windows, **not yet with real boards**. Runtime settings and commissioning come later (see [the plan](../docs/FLEET-MANAGER-PLAN.md)). Until it has updated real boards, keep using the scripts or the web updater for anything important.
 
 ## Getting it
 
-**Packaged app** (no Python needed): every push builds it in GitHub Actions.
-1. Open the repository's **Actions** tab, then the latest **Build firmware** run on the `fleet-manager` branch.
-2. Under **Artifacts**, download `hacoap-manager-Windows-…`, `-macOS-…` or `-Linux-…` and unzip it.
+**Packaged app** (no Python needed):
+1. Download it:
+   - **From a release** (once one is published): the repository's **Releases** page, a `Fleet manager <version>` release, then `hacoap-manager-<version>-<platform>.zip` for Windows (x64), macOS (Apple silicon), Linux (x64) or Linux on ARM (Raspberry Pi 4/5 with a 64-bit OS).
+   - **From the latest build of the branch:** the repository's **Actions** tab, the latest **Build firmware** run on the `fleet-manager` branch, then under **Artifacts** `hacoap-manager-Windows-…`, `-macOS-…` or `-Linux-…`.
+2. Unzip it.
 3. Run it:
    - **Windows:** double-click `hacoap-manager.exe`. SmartScreen warns about an unknown publisher the first time: **More info → Run anyway**.
    - **macOS:** in Terminal, `chmod +x hacoap-manager && xattr -d com.apple.quarantine hacoap-manager && ./hacoap-manager`. Gatekeeper otherwise blocks an unsigned download.
@@ -71,7 +73,7 @@ While a device is being updated, it polls its parent every 100 ms instead of eve
 **Settings.** Ports, timeouts, the mcumgr packet size (1280 bytes over the air, which fits Thread without IP fragmentation; 512 over USB), how long a device counts as online, and the automatic refresh.
 
 ## Where things are kept
-Everything is in one folder: the SQLite database (devices, images, history), the images themselves, and `settings.json`.
+Everything is in one folder: the SQLite database (devices, images, update history, build profiles and builds), the images themselves, `settings.json`, and `backups/`.
 
 | OS | Folder |
 |---|---|
@@ -79,7 +81,16 @@ Everything is in one folder: the SQLite database (devices, images, history), the
 | macOS | `~/Library/Application Support/hacoap-manager` |
 | Linux | `~/.local/share/hacoap-manager` |
 
-Copy that folder to back up or move your inventory. `--data-dir` or the `HACOAP_MANAGER_DATA` environment variable use another one.
+`--data-dir` or the `HACOAP_MANAGER_DATA` environment variable use another one.
+
+## Backups, and moving to another PC
+On the **Settings** tab, under **Data**:
+- **Download a backup:** one `.zip` with everything (devices, images, history, build profiles, settings).
+- **Restore:** replaces all the app's data with a backup's. The data it replaces is saved first, as `backups/before-restore-<date>.zip`.
+- **Saved backups:** the app makes one automatically once a day while it runs, and keeps the last 7, in the data folder's `backups/`. They're listed there, to download.
+- **Export devices (CSV)** gives a spreadsheet of the devices; **Import** adds or updates devices from one, by device ID (name, address and notes; the rest comes from the devices). Handy to label many boards at once.
+
+To move to another PC: download a backup, install the app there, and restore it. Your signing key and PSKd aren't in the backup (the app never holds them): copy `application/keys/` and `application/local.conf` separately, as for building.
 
 ## Security
 - The server listens on 127.0.0.1 only: other computers on the network can't open it. Using it from another PC is a possible later addition (see the plan).
@@ -106,6 +117,7 @@ Then, in the app, add a device at address `127.0.0.1`. To try an update, add any
 | `hacoap_manager/discovery.py` | mDNS/DNS-SD (zeroconf) |
 | `hacoap_manager/mcuboot.py` | Reads an image's version and hash |
 | `hacoap_manager/builds.py`, `kconfig.py` | Build profiles (from `application/Kconfig`), checks, the build runner |
+| `hacoap_manager/backup.py` | Backups, restore, the device list as CSV |
 | `hacoap_manager/db.py` | The SQLite database |
 | `hacoap_manager/simdevice.py` | The simulated device |
 | `hacoap_manager/static/` | The page: plain JavaScript and Bootstrap, no build step, nothing loaded from the internet |
@@ -118,5 +130,12 @@ python build_app.py         # the packaged app, in dist/
 dist/hacoap-manager --self-test
 ```
 CI runs the tests and builds the packaged app on Windows, macOS and Linux (job `fleet-manager`).
+
+**Making a release:**
+1. Set the new version in `hacoap_manager/__init__.py` (`__version__`), and describe the changes under a `## <version>` heading at the top of `CHANGELOG.md`.
+2. Commit, then tag and push: `git tag manager-v<version>` and `git push origin manager-v<version>`.
+3. The **Fleet manager release** workflow tests and packages the app for Windows, macOS, Linux and Linux on ARM, checks that the tag matches the version, and publishes a GitHub release with the zips and the changelog section.
+
+The same workflow can be run by hand from the Actions tab: it then only builds the packages, without a release.
 
 **Not covered by the tests yet:** USB serial (there's no simulated serial port), and real Thread timing. Both need a board. Builds are tested with a stand-in for the build script (CI has no nRF toolchain for the app's tests); a real build through the app was checked on Windows.

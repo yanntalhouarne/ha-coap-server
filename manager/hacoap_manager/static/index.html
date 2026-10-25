@@ -6,6 +6,7 @@
   <title>HA-CoAP Fleet Manager</title>
   <link rel="stylesheet" href="/static/vendor/bootstrap.min.css">
   <link rel="stylesheet" href="/static/style.css">
+  <link rel="icon" href="/static/icon.svg" type="image/svg+xml">
 </head>
 <body>
 <nav class="navbar navbar-expand bg-body-tertiary border-bottom mb-3">
@@ -209,9 +210,40 @@
         </div>
       </div>
       <div class="col-lg-6">
-        <div class="card">
+        <div class="card mb-4">
           <div class="card-header">About</div>
           <div class="card-body"><dl class="row mb-0" id="about"></dl></div>
+        </div>
+        <div class="card">
+          <div class="card-header">Data</div>
+          <div class="card-body">
+            <h6>Backup</h6>
+            <p class="small text-body-secondary">One file with everything: devices, images, update history, build profiles
+              and settings. Use it to keep a copy, or to move the app to another PC.</p>
+            <div class="d-flex flex-wrap gap-2 mb-2">
+              <a class="btn btn-outline-primary" href="/api/backup" download>Download a backup</a>
+            </div>
+            <div class="input-group mb-1">
+              <input class="form-control" type="file" id="restore-file" accept=".zip">
+              <button class="btn btn-outline-danger" id="restore">Restore</button>
+            </div>
+            <div class="form-text mb-3">Restoring replaces all the app's data with the backup's. The current data is
+              saved as a backup first.</div>
+            <h6>Saved backups</h6>
+            <p class="small text-body-secondary mb-1">A backup is made automatically once a day while the app runs
+              (the last 7 are kept), and before every restore.</p>
+            <ul class="list-unstyled small" id="backups"></ul>
+            <h6 class="mt-3">Device list</h6>
+            <p class="small text-body-secondary">A spreadsheet (CSV) of the devices. Importing one adds or updates devices
+              by their device ID: name, address and notes; the rest comes from the devices.</p>
+            <div class="d-flex flex-wrap gap-2 mb-2">
+              <a class="btn btn-outline-primary" href="/api/devices.csv" download>Export devices (CSV)</a>
+            </div>
+            <div class="input-group">
+              <input class="form-control" type="file" id="import-file" accept=".csv">
+              <button class="btn btn-outline-secondary" id="import-devices">Import</button>
+            </div>
+          </div>
         </div>
       </div>
     </div>
@@ -222,7 +254,7 @@
 <div class="modal fade" id="slots-modal" tabindex="-1">
   <div class="modal-dialog modal-lg">
     <div class="modal-content">
-      <div class="modal-header"><h5 class="modal-title">Firmware slots</h5>
+      <div class="modal-header"><h5 class="modal-title" id="slots-title">Firmware slots</h5>
         <button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
       <div class="modal-body" id="slots-body"></div>
     </div>

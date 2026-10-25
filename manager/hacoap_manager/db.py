@@ -84,6 +84,22 @@ class Database:
         with self._lock:
             self._conn.close()
 
+    def backup_to(self, path):
+        """A consistent copy of the database, in a new file."""
+        with self._lock:
+            target = sqlite3.connect(str(path))
+            self._conn.backup(target)
+            target.close()
+
+    def restore_from(self, path):
+        """Replaces this database's contents with another database file's."""
+        with self._lock:
+            source = sqlite3.connect(str(path))
+            source.backup(self._conn)
+            source.close()
+            self._conn.executescript(SCHEMA)  # tables a backup from an older version lacks
+            self._conn.commit()
+
     def _query(self, sql, params=()):
         with self._lock:
             return [dict(row) for row in self._conn.execute(sql, params).fetchall()]

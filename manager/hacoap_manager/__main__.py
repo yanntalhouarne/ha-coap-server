@@ -61,7 +61,7 @@ def main(argv=None):
 
     port = _free_port(0 if args.self_test else args.port)
     services = create_services(data_dir)
-    app = create_app(services, auto_refresh=not args.self_test)
+    app = create_app(services, background_tasks=not args.self_test)
     url = f"http://127.0.0.1:{port}/"
     server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning"))
 

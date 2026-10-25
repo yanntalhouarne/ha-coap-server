@@ -79,7 +79,7 @@ function showTab(name) {
   if (name === 'updates') { renderUpdateForm(); loadHistory(); }
   if (name === 'images') { loadImages(); loadBuilds(); }
   if (name === 'builds') loadBuildsTab();
-  if (name === 'settings') loadSettings();
+  if (name === 'settings') { loadSettings(); loadBackups(); }
 }
 
 for (const link of document.querySelectorAll('#tabs .nav-link')) {
@@ -104,7 +104,22 @@ function renderDevices() {
   const count = state.selected.size;
   document.getElementById('selection-count').textContent = count ? `${count} selected` : '';
   document.getElementById('update-selected').disabled = count === 0;
-  document.getElementById('select-all').checked = count > 0 && count === state.devices.size;
+  async function showDeviceHistory(device) {
+  document.getElementById('slots-title').textContent = `Update history: ${deviceName(device)}`;
+  const body = document.getElementById('slots-body');
+  body.replaceChildren(h('p', {}, 'Loading…'));
+  bootstrap.Modal.getOrCreateInstance(document.getElementById('slots-modal')).show();
+  const rows = await api('GET', `/api/history?device_id=${encodeURIComponent(device.device_id)}`);
+  body.replaceChildren(rows.length ? h('table', { class: 'table table-sm' },
+    h('thead', {}, h('tr', {}, ['Finished', 'Via', 'Image', 'Result', 'Message'].map((t) => h('th', {}, t)))),
+    h('tbody', {}, rows.map((r) => h('tr', {}, h('td', { class: 'small' }, when(r.finished)),
+      h('td', {}, r.transport === 'serial' ? 'USB' : 'air'), h('td', {}, `v${r.image_version} · ${shortHash(r.image_hash)}`),
+      h('td', {}, h('span', { class: `badge text-bg-${statusClass[r.result] || 'secondary'}` }, r.result)),
+      h('td', { class: 'small' }, r.message)))))
+    : h('p', { class: 'text-body-secondary' }, 'No updates yet.'));
+}
+
+document.getElementById('select-all').checked = count > 0 && count === state.devices.size;
 }
 
 function deviceRow(device) {
@@ -133,6 +148,7 @@ function deviceRow(device) {
       h('ul', { class: 'dropdown-menu dropdown-menu-end' },
         action('Refresh', refreshDevice),
         action('Firmware slots', showSlots),
+        action('Update history', showDeviceHistory),
         action('Beep (ping)', pingDevice),
         action('Rename…', renameDevice),
         action('Notes…', editNotes),
@@ -171,6 +187,7 @@ async function removeDevice(device) {
 
 async function showSlots(device) {
   const body = document.getElementById('slots-body');
+  document.getElementById('slots-title').textContent = `Firmware slots: ${deviceName(device)}`;
   body.replaceChildren(h('p', {}, `Asking ${deviceName(device)} over the air… A sleepy device can take a few seconds to answer.`));
   bootstrap.Modal.getOrCreateInstance(document.getElementById('slots-modal')).show();
   let slots;
@@ -594,6 +611,32 @@ async function loadSettings() {
   document.getElementById('about').replaceChildren(...about.flatMap(([k, v]) =>
     [h('dt', { class: 'col-sm-4' }, k), h('dd', { class: 'col-sm-8 text-break' }, v)]));
 }
+
+async function loadBackups() {
+  const backups = await api('GET', '/api/backups');
+  document.getElementById('backups').replaceChildren(...(backups.length ? backups.map((b) => h('li', {},
+    h('a', { href: `/api/backups/${encodeURIComponent(b.name)}`, download: b.name }, b.name),
+    ` · ${Math.round(b.size / 1024)} KB · ${when(b.created)}`)) : [h('li', { class: 'text-body-secondary' }, 'None yet')]));
+}
+
+document.getElementById('restore').addEventListener('click', (event) => busy(event.target, async () => {
+  const file = document.getElementById('restore-file').files[0];
+  if (!file) return notify('Choose a backup file first', 'warning');
+  if (!confirm(`Replace all the app's data with ${file.name}? The current data is saved as a backup first.`)) return;
+  const result = await api('POST', '/api/restore', file);
+  notify(`Restored ${result.devices} device(s) and ${result.images} image(s). The previous data is in ${result.safety_backup}.`, 'success', 10000);
+  document.getElementById('restore-file').value = '';
+  await Promise.all([loadDevices(), loadBackups(), loadSettings()]);
+}));
+
+document.getElementById('import-devices').addEventListener('click', (event) => busy(event.target, async () => {
+  const file = document.getElementById('import-file').files[0];
+  if (!file) return notify('Choose a CSV file first', 'warning');
+  const result = await api('POST', '/api/devices/import', file);
+  notify(`Imported: ${result.added} added, ${result.updated} updated`, 'success');
+  document.getElementById('import-file').value = '';
+  loadDevices();
+}));
 
 document.getElementById('settings-form').addEventListener('submit', (event) => {
   event.preventDefault();
