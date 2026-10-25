@@ -58,53 +58,9 @@ print(digest.hex())
 EOF
 )
 
-# Fake mcumgr: logs its calls, prints mcumgr-style output, keeps slot hashes in files
+# Fake mcumgr (see fake-mcumgr)
 mkdir -p "$TMP/bin"
-cat > "$TMP/bin/mcumgr" <<'EOF'
-#!/bin/bash
-state="$FAKE_MCUMGR_STATE"
-echo "$*" >> "$state/calls.log"
-[ "$1" = "conn" ] && exit 0
-shift 2 # -c <connection>
-case "$1 $2" in
-    "image list")
-        echo "Images:"
-        echo " image=0 slot=0"
-        echo "    flags: active confirmed"
-        echo "    hash: $(cat "$state/slot0")"
-        if [ -f "$state/slot1" ]; then
-            echo " image=0 slot=1"
-            echo "    flags:"
-            echo "    hash: $(cat "$state/slot1")"
-        fi
-        ;;
-    "image upload")
-        echo $$ > "$state/upload.pid"
-        case "$FAKE_MCUMGR_MODE" in
-            stall)
-                printf '0 B / 100.00 KiB\r12.00 KiB / 100.00 KiB\r'
-                # On Windows, hang in a native program, like the real mcumgr.exe
-                case "$(uname -s)" in
-                    MINGW*|MSYS*|CYGWIN*) ping -n 60 127.0.0.1 > /dev/null ;;
-                    *) sleep 60 ;;
-                esac
-                ;;
-            fail)
-                echo "Error: NMP timeout"
-                exit 1
-                ;;
-        esac
-        for value in 25.00 50.00 75.00 100.00; do
-            printf '%s KiB / 100.00 KiB\r' "$value"
-            sleep 0.2
-        done
-        echo ""
-        echo "Done"
-        cp "$state/new" "$state/slot1"
-        ;;
-esac
-exit 0
-EOF
+cp "$SCRIPTS_DIR/tests/fake-mcumgr" "$TMP/bin/mcumgr"
 chmod +x "$TMP/bin/mcumgr"
 export PATH="$TMP/bin:$PATH"
 

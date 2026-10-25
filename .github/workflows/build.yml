@@ -77,3 +77,32 @@ jobs:
           "$py" -m pip install --quiet zeroconf pyserial
           "$py" scripts/hacoap_tools.py discover --timeout 2
           "$py" scripts/hacoap_tools.py serial-ports
+
+  # The web updater: pages, API and a full update through the script with a fake mcumgr,
+  # plus a JavaScript syntax check of every page (Node.js is preinstalled on the runners).
+  web-updater:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    defaults:
+      run:
+        shell: bash
+        working-directory: firmware-updater
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install the requirements
+        run: |
+          python3 -m venv "$RUNNER_TEMP/venv" || python -m venv "$RUNNER_TEMP/venv"
+          py="$RUNNER_TEMP/venv/bin/python"
+          [ -x "$py" ] || py="$RUNNER_TEMP/venv/Scripts/python.exe"
+          "$py" -m pip install --quiet -r requirements.txt
+          echo "PY=$py" >> "$GITHUB_ENV"
+
+      - name: Test the web updater
+        run: |
+          node --version
+          "$PY" tests/test_web_updater.py

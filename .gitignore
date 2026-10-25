@@ -10,3 +10,6 @@ firmware-updater/*.log
 application/local.conf
 application/keys/
 *.pem
+
+# Python virtual environments (firmware-updater setup)
+.venv/

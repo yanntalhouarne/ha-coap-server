@@ -1,21 +1,79 @@
 #!/usr/bin/env python3
-# update_manager.py - Interface between web app and update script
+# update_manager.py - Interface between the web app and the update scripts
+#
+# Works on Linux, macOS and Windows. Updates run scripts/mcumgr-update-all.sh in its
+# non-interactive mode (with Git Bash on Windows); discovery, image hashes and the like use
+# scripts/hacoap_tools.py, the same helper the scripts use.
 
-import os
-import subprocess
-import threading
-import re
 import logging
+import os
+import platform
+import re
+import shutil
+import subprocess
+import sys
+import threading
 from datetime import datetime
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
+BASE_DIR = Path(__file__).resolve().parent
+SCRIPTS_DIR = (BASE_DIR / '..' / 'scripts').resolve()
+UPDATE_SCRIPT = SCRIPTS_DIR / 'mcumgr-update-all.sh'
+TOOLS_SCRIPT = SCRIPTS_DIR / 'hacoap_tools.py'
+
+sys.path.insert(0, str(SCRIPTS_DIR))
+import hacoap_tools  # noqa: E402
+
 # Per-run logs written by this manager: update_YYYYmmdd_HHMMSS.log
 LOG_FILE_RE = re.compile(r'^update_\d{8}_\d{6}\.log$')
+RESULT_RE = re.compile(r'RESULT (\S+) (success|skipped|failed)\b')
+DISCOVERY_TIMEOUT_S = 3
+
+
+def find_bash():
+    """Path of the bash that runs the update script, or None.
+
+    On Windows this must be Git Bash: C:\\Windows\\System32\\bash.exe starts WSL instead,
+    where mcumgr and the build directory aren't available. HACOAP_BASH overrides it."""
+    override = os.environ.get('HACOAP_BASH')
+    if override:
+        return override
+    if os.name != 'nt':
+        return shutil.which('bash')
+
+    candidates = []
+    git = shutil.which('git')
+    if git:
+        git_root = Path(git).resolve().parent.parent  # ...\Git\cmd\git.exe -> ...\Git
+        candidates.append(git_root / 'bin' / 'bash.exe')
+    for base in (os.environ.get('ProgramFiles'), os.environ.get('ProgramW6432'),
+                 os.environ.get('ProgramFiles(x86)'),
+                 os.path.join(os.environ.get('LOCALAPPDATA', ''), 'Programs')):
+        if base:
+            candidates.append(Path(base) / 'Git' / 'bin' / 'bash.exe')
+    for candidate in candidates:
+        if candidate.is_file():
+            return str(candidate)
+
+    bash = shutil.which('bash')
+    if bash and 'system32' not in bash.lower():
+        return bash
+    return None
+
+
+def discovery_method():
+    """'zeroconf', 'avahi-browse' or None, as used by hacoap_tools.py discover."""
+    try:
+        import zeroconf  # noqa: F401
+        return 'zeroconf'
+    except ImportError:
+        return 'avahi-browse' if shutil.which('avahi-browse') else None
 
 
 class UpdateManager:
-    """Manager class for handling firmware updates"""
+    """Runs discovery and updates, and tracks the status of the current update"""
 
     def __init__(self, socketio, log_dir):
         """Initialize update manager with socket.io for real-time updates"""
@@ -25,15 +83,10 @@ class UpdateManager:
         self._lock = threading.Lock()
         self.update_in_progress = False
         self.current_status = self._new_status("idle", 0)
-        self.devices_list = []
+        self.update_script = str(UPDATE_SCRIPT)
 
-        # Use the script from the parent directory's scripts folder
-        self.script_dir = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '../scripts'))
-        self.update_script = os.path.join(self.script_dir, 'mcumgr-update-all.sh')
-
-        # Ensure the script directory exists
-        if not os.path.exists(self.script_dir):
-            logger.warning(f"Script directory not found: {self.script_dir}")
+        if not UPDATE_SCRIPT.is_file():
+            logger.warning(f"Update script not found: {UPDATE_SCRIPT}")
 
     @staticmethod
     def _new_status(state, total_devices, log_file=None):
@@ -50,61 +103,60 @@ class UpdateManager:
             "last_update": datetime.now().isoformat()
         }
 
+    # ------------------------------------------------------------ system checks
+
+    def system_status(self):
+        """What the updater needs, and whether this computer has it"""
+        bash = find_bash()
+        return {
+            "os": platform.system(),
+            "python": platform.python_version(),
+            "update_script": UPDATE_SCRIPT.is_file(),
+            "bash": bash,
+            "mcumgr": shutil.which('mcumgr'),
+            "discovery": discovery_method(),
+            "ready": bool(UPDATE_SCRIPT.is_file() and bash and shutil.which('mcumgr')),
+        }
+
+    @staticmethod
+    def image_info(build_dir):
+        """Size, hash and build time of the update image in an (already resolved) build directory"""
+        image = os.path.join(build_dir, 'zephyr', 'app_update.bin')
+        stat = os.stat(image)
+        return {
+            "path": image,
+            "size": stat.st_size,
+            "hash": hacoap_tools.image_hash(image),
+            "modified": datetime.fromtimestamp(stat.st_mtime).isoformat(timespec='seconds'),
+        }
+
+    # ---------------------------------------------------------------- discovery
+
     def discover_devices(self):
-        """Discover available devices using avahi-browse"""
+        """Find devices with hacoap_tools.py discover.
+
+        Returns (devices, available): available is False when this computer has no
+        discovery method (no zeroconf package, and no avahi-browse)."""
         logger.info("Discovering devices...")
-        self.emit_status_update("Discovering devices...")
+        result = subprocess.run(
+            [sys.executable, str(TOOLS_SCRIPT), 'discover', '--timeout', str(DISCOVERY_TIMEOUT_S)],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding='utf-8',
+            errors='replace', timeout=DISCOVERY_TIMEOUT_S + 30)
+        if result.returncode == 3:
+            logger.warning(result.stderr.strip())
+            return [], False
+        if result.returncode != 0:
+            raise RuntimeError(result.stderr.strip() or f"discovery failed ({result.returncode})")
 
-        # Use avahi-browse to discover devices
-        try:
-            cmd = ["timeout", "3", "avahi-browse", "-r", "_ot._udp"]
-            result = subprocess.run(cmd, capture_output=True, text=True)
-            output = result.stdout
+        devices = []
+        for line in result.stdout.splitlines():
+            name, _, address = line.partition('\t')
+            if address:
+                devices.append({"name": name, "address": address, "selected": True})
+        logger.info(f"Discovered {len(devices)} devices")
+        return devices, True
 
-            # Parse the output to extract devices
-            devices = []
-            seen_devices = set()
-
-            lines = output.split('\n')
-            i = 0
-            while i < len(lines):
-                line = lines[i]
-                if "= " in line and "ha-coap" in line and "IPv6" in line:
-                    # Extract device name
-                    parts = line.split()
-                    if len(parts) >= 4:
-                        device_name = parts[3]
-
-                        # Skip if we've already seen this device
-                        if device_name in seen_devices:
-                            i += 1
-                            continue
-
-                        seen_devices.add(device_name)
-
-                        # Read the next 2 lines to get the address
-                        if i + 2 < len(lines):
-                            address_line = lines[i + 2]
-                            # Extract IPv6 address
-                            ipv6_match = re.search(r'\[fd[^\]]*\]', address_line)
-                            if ipv6_match:
-                                ipv6_address = ipv6_match.group(0).strip('[]')
-                                devices.append({
-                                    "name": device_name,
-                                    "address": ipv6_address,
-                                    "selected": True  # Default to selected
-                                })
-                i += 1
-
-            logger.info(f"Discovered {len(devices)} devices")
-            self.devices_list = devices
-            self.emit_status_update(f"Discovered {len(devices)} devices")
-            return devices
-
-        except Exception as e:
-            logger.error(f"Error discovering devices: {str(e)}")
-            self.emit_status_update(f"Error discovering devices: {str(e)}")
-            raise
+    # ------------------------------------------------------------------ updates
 
     def start_update(self, devices, build_dir, update_mode, stall_timeout):
         """Start the update process for the given (already validated) devices.
@@ -134,35 +186,42 @@ class UpdateManager:
         })
 
         try:
-            with open(os.path.join(self.log_dir, log_name), 'w') as log_file:
+            bash = find_bash()
+            if bash is None:
+                raise RuntimeError("bash not found (on Windows, install Git for Windows)")
+
+            with open(os.path.join(self.log_dir, log_name), 'w', encoding='utf-8') as log_file:
                 process = subprocess.Popen(
-                    ["bash", self.update_script],
-                    cwd=self.script_dir,
+                    [bash, str(UPDATE_SCRIPT)],
+                    cwd=str(SCRIPTS_DIR),
                     env=env,
                     stdin=subprocess.DEVNULL,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.STDOUT,
                     text=True,
+                    encoding='utf-8',
+                    errors='replace',
                     bufsize=1
                 )
 
-                # Monitor process output for progress updates
+                # Monitor process output for progress updates. Text mode also splits on the
+                # carriage returns the script uses to redraw its progress bar.
                 for line in iter(process.stdout.readline, ''):
                     line = line.rstrip()
+                    if not line:
+                        continue
                     log_file.write(line + '\n')
                     log_file.flush()
 
                     self._parse_line(line)
                     self.current_status["last_update"] = datetime.now().isoformat()
                     self.emit_status_update(line)
-                    logger.debug(line)
 
                 returncode = process.wait()
 
             # Update final status
             if returncode == 0:
                 self.current_status["state"] = "completed"
-                self.current_status["upload_progress"] = 100
                 self.emit_status_update("Update process completed")
             else:
                 self.current_status["state"] = "error"
@@ -184,13 +243,15 @@ class UpdateManager:
             self.current_status["current_device"] = device_match.group(1)
             self.current_status["upload_progress"] = 0
 
-        # Track upload progress
-        progress_match = re.search(r'(\d+\.\d+) KiB / (\d+\.\d+) KiB .* (\d+\.\d+)%', line)
+        # Track upload progress ("[PROGRESS] Upload progress: 42%")
+        progress_match = re.search(r'Upload progress: (\d+)%', line)
         if progress_match:
-            self.current_status["upload_progress"] = float(progress_match.group(3))
+            self.current_status["upload_progress"] = min(100, int(progress_match.group(1)))
+        if 'Upload completed successfully' in line:
+            self.current_status["upload_progress"] = 100
 
         # One RESULT line per device: success, skipped or failed
-        result_match = re.search(r'RESULT (\S+) (success|skipped|failed)\b', line)
+        result_match = RESULT_RE.search(line)
         if result_match:
             counter = {
                 "success": "successful_updates",
@@ -204,6 +265,8 @@ class UpdateManager:
         """Get the current update status"""
         return self.current_status
 
+    # --------------------------------------------------------------------- logs
+
     def get_log_files(self):
         """Get list of available log files, newest first"""
         log_files = [f for f in os.listdir(self.log_dir) if LOG_FILE_RE.match(f)]
@@ -216,8 +279,22 @@ class UpdateManager:
         path = os.path.join(self.log_dir, log_file)
         if not os.path.isfile(path):
             return None
-        with open(path, 'r') as f:
+        with open(path, 'r', encoding='utf-8', errors='replace') as f:
             return f.read()
+
+    def statistics(self):
+        """Totals over all update logs: one RESULT line per device update"""
+        stats = {"runs": 0, "devices": 0, "success": 0, "skipped": 0, "failed": 0, "last_run": None}
+        for log_file in self.get_log_files():
+            stats["runs"] += 1
+            for match in RESULT_RE.finditer(self.read_log(log_file) or ''):
+                stats["devices"] += 1
+                stats[match.group(2)] += 1
+        log_files = self.get_log_files()
+        if log_files:
+            mtime = os.path.getmtime(os.path.join(self.log_dir, log_files[0]))
+            stats["last_run"] = datetime.fromtimestamp(mtime).isoformat(timespec='seconds')
+        return stats
 
     def emit_status_update(self, message):
         """Emit a status update via socket.io"""

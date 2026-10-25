@@ -6,61 +6,51 @@
 <div class="row mb-4">
     <div class="col">
         <h1><i class="bi bi-speedometer2"></i> Dashboard</h1>
-        <p class="lead">Welcome to the HA-CoAP Firmware Updater web interface</p>
+        <p class="lead">Over-the-air firmware updates for HA-CoAP devices</p>
     </div>
 </div>
 
 <div class="row mb-4">
-    <div class="col-md-6">
-        <div class="card">
+    <div class="col-md-6 mb-4 mb-md-0">
+        <div class="card h-100">
             <div class="card-header bg-primary text-white">
                 <h5 class="card-title mb-0"><i class="bi bi-info-circle"></i> System Status</h5>
             </div>
-            <div class="card-body">
-                <div class="d-flex justify-content-between mb-3">
-                    <span>Update Script:</span>
-                    <span id="script-status"><i class="bi bi-hourglass"></i> Checking...</span>
-                </div>
-                <div class="d-flex justify-content-between mb-3">
-                    <span>mcumgr Tool:</span>
-                    <span id="mcumgr-status"><i class="bi bi-hourglass"></i> Checking...</span>
-                </div>
-                <div class="d-flex justify-content-between">
-                    <span>avahi-browse Tool:</span>
-                    <span id="avahi-status"><i class="bi bi-hourglass"></i> Checking...</span>
-                </div>
+            <div class="card-body" id="system-status">
+                <span class="text-muted"><i class="bi bi-hourglass"></i> Checking...</span>
             </div>
             <div class="card-footer">
                 <button id="check-dependencies" class="btn btn-sm btn-outline-primary">
-                    <i class="bi bi-arrow-repeat"></i> Check Dependencies
+                    <i class="bi bi-arrow-repeat"></i> Check Again
                 </button>
             </div>
         </div>
     </div>
 
     <div class="col-md-6">
-        <div class="card">
+        <div class="card h-100">
             <div class="card-header bg-success text-white">
                 <h5 class="card-title mb-0"><i class="bi bi-activity"></i> Update Statistics</h5>
             </div>
             <div class="card-body">
-                <div class="d-flex justify-content-between mb-3">
-                    <span>Total Updates:</span>
-                    <span id="total-updates">0</span>
+                <div class="d-flex justify-content-between mb-2">
+                    <span>Update runs:</span><span id="stat-runs">-</span>
                 </div>
-                <div class="d-flex justify-content-between mb-3">
-                    <span>Successful Updates:</span>
-                    <span id="successful-updates">0</span>
+                <div class="d-flex justify-content-between mb-2">
+                    <span>Devices updated:</span><span id="stat-success">-</span>
+                </div>
+                <div class="d-flex justify-content-between mb-2">
+                    <span>Skipped (already up to date):</span><span id="stat-skipped">-</span>
+                </div>
+                <div class="d-flex justify-content-between mb-2">
+                    <span>Failed:</span><span id="stat-failed">-</span>
                 </div>
                 <div class="d-flex justify-content-between">
-                    <span>Last Update:</span>
-                    <span id="last-update">Never</span>
+                    <span>Last run:</span><span id="stat-last-run">-</span>
                 </div>
             </div>
             <div class="card-footer">
-                <button id="refresh-stats" class="btn btn-sm btn-outline-success">
-                    <i class="bi bi-arrow-repeat"></i> Refresh Stats
-                </button>
+                <span class="text-muted small">Counted from the update logs below</span>
             </div>
         </div>
     </div>
@@ -70,11 +60,11 @@
     <div class="col-md-12">
         <div class="card">
             <div class="card-header bg-info text-white">
-                <h5 class="card-title mb-0"><i class="bi bi-file-text"></i> Recent Logs</h5>
+                <h5 class="card-title mb-0"><i class="bi bi-file-text"></i> Update Logs</h5>
             </div>
             <div class="card-body">
                 <div class="mb-3">
-                    <select id="log-file-select" class="form-select">
+                    <select id="log-file-select" class="form-select" aria-label="Log file">
                         <option value="">Loading log files...</option>
                     </select>
                 </div>
@@ -84,7 +74,7 @@
             </div>
             <div class="card-footer d-flex justify-content-between">
                 <button id="refresh-logs" class="btn btn-sm btn-outline-info">
-                    <i class="bi bi-arrow-repeat"></i> Refresh Logs
+                    <i class="bi bi-arrow-repeat"></i> Refresh
                 </button>
                 <button id="download-logs" class="btn btn-sm btn-outline-secondary">
                     <i class="bi bi-download"></i> Download Log
@@ -97,146 +87,138 @@
 
 {% block extra_js %}
 <script>
+(function() {
+    const INSTALL_HINTS = {
+        bash: {
+            Windows: 'Install Git for Windows (https://git-scm.com), which includes Git Bash.',
+            default: 'Install bash.'
+        },
+        mcumgr: {
+            default: 'Install Go, then: go install github.com/apache/mynewt-mcumgr-cli/mcumgr@latest (and add Go\'s bin folder to PATH, then restart the updater).'
+        },
+        discovery: {
+            Linux: 'Optional: sudo apt install avahi-utils, or pip install -r requirements.txt in the updater\'s environment.',
+            default: 'Optional: pip install -r requirements.txt in the updater\'s environment (installs zeroconf). Without it, add devices by address.'
+        }
+    };
+
     document.addEventListener('DOMContentLoaded', function() {
-        // Initialize dashboard components
         checkDependencies();
+        loadStats();
         loadLogFiles();
-        loadUpdateStats();
-        
-        // Set up event listeners
+
         document.getElementById('check-dependencies').addEventListener('click', checkDependencies);
-        document.getElementById('refresh-stats').addEventListener('click', loadUpdateStats);
-        document.getElementById('refresh-logs').addEventListener('click', refreshLogs);
+        document.getElementById('refresh-logs').addEventListener('click', () => { loadStats(); loadLogFiles(); });
         document.getElementById('download-logs').addEventListener('click', downloadCurrentLog);
-        document.getElementById('log-file-select').addEventListener('change', loadSelectedLog);
+        document.getElementById('log-file-select').addEventListener('change', event => loadLog(event.target.value));
     });
 
+    function hint(tool, os) {
+        return INSTALL_HINTS[tool][os] || INSTALL_HINTS[tool].default;
+    }
+
+    // One row: label, then a check mark and value, or a cross (or warning) and an install hint
+    function statusRow(label, ok, value, hintText, optional) {
+        const row = document.createElement('div');
+        row.className = 'mb-2';
+        const icon = ok ? 'bi-check-circle-fill text-success'
+                        : (optional ? 'bi-exclamation-circle-fill text-warning' : 'bi-x-circle-fill text-danger');
+        row.innerHTML = `<div class="d-flex justify-content-between"><span></span><span><i class="bi ${icon}"></i> <code></code></span></div>`;
+        row.querySelector('span').textContent = label;
+        row.querySelector('code').textContent = value;
+        if (!ok && hintText) {
+            const hintEl = document.createElement('div');
+            hintEl.className = 'small text-muted';
+            hintEl.textContent = hintText;
+            row.appendChild(hintEl);
+        }
+        return row;
+    }
+
     function checkDependencies() {
-        // This would ideally be a server-side check, but for demo we'll simulate it
-        const scriptStatus = document.getElementById('script-status');
-        const mcumgrStatus = document.getElementById('mcumgr-status');
-        const avahiStatus = document.getElementById('avahi-status');
-        
-        scriptStatus.innerHTML = '<i class="bi bi-hourglass"></i> Checking...';
-        mcumgrStatus.innerHTML = '<i class="bi bi-hourglass"></i> Checking...';
-        avahiStatus.innerHTML = '<i class="bi bi-hourglass"></i> Checking...';
-        
-        // Simulate check (in real implementation, fetch from server)
-        setTimeout(() => {
-            scriptStatus.innerHTML = '<i class="bi bi-check-circle-fill text-success"></i> Found';
-            mcumgrStatus.innerHTML = '<i class="bi bi-check-circle-fill text-success"></i> Found (version 0.5.0)';
-            avahiStatus.innerHTML = '<i class="bi bi-check-circle-fill text-success"></i> Found';
-        }, 1000);
+        const container = document.getElementById('system-status');
+        container.innerHTML = '<span class="text-muted"><i class="bi bi-hourglass"></i> Checking...</span>';
+
+        apiFetch('/api/system_status')
+            .then(s => {
+                container.innerHTML = '';
+                container.appendChild(statusRow('Update script', s.update_script, s.update_script ? 'found' : 'missing',
+                    'scripts/mcumgr-update-all.sh is missing from this repository.'));
+                container.appendChild(statusRow('bash', !!s.bash, s.bash || 'not found', hint('bash', s.os)));
+                container.appendChild(statusRow('mcumgr', !!s.mcumgr, s.mcumgr || 'not found', hint('mcumgr', s.os)));
+                container.appendChild(statusRow('Device discovery', !!s.discovery, s.discovery || 'not available',
+                    hint('discovery', s.os), true));
+                const footer = document.createElement('div');
+                footer.className = 'small text-muted mt-3';
+                footer.textContent = `${s.os}, Python ${s.python}. ` +
+                    (s.ready ? 'Ready to update devices.' : 'Install what\'s missing above before updating.');
+                container.appendChild(footer);
+            })
+            .catch(error => {
+                container.innerHTML = '<span class="text-danger"></span>';
+                container.firstChild.textContent = `Error: ${error.message}`;
+            });
     }
-    
+
+    function loadStats() {
+        apiFetch('/api/stats').then(stats => {
+            document.getElementById('stat-runs').textContent = stats.runs;
+            document.getElementById('stat-success').textContent = stats.success;
+            document.getElementById('stat-skipped').textContent = stats.skipped;
+            document.getElementById('stat-failed').textContent = stats.failed;
+            document.getElementById('stat-last-run').textContent = formatDate(stats.last_run);
+        });
+    }
+
     function loadLogFiles() {
-        fetch('/api/log_files')
-            .then(response => response.json())
+        const select = document.getElementById('log-file-select');
+        const logContent = document.getElementById('log-content');
+
+        apiFetch('/api/log_files')
             .then(data => {
-                if (data.success) {
-                    const select = document.getElementById('log-file-select');
-                    select.innerHTML = '';
-                    
-                    if (data.log_files.length === 0) {
-                        select.innerHTML = '<option value="">No log files found</option>';
-                        document.getElementById('log-content').textContent = 'No logs available';
-                    } else {
-                        data.log_files.forEach(file => {
-                            const option = document.createElement('option');
-                            option.value = file;
-                            option.textContent = file;
-                            select.appendChild(option);
-                        });
-                        
-                        // Load the first log file
-                        loadLog(data.log_files[0]);
-                    }
-                } else {
-                    console.error('Error loading log files:', data.error);
-                    document.getElementById('log-content').textContent = 'Error loading log files: ' + data.error;
+                select.innerHTML = '';
+                if (!data.success || data.log_files.length === 0) {
+                    select.innerHTML = '<option value="">No log files yet</option>';
+                    logContent.textContent = 'No update has run yet.';
+                    return;
                 }
-            })
-            .catch(error => {
-                console.error('Error fetching log files:', error);
-                document.getElementById('log-content').textContent = 'Error fetching log files: ' + error;
-            });
-    }
-    
-    function loadLog(logFile) {
-        fetch(`/api/logs?log_file=${logFile}`)
-            .then(response => response.json())
-            .then(data => {
-                if (data.success) {
-                    document.getElementById('log-content').textContent = data.logs;
-                } else {
-                    document.getElementById('log-content').textContent = 'Error loading log: ' + data.error;
-                }
-            })
-            .catch(error => {
-                console.error('Error fetching log:', error);
-                document.getElementById('log-content').textContent = 'Error fetching log: ' + error;
-            });
-    }
-    
-    function loadSelectedLog() {
-        const select = document.getElementById('log-file-select');
-        const logFile = select.value;
-        
-        if (logFile) {
-            loadLog(logFile);
-        }
-    }
-    
-    function refreshLogs() {
-        const select = document.getElementById('log-file-select');
-        const currentLog = select.value;
-        
-        if (currentLog) {
-            loadLog(currentLog);
-        } else {
-            loadLogFiles();
-        }
-    }
-    
-    function downloadCurrentLog() {
-        const select = document.getElementById('log-file-select');
-        const logFile = select.value;
-        
-        if (logFile) {
-            fetch(`/api/logs?log_file=${logFile}`)
-                .then(response => response.json())
-                .then(data => {
-                    if (data.success) {
-                        const blob = new Blob([data.logs], { type: 'text/plain' });
-                        const url = URL.createObjectURL(blob);
-                        const a = document.createElement('a');
-                        a.style.display = 'none';
-                        a.href = url;
-                        a.download = logFile;
-                        document.body.appendChild(a);
-                        a.click();
-                        window.URL.revokeObjectURL(url);
-                    } else {
-                        alert('Error downloading log: ' + data.error);
-                    }
-                })
-                .catch(error => {
-                    console.error('Error downloading log:', error);
-                    alert('Error downloading log: ' + error);
+                data.log_files.forEach(file => {
+                    const option = document.createElement('option');
+                    option.value = file;
+                    option.textContent = file;
+                    select.appendChild(option);
                 });
-        }
+                loadLog(data.log_files[0]);
+            })
+            .catch(error => { logContent.textContent = `Error fetching log files: ${error.message}`; });
     }
-    
-    function loadUpdateStats() {
-        // In a real implementation, this would fetch from the server
-        // For demo purposes, we'll simulate it
-        const totalUpdates = Math.floor(Math.random() * 50) + 10;
-        const successfulUpdates = Math.floor(totalUpdates * 0.9);
-        const lastUpdate = new Date().toLocaleString();
-        
-        document.getElementById('total-updates').textContent = totalUpdates;
-        document.getElementById('successful-updates').textContent = successfulUpdates;
-        document.getElementById('last-update').textContent = lastUpdate;
+
+    function loadLog(logFile) {
+        if (!logFile) return;
+        const logContent = document.getElementById('log-content');
+        apiFetch(`/api/logs?log_file=${encodeURIComponent(logFile)}`)
+            .then(data => { logContent.textContent = data.success ? data.logs : `Error loading log: ${data.error}`; })
+            .catch(error => { logContent.textContent = `Error fetching log: ${error.message}`; });
     }
+
+    function downloadCurrentLog() {
+        const logFile = document.getElementById('log-file-select').value;
+        if (!logFile) return;
+        apiFetch(`/api/logs?log_file=${encodeURIComponent(logFile)}`).then(data => {
+            if (!data.success) {
+                showNotification('error', `Error downloading log: ${data.error}`);
+                return;
+            }
+            const url = URL.createObjectURL(new Blob([data.logs], { type: 'text/plain' }));
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = logFile;
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            URL.revokeObjectURL(url);
+        });
+    }
+})();
 </script>
 {% endblock %}

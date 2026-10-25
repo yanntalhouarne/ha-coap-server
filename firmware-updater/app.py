@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-# app.py - Main Flask application for firmware updates
+# app.py - Web interface for over-the-air firmware updates (Linux, macOS and Windows)
+#
+# Run: python app.py, then open http://127.0.0.1:5000. See README.md.
 
 from flask import Flask, render_template, request, jsonify
 from flask_socketio import SocketIO
@@ -18,7 +20,7 @@ PORT = int(os.environ.get('HACOAP_UPDATER_PORT', '5000'))
 DEBUG = os.environ.get('HACOAP_UPDATER_DEBUG', '').lower() in ('1', 'true', 'yes')
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-LOG_DIR = os.path.join(BASE_DIR, 'logs')
+LOG_DIR = os.environ.get('HACOAP_UPDATER_LOG_DIR') or os.path.join(BASE_DIR, 'logs')
 DEFAULT_BUILD_DIR = '../application/build'
 
 # Request validation
@@ -37,10 +39,11 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Initialize Flask app
+# Initialize Flask app. Socket.IO runs on plain threads (no eventlet/gevent), which works
+# on every OS and Python version, and is plenty for a single-user local tool.
 app = Flask(__name__)
 app.config['SECRET_KEY'] = os.environ.get('HACOAP_UPDATER_SECRET_KEY') or secrets.token_hex(32)
-socketio = SocketIO(app)
+socketio = SocketIO(app, async_mode='threading')
 
 # Create update manager
 update_manager = UpdateManager(socketio, LOG_DIR)
@@ -110,12 +113,32 @@ def update():
     return render_template('update.html', build_dir=build_dir)
 
 # API Endpoints
+@app.route('/api/system_status', methods=['GET'])
+def system_status():
+    """API endpoint for what the updater needs (bash, mcumgr, discovery) and what's found"""
+    return jsonify(update_manager.system_status())
+
+@app.route('/api/check_build_dir', methods=['GET'])
+def check_build_dir():
+    """API endpoint to check a build directory and describe its update image"""
+    build_dir = request.args.get('build_dir', DEFAULT_BUILD_DIR)
+    try:
+        info = update_manager.image_info(resolve_build_dir(build_dir))
+    except (OSError, ValueError) as e:
+        return jsonify({"success": False, "error": str(e)})
+    return jsonify({"success": True, "image": info})
+
+@app.route('/api/stats', methods=['GET'])
+def stats():
+    """API endpoint for update statistics, counted from the update logs"""
+    return jsonify(update_manager.statistics())
+
 @app.route('/api/discover', methods=['POST'])
 def discover_devices():
     """API endpoint to discover devices"""
     try:
-        devices = update_manager.discover_devices()
-        return jsonify({"success": True, "devices": devices})
+        devices, available = update_manager.discover_devices()
+        return jsonify({"success": True, "devices": devices, "discovery_available": available})
     except Exception as e:
         logger.error(f"Error discovering devices: {str(e)}")
         return jsonify({"success": False, "error": str(e)})
@@ -202,6 +225,6 @@ if __name__ == '__main__':
     if HOST not in ('127.0.0.1', 'localhost', '::1'):
         logger.warning(f"Listening on {HOST}: anyone who can reach this port can flash your devices")
 
-    # Start the app
+    # Start the app. Werkzeug's server is fine for this local, single-user tool.
     logger.info(f"Starting Firmware Update Web Interface on http://{HOST}:{PORT}")
-    socketio.run(app, host=HOST, port=PORT, debug=DEBUG)
+    socketio.run(app, host=HOST, port=PORT, debug=DEBUG, allow_unsafe_werkzeug=True)
