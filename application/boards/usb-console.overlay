@@ -1,6 +1,6 @@
 /*
- * Console and logs on a second USB CDC ACM port, next to the mcumgr port from
- * usb.overlay (cdc_acm_uart0). Use together with usb.overlay and overlay-usb.conf.
+ * Console and logs on a second USB CDC ACM port, next to the board's mcumgr port
+ * (cdc_acm_uart0). Use together with overlay-usb.conf and overlay-logging.conf.
  */
 
 / {

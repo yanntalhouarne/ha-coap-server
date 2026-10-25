@@ -10,34 +10,51 @@
 This project implements a CoAP server using OpenThread on Nordic Semiconductor's nRF hardware. It enables IoT devices to communicate using the CoAP protocol over Thread network.
 This project is meant to be run on the [ha-coap-pcb](https://github.com/yanntalhouarne/ha-coap-pcb) custom board, along with the [ha-coap](https://github.com/yanntalhouarne/ha-coap-integration) Home Assistant custom integration .
 
-## 🛠️ Build Configuration
+## 🛠️ Building
 
-### Prerequisites
-- **SDK**: `nRF Connect SDK v2.4.3`
-- **Toolchain**: `nRF Connect SDK Toolchain v2.4.3`
-- **Board target**: `hacoap`
+Everything the build needs is pinned in this repository: the board definition, the SDK revisions (`application/west.yml`) and the toolchain version (nRF Connect SDK v2.4.3).
 
-### Project Configuration
-- **Main config**: `prj.conf`
-- **Kconfig fragments**: `overlay-mtd.conf`
-- **Devicetree overlays**: `boards/usb.overlay`
-- **Board root**: `CMakeLists.txt` adds `application/` to `BOARD_ROOT`, so the `hacoap` board is found without extra CMake arguments.
+### On a new PC
+1. Clone the repository. On Windows, keep the path short (for example `C:\dev\ha-coap-server`) to stay clear of path-length limits.
+2. Run the setup script once. It installs `nrfutil` and the v2.4.3 toolchain if needed, then fetches the SDK into `external/` (a few minutes):
+   - Windows: `powershell -ExecutionPolicy Bypass -File scripts\setup.ps1`
+   - Linux: `scripts/setup.sh` (on macOS, install [nRF Util](https://www.nordicsemi.com/Products/Development-tools/nRF-Util) first)
+3. Build:
+   - Windows: `powershell -ExecutionPolicy Bypass -File scriptsuild.ps1`
+   - Linux/macOS: `scripts/build.sh`
 
-In VS Code, install the nRF Connect for VS Code Extension Pack, then add a build configuration for `application` with board `hacoap`, the files above (plus `overlay-udp.conf` for over-the-air updates) and build directory `build`. From a terminal:
+The firmware update image is `application/build/zephyr/app_update.bin`, which is where the update scripts look, and `merged.hex` next to it is the full image (MCUboot + application) for SWD.
+
+Run the setup script again whenever `application/west.yml` changes.
+
+### Variants
+`prj.conf` is the production firmware: Thread sleepy end device, with firmware updates over USB and over Thread (mcumgr on UDP port 1337). The other variants add to it:
+
+| Variant | Build directory | Adds |
+|---|---|---|
+| `battery` (default) | `application/build` | — |
+| `usb-logging` | `application/build_usb_logging` | Console and logs on a second USB serial port (`overlay-logging.conf`, `overlay-usb.conf`, `boards/usb-console.overlay`) |
+| `uart-console` | `application/build_uart_console` | Console and logs on the J4 UART (`overlay-uart.conf`, `overlay-logging.conf`, `boards/uart.overlay`) |
+| `debug` | `application/build_debug` | Asserts, `-Og` and thread info (`overlay-debug.conf`) |
+
+For example `scriptsuild.ps1 usb-logging`. Extra arguments go to CMake, for example `scripts/build.sh battery -DCONFIG_HACOAP_SENSOR_SAMPLE_PERIOD_S=900`. The scripts always build from a clean build directory.
+
+### In VS Code
+1. Open the repository folder and install the recommended **nRF Connect for VS Code Extension Pack** when prompted.
+2. In the nRF Connect panel, check that the toolchain is v2.4.3 and the SDK is the one in `external/`.
+3. Add a build configuration for `application`: board `hacoap`, build directory `build`, nothing else. For a variant, add its `.conf` files under Kconfig fragments and its overlay under **extra** devicetree overlays.
+
+If a build configuration was created before these files changed, delete it (and its build directory) and add it again: CMake caches the old file list.
+
+### From a terminal
+In a toolchain shell (`nrfutil toolchain-manager launch --ncs-version v2.4.3 --shell`, or the nRF Connect terminal in VS Code), from the repository root:
 ```
-west build -b hacoap -d application/build application -- -DEXTRA_CONF_FILE="overlay-mtd.conf;overlay-udp.conf" -DDTC_OVERLAY_FILE=boards/usb.overlay
+west build -d application/build application
 ```
+The board defaults to `hacoap`, and `CMakeLists.txt` adds `application/` to the board roots, so no other arguments are needed.
 
-Optional fragments and overlays:
-
-| File | Purpose |
-|---|---|
-| `overlay-mtd.conf` | Thread sleepy end device (battery builds) |
-| `overlay-usb.conf` + `overlay-logging.conf` + `boards/usb-console.overlay` | Console and logs on a second USB CDC ACM port (the first one stays for mcumgr) |
-| `overlay-debug.conf` | Asserts, `-Og` and thread info for debugging |
-| `overlay-udp.conf` | mcumgr over Thread (UDP port 1337) for over-the-air updates |
-| `boards/usb.overlay` | mcumgr over USB CDC ACM (always used) |
-| `boards/uart.overlay` + `overlay-uart.conf` | Console on the J4 UART. UART0 is disabled otherwise, since its receiver draws current in sleep |
+### Continuous integration
+`.github/workflows/build.yml` runs `scripts/setup.sh` and builds every variant on each push and pull request, so a change that breaks a clean build is caught right away. The battery build's `app_update.bin` and `merged.hex` are attached to each run as artifacts.
 
 ### Board notes
 - **DC/DC regulator**: the board enables the nRF52840's DC/DC regulator (`CONFIG_BOARD_ENABLE_DCDC`, default `y`), since the ACN52840 module includes the converter components. If a board doesn't boot with it, turn it off for both the app and MCUboot (`-DCONFIG_BOARD_ENABLE_DCDC=n -Dmcuboot_CONFIG_BOARD_ENABLE_DCDC=n`) and reflash over SWD.
@@ -151,7 +168,7 @@ coap-client -m get coap://[fd49:969:3c3c:1:88a2:4c28:69ec:34f7]/pumpdc -v 6
    ```bash
    mcumgr -c serial image confirm <NEW_HASH>
    ```
-   > Image must be in a `build_*` folder (e.g., `ha-coap-server\application\build_mtd_lp`)
+   > The image is built in `application/build` (see Building)
 
 5. **mcumgr script**:
    Alternatively, the mcumgr interactive script can be used.

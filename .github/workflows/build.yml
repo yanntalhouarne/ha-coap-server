@@ -1,0 +1,49 @@
+# Builds every firmware variant from a clean clone, with the same scripts as a new PC.
+name: Build firmware
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      # The toolchain (~/ncs/toolchains), the nrfutil commands (~/.nrfutil) and the SDK
+      # (external/) only change with the setup script or the SDK pin.
+      - name: Cache toolchain and SDK
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.local/bin/nrfutil
+            ~/.nrfutil
+            ~/ncs/toolchains
+            external
+          key: ncs-${{ runner.os }}-${{ hashFiles('application/west.yml', 'scripts/setup.sh') }}
+
+      - name: Set up toolchain and SDK
+        run: scripts/setup.sh
+
+      - name: Build battery (production)
+        run: scripts/build.sh battery
+
+      - name: Build usb-logging
+        run: scripts/build.sh usb-logging
+
+      - name: Build uart-console
+        run: scripts/build.sh uart-console
+
+      - name: Build debug
+        run: scripts/build.sh debug
+
+      - name: Upload the production firmware
+        uses: actions/upload-artifact@v4
+        with:
+          name: hacoap-firmware-${{ github.sha }}
+          path: |
+            application/build/zephyr/app_update.bin
+            application/build/zephyr/merged.hex

@@ -15,6 +15,7 @@
 		zephyr,code-partition = &slot0_partition;
 		zephyr,ieee802154 = &ieee802154;
 		zephyr,entropy = &rng;
+		zephyr,uart-mcumgr = &cdc_acm_uart0;
 	};
 	zephyr,user {
 		io-channels = <&adc 0>;
@@ -215,7 +216,13 @@
 	};
 };
 
+/* USB serial port used by mcumgr for firmware updates (boards/usb-console.overlay adds a second one) */
 zephyr_udc0: &usbd {
 	compatible = "nordic,nrf-usbd";
 	status = "okay";
+
+	cdc_acm_uart0: cdc_acm_uart0 {
+		compatible = "zephyr,cdc-acm-uart";
+		current-speed = <115200>;
+	};
 };
