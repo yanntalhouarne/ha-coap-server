@@ -7,7 +7,29 @@ All work is on the `claude` branch, open as [PR #6](https://github.com/yanntalho
 - Check that `application/keys/mcuboot-signing-key.pem` and `application/local.conf` are on this PC. If not, restore them from your backup (they aren't in git).
 - Build: `powershell -ExecutionPolicy Bypass -File scripts\build.ps1`. The output should show your signing key and no PSKd warning.
 
-## 2. Test on the boards
+## 2. Flash a board
+Build first (step 1). The images are in `application/build/zephyr/`.
+
+**Over SWD** (J-Link on the Tag-Connect pads, with SEGGER J-Link Software and Nordic's nRF Command Line Tools installed), from the repository root in PowerShell:
+```
+& "$env:LOCALAPPDATA\Programs\nrfutil\nrfutil.exe" toolchain-manager launch --ncs-version v2.4.3 --chdir . -- west flash -d application/build
+```
+This writes MCUboot and the application, and keeps the board on your network. Add `--erase` at the end for a new board or a full reset; the board then has to join the network again (README → Joining a Thread network).
+
+**Over USB** (board already flashed over SWD with your key; `mcumgr` installed). Replace `COM7` with the board's port:
+```
+mcumgr conn add serial type="serial" connstring="COM7,baud=115200,mtu=512"
+mcumgr -c serial image upload application/build/zephyr/app_update.bin
+mcumgr -c serial image list                # copy the hash of the new image (slot 1)
+mcumgr -c serial image test <hash>
+mcumgr -c serial reset
+mcumgr -c serial image confirm             # once the board is back and working
+```
+**Over the air:** the same commands with a UDP connection instead, `mcumgr conn add udp type="udp" connstring="[<device IPv6>]:1337"`, and `-c udp`. Find the address with `avahi-browse -r _ot._udp`, or use `scripts/mcumgr-update-all.sh`.
+
+If an update uploads but the board keeps its old firmware, the image was signed with a different key. Build on a PC that has your key.
+
+## 3. Test on the boards
 - [ ] Each board boots and rejoins the network on its own after the SWD reflash
 - [ ] Charging: with USB plugged in and a partly discharged battery, the orange LED is on
 - [ ] No random resets over a day (no three-beep jingle out of nowhere)
@@ -16,7 +38,7 @@ All work is on the `claude` branch, open as [PR #6](https://github.com/yanntalho
 
 If a board doesn't boot, try a build with DC/DC disabled (README → Board notes).
 
-## 3. Decide (no boards needed)
+## 4. Decide (no boards needed)
 - **Status LEDs:** a short flash instead of solid colors, turned off after a few minutes, or left as they are?
 - **Thread poll period:** 1 s (now) or 2–3 s? Longer saves current but slows pump commands.
 - **Sensor sampling:** every 5 min (now) or 15 min?
@@ -27,5 +49,5 @@ If a board doesn't boot, try a build with DC/DC disabled (README → Board notes
 
 Details: `docs/firmware/ha-coap-node-power-review.pdf`.
 
-## 4. Finish
+## 5. Finish
 Share the test results and decisions with Claude. It updates the code review's status table and PR #6, then you merge PR #6 into `main`.
