@@ -1,33 +1,31 @@
 # scripts/generate_version.cmake
+#
+# Writes HEADER_FILE with GIT_COMMIT_HASH, the short commit of the repository that holds
+# SOURCE_DIR. Falls back to "unknown" without git (for example a ZIP download), and only
+# rewrites the file when the hash changes, so unchanged builds don't recompile.
+#
+# Usage: cmake -DSOURCE_DIR=<dir> -DHEADER_FILE=<file> -P generate_version.cmake
 
-# Get the latest Git commit hash
 execute_process(
     COMMAND git rev-parse --short HEAD
+    WORKING_DIRECTORY "${SOURCE_DIR}"
     OUTPUT_VARIABLE GIT_COMMIT_HASH
     OUTPUT_STRIP_TRAILING_WHITESPACE
     ERROR_QUIET
     RESULT_VARIABLE GIT_RESULT
 )
 
-if(GIT_RESULT)
-    message(FATAL_ERROR "Failed to get Git commit hash. Ensure you are in a Git repository and Git is installed.")
+if(GIT_RESULT OR NOT GIT_COMMIT_HASH)
+    message(WARNING "Could not get the git commit hash; the firmware version will be \"unknown\".")
+    set(GIT_COMMIT_HASH "unknown")
 endif()
 
-# Print out the Git commit hash for debugging purposes
-message(STATUS "Git commit hash: ${GIT_COMMIT_HASH}")
+set(CONTENT "#ifndef VERSION_H\n#define VERSION_H\n\n#define GIT_COMMIT_HASH \"${GIT_COMMIT_HASH}\"\n\n#endif // VERSION_H\n")
 
-# Define the output file
-set(HEADER_FILE "${CMAKE_BINARY_DIR}/include/version.h")
-
-# Ensure the directory exists
-file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/include")
-
-# Create the version header file
-file(WRITE "${HEADER_FILE}" "#ifndef VERSION_H\n")
-file(APPEND "${HEADER_FILE}" "#define VERSION_H\n")
-file(APPEND "${HEADER_FILE}" "\n")
-file(APPEND "${HEADER_FILE}" "#define GIT_COMMIT_HASH \"${GIT_COMMIT_HASH}\"\n")
-file(APPEND "${HEADER_FILE}" "\n")
-file(APPEND "${HEADER_FILE}" "#endif // VERSION_H\n")
-
-message(STATUS "Generated version header file at: ${HEADER_FILE}")
+if(EXISTS "${HEADER_FILE}")
+    file(READ "${HEADER_FILE}" OLD_CONTENT)
+endif()
+if(NOT "${OLD_CONTENT}" STREQUAL "${CONTENT}")
+    file(WRITE "${HEADER_FILE}" "${CONTENT}")
+    message(STATUS "Firmware version: ${GIT_COMMIT_HASH}")
+endif()

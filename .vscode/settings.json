@@ -2,18 +2,6 @@
     "nrf-connect.applications": [
         "${workspaceFolder}/application"
     ],
-    "nrf-connect.toolchain.path": "${nrf-connect.toolchain:2.4.0}",
-    "cmake.configureOnOpen": false,
-    "files.associations": {
-        "array": "c",
-        "string": "c",
-        "string_view": "c",
-        "compare": "c",
-        "coap_server.h": "c",
-        "thread.h": "c",
-        "srp_client.h": "c",
-        "coap_server_client_interface.h": "c",
-        "srp_client_buffers.h": "c",
-        "stat_mgmt.h": "c"
-    }
+    "nrf-connect.toolchain.path": "${nrf-connect.toolchain:2.4.3}",
+    "cmake.configureOnOpen": false
 }

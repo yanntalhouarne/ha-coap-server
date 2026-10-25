@@ -27,7 +27,7 @@
                                     <i class="bi bi-check-lg"></i> Verify
                                 </button>
                             </div>
-                            <div class="form-text">Path to the directory containing the firmware image</div>
+                            <div class="form-text">The firmware's build directory, containing <code>zephyr/app_update.bin</code>. Relative paths start from the <code>firmware-updater</code> folder.</div>
                             <div id="build-dir-status"></div>
                         </div>
                         
@@ -73,7 +73,7 @@
             </div>
             <div class="card-body">
                 <div class="alert alert-info" id="no-devices-message">
-                    <i class="bi bi-info-circle"></i> No devices selected. Go to the <a href="{{ url_for('devices') }}" class="alert-link">Devices</a> page to select devices for update.
+                    <i class="bi bi-info-circle"></i> No devices selected. Go to the <a href="{{ url_for('devices') }}" class="alert-link">Devices</a> page to find or add devices.
                 </div>
                 
                 <div id="device-list-container" style="display: none;">
@@ -196,319 +196,226 @@
 {% endblock %}
 
 {% block extra_js %}
-<script src="{{ url_for('static', filename='js/updates.js') }}"></script>
 <script>
+(function() {
     let selectedDevices = [];
-    let socket = null;
-    let updateInProgress = false;
-    
+    let buildDirOk = false;
+    let pollTimer = null;
+
     document.addEventListener('DOMContentLoaded', function() {
-        // Initialize socket.io
-        socket = io();
-        
-        // Add event listeners
         document.getElementById('verify-build-dir').addEventListener('click', verifyBuildDirectory);
+        document.getElementById('build-dir').addEventListener('change', verifyBuildDirectory);
         document.getElementById('start-update-btn').addEventListener('click', startUpdate);
-        
-        // Load selected devices from URL parameters or storage
-        loadSelectedDevices();
-        
-        // Set up socket.io event handlers
-        setupSocketHandlers();
+
+        selectedDevices = loadSavedDevices().filter(device => device.selected);
+        displaySelectedDevices();
+        verifyBuildDirectory();
+
+        // Live updates over Socket.IO, plus polling in case the socket drops
+        const socket = io();
+        socket.on('status_update', data => {
+            if (data.message) addToLog(data.message);
+            if (data.status) updateStatusDisplay(data.status);
+        });
+
+        // Resume the display if an update is already running (e.g. after a page reload)
+        apiFetch('/api/update_status').then(status => {
+            if (status.state === 'updating') {
+                showProgress();
+                setUpdating(true);
+                updateStatusDisplay(status);
+            }
+        });
     });
-    
+
     function verifyBuildDirectory() {
-        const buildDir = document.getElementById('build-dir').value;
+        const buildDir = document.getElementById('build-dir').value.trim();
         const statusEl = document.getElementById('build-dir-status');
-        
+        buildDirOk = false;
+        updateStartButtonState();
+
         if (!buildDir) {
-            statusEl.innerHTML = '<div class="text-danger mt-2"><i class="bi bi-exclamation-triangle"></i> Please enter a build directory path</div>';
+            statusEl.innerHTML = '<div class="text-danger mt-2"><i class="bi bi-exclamation-triangle"></i> Enter the build directory</div>';
             return;
         }
-        
-        // Show loading state
-        statusEl.innerHTML = '<div class="text-info mt-2"><i class="bi bi-hourglass"></i> Verifying...</div>';
-        
-        // In a real implementation, this would make an AJAX call to verify the directory
-        // For demo purposes, we'll simulate a successful verification
-        setTimeout(() => {
-            statusEl.innerHTML = '<div class="text-success mt-2"><i class="bi bi-check-circle"></i> Build directory verified. Firmware image found.</div>';
-            
-            // Enable the update button if we have devices
-            updateStartButtonState();
-        }, 1000);
+        statusEl.innerHTML = '<div class="text-info mt-2"><i class="bi bi-hourglass"></i> Checking...</div>';
+
+        apiFetch(`/api/check_build_dir?build_dir=${encodeURIComponent(buildDir)}`)
+            .then(data => {
+                if (data.success) {
+                    const image = data.image;
+                    buildDirOk = true;
+                    statusEl.innerHTML = '<div class="text-success mt-2"><i class="bi bi-check-circle"></i> Firmware image found: ' +
+                        `${formatFileSize(image.size)}, built ${formatDate(image.modified)}` +
+                        `<br><small class="text-muted">Hash <code>${image.hash.substring(0, 16)}...</code></small></div>`;
+                } else {
+                    statusEl.innerHTML = '<div class="text-danger mt-2"><i class="bi bi-exclamation-triangle"></i> </div>';
+                    statusEl.firstChild.append(data.error);
+                }
+            })
+            .catch(error => {
+                statusEl.innerHTML = '<div class="text-danger mt-2"></div>';
+                statusEl.firstChild.append(`Error: ${error.message}`);
+            })
+            .finally(updateStartButtonState);
     }
-    
-    function loadSelectedDevices() {
-    // Check URL parameters first
-    const urlParams = new URLSearchParams(window.location.search);
-    const deviceParam = urlParams.get('devices');
-    
-    if (deviceParam) {
-        try {
-            // Add console.log to debug the parameter
-            console.log("Device parameter:", deviceParam);
-            selectedDevices = JSON.parse(decodeURIComponent(deviceParam));
-            console.log("Parsed devices:", selectedDevices);
-            displaySelectedDevices();
-            return;
-        } catch (e) {
-            console.error('Error parsing device parameter:', e);
-            // Log the actual parameter for debugging
-            console.error('Raw parameter:', deviceParam);
-        }
-    } else {
-        console.log("No devices parameter found in URL");
-    }
-    
-    // If no URL parameter, check local storage
-    const savedDevices = localStorage.getItem('savedDevices');
-    
-    if (savedDevices) {
-        try {
-            console.log("Found saved devices in localStorage");
-            const devices = JSON.parse(savedDevices);
-            selectedDevices = devices.filter(device => device.selected);
-            console.log("Filtered selected devices:", selectedDevices);
-            displaySelectedDevices();
-        } catch (e) {
-            console.error('Error loading saved devices:', e);
-        }
-    } else {
-        console.log("No saved devices found in localStorage");
-    }
-}
-    
+
     function displaySelectedDevices() {
         const deviceList = document.getElementById('selected-devices');
-        const noDevicesMessage = document.getElementById('no-devices-message');
-        const deviceListContainer = document.getElementById('device-list-container');
-        
-        if (selectedDevices.length === 0) {
-            noDevicesMessage.style.display = 'block';
-            deviceListContainer.style.display = 'none';
-            return;
-        }
-        
-        // Hide the no devices message and show the list
-        noDevicesMessage.style.display = 'none';
-        deviceListContainer.style.display = 'block';
-        
-        // Clear the current list
+        const hasDevices = selectedDevices.length > 0;
+
+        document.getElementById('no-devices-message').style.display = hasDevices ? 'none' : 'block';
+        document.getElementById('device-list-container').style.display = hasDevices ? 'block' : 'none';
         deviceList.innerHTML = '';
-        
-        // Add each device to the table
+
         selectedDevices.forEach((device, index) => {
             const row = document.createElement('tr');
-            
-            // Create name cell
             const nameCell = document.createElement('td');
             nameCell.textContent = device.name;
-            
-            // Create address cell
             const addressCell = document.createElement('td');
-            addressCell.textContent = device.address;
-            
-            // Create action cell
+            addressCell.innerHTML = '<code></code>';
+            addressCell.firstChild.textContent = device.address;
+
             const actionCell = document.createElement('td');
             const removeBtn = document.createElement('button');
             removeBtn.className = 'btn btn-sm btn-outline-danger';
             removeBtn.innerHTML = '<i class="bi bi-x-lg"></i> Remove';
-            removeBtn.dataset.deviceIndex = index;
-            removeBtn.addEventListener('click', function() {
-                removeDevice(index);
-            });
-            
+            removeBtn.addEventListener('click', () => removeDevice(index));
             actionCell.appendChild(removeBtn);
-            
-            // Add cells to row
-            row.appendChild(nameCell);
-            row.appendChild(addressCell);
-            row.appendChild(actionCell);
-            
-            // Add row to table
+
+            row.append(nameCell, addressCell, actionCell);
             deviceList.appendChild(row);
         });
-        
-        // Update the start button state
+
         updateStartButtonState();
     }
-    
+
+    // Removes a device from this update (it stays in the Devices list, unselected)
     function removeDevice(index) {
-        selectedDevices.splice(index, 1);
+        const removed = selectedDevices.splice(index, 1)[0];
+        const saved = loadSavedDevices();
+        saved.forEach(device => { if (device.address === removed.address) device.selected = false; });
+        saveDevices(saved);
         displaySelectedDevices();
     }
-    
+
     function updateStartButtonState() {
-        const startBtn = document.getElementById('start-update-btn');
-        
-        // Enable the button if we have devices and not currently updating
-        startBtn.disabled = selectedDevices.length === 0 || updateInProgress;
+        document.getElementById('start-update-btn').disabled =
+            selectedDevices.length === 0 || !buildDirOk || window.updateInProgress;
     }
-    
-    function startUpdate() {
-        if (selectedDevices.length === 0) {
-            alert('Please select at least one device to update.');
-            return;
+
+    function setUpdating(updating) {
+        window.updateInProgress = updating;
+        document.getElementById('start-update-btn').innerHTML = updating
+            ? '<i class="bi bi-hourglass"></i> Updating...'
+            : '<i class="bi bi-play-fill"></i> Start Update Process';
+        updateStartButtonState();
+
+        if (updating && !pollTimer) {
+            pollTimer = setInterval(() => apiFetch('/api/update_status').then(updateStatusDisplay).catch(() => {}), 3000);
+        } else if (!updating && pollTimer) {
+            clearInterval(pollTimer);
+            pollTimer = null;
         }
-        
-        const buildDir = document.getElementById('build-dir').value;
-        if (!buildDir) {
-            alert('Please enter a build directory path.');
-            return;
-        }
-        
-        const updateMode = document.querySelector('input[name="update-mode"]:checked').value;
-        const stallTimeout = parseInt(document.getElementById('stall-timeout').value, 10);
-        
-        // Show confirmation dialog
-        if (!confirm(`You are about to update firmware on ${selectedDevices.length} devices. This cannot be undone. Continue?`)) {
-            return;
-        }
-        
-        // Set update in progress
-        updateInProgress = true;
-        
-        // Disable the start button
-        const startBtn = document.getElementById('start-update-btn');
-        startBtn.disabled = true;
-        startBtn.innerHTML = '<i class="bi bi-hourglass"></i> Updating...';
-        
-        // Show the progress container
+    }
+
+    function showProgress() {
         document.getElementById('progress-message').style.display = 'none';
-        document.getElementById('update-progress-container').style.display = 'block';
-        
-        // Reset progress displays
-        document.getElementById('overall-progress-bar').style.width = '0%';
-        document.getElementById('overall-progress-text').textContent = `0/${selectedDevices.length} devices (0%)`;
-        document.getElementById('current-device-progress-bar').style.width = '0%';
-        document.getElementById('current-device-progress-text').textContent = '0%';
-        document.getElementById('current-device-name').textContent = 'None';
-        document.getElementById('successful-count').textContent = '0';
-        document.getElementById('skipped-count').textContent = '0';
-        document.getElementById('failed-count').textContent = '0';
+        const container = document.getElementById('update-progress-container');
+        container.style.display = 'block';
+        container.querySelectorAll('.result-alert').forEach(alert => alert.remove());
+    }
+
+    function startUpdate() {
+        const buildDir = document.getElementById('build-dir').value.trim();
+        const updateMode = document.querySelector('input[name="update-mode"]:checked').value;
+        const stallTimeout = parseInt(document.getElementById('stall-timeout').value, 10) || 0;
+        const modeText = updateMode === 'test'
+            ? 'in test mode (each device reverts unless the image is confirmed)'
+            : 'and confirm it permanently';
+
+        if (!confirm(`Update the firmware on ${selectedDevices.length} device(s) ${modeText}?`)) {
+            return;
+        }
+
+        showProgress();
         document.getElementById('live-log').textContent = '';
-        
-        // Send the update request to the server
-        fetch('/api/start_update', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-                devices: selectedDevices,
+        updateStatusDisplay({
+            state: 'updating', total_devices: selectedDevices.length, completed_devices: 0,
+            upload_progress: 0, current_device: null, successful_updates: 0, skipped_updates: 0, failed_updates: 0
+        });
+        setUpdating(true);
+
+        apiFetch('/api/start_update', {
+            json: {
+                devices: selectedDevices.map(d => ({ name: d.name, address: d.address })),
                 build_dir: buildDir,
                 update_mode: updateMode,
                 stall_timeout: stallTimeout
-            })
+            }
         })
-        .then(response => response.json())
         .then(data => {
             if (!data.success) {
-                alert('Error starting update: ' + data.error);
-                updateInProgress = false;
-                startBtn.disabled = false;
-                startBtn.innerHTML = '<i class="bi bi-play-fill"></i> Start Update Process';
-            } else {
-                addToLog('Update process started');
+                throw new Error(data.error);
             }
+            addToLog('Update process started');
         })
         .catch(error => {
-            console.error('Error starting update:', error);
-            alert('Error starting update: ' + error.message);
-            updateInProgress = false;
-            startBtn.disabled = false;
-            startBtn.innerHTML = '<i class="bi bi-play-fill"></i> Start Update Process';
+            addToLog(`Could not start the update: ${error.message}`);
+            showNotification('error', `Could not start the update: ${error.message}`);
+            setUpdating(false);
         });
     }
-    
-    function setupSocketHandlers() {
-        socket.on('connect', () => {
-            console.log('Connected to server');
-        });
-        
-        socket.on('disconnect', () => {
-            console.log('Disconnected from server');
-        });
-        
-        socket.on('status_update', (data) => {
-            // Add message to log
-            if (data.message) {
-                addToLog(data.message);
-            }
-            
-            // Update status display
-            if (data.status) {
-                updateStatusDisplay(data.status);
-            }
-        });
-    }
-    
+
     function addToLog(message) {
         const logEl = document.getElementById('live-log');
-        const timestamp = new Date().toLocaleTimeString();
-        
-        // Add the message with timestamp
-        logEl.textContent += `[${timestamp}] ${message}\n`;
-        
-        // Auto scroll to bottom
+        logEl.textContent += `[${new Date().toLocaleTimeString()}] ${message}\n`;
         logEl.scrollTop = logEl.scrollHeight;
     }
-    
+
     function updateStatusDisplay(status) {
-        // Update overall progress
         if (status.total_devices > 0) {
             const percent = Math.round((status.completed_devices / status.total_devices) * 100);
             document.getElementById('overall-progress-bar').style.width = `${percent}%`;
-            document.getElementById('overall-progress-text').textContent = 
+            document.getElementById('overall-progress-text').textContent =
                 `${status.completed_devices}/${status.total_devices} devices (${percent}%)`;
         }
-        
-        // Update current device progress
+
         document.getElementById('current-device-progress-bar').style.width = `${status.upload_progress}%`;
         document.getElementById('current-device-progress-text').textContent = `${Math.round(status.upload_progress)}%`;
         document.getElementById('current-device-name').textContent = status.current_device || 'None';
-        
-        // Update counters
         document.getElementById('successful-count').textContent = status.successful_updates;
         document.getElementById('skipped-count').textContent = status.skipped_updates;
         document.getElementById('failed-count').textContent = status.failed_updates;
-        
-        // Check if update is complete
-        if (status.state === 'completed') {
-            updateInProgress = false;
-            
-            // Update the start button
-            const startBtn = document.getElementById('start-update-btn');
-            startBtn.disabled = false;
-            startBtn.innerHTML = '<i class="bi bi-play-fill"></i> Start Update Process';
-            
-            // Add completion message to log
-            addToLog('Update process completed');
-            
-            // Show completion alert
-            const successCount = parseInt(status.successful_updates);
-            const failedCount = parseInt(status.failed_updates);
-            const skippedCount = parseInt(status.skipped_updates);
-            
-            let alertClass = 'alert-success';
-            let message = `Update completed successfully! ${successCount} device(s) updated.`;
-            
-            if (failedCount > 0) {
-                alertClass = 'alert-warning';
-                message = `Update completed with issues. ${successCount} device(s) updated, ${failedCount} failed.`;
-            }
-            
-            if (skippedCount > 0) {
-                message += ` ${skippedCount} device(s) skipped (already had the image).`;
-            }
-            
-            const alertEl = document.createElement('div');
-            alertEl.className = `alert ${alertClass} mt-3`;
-            alertEl.innerHTML = `<i class="bi bi-info-circle"></i> ${message}`;
-            
-            document.getElementById('update-progress-container').appendChild(alertEl);
+
+        if (window.updateInProgress && (status.state === 'completed' || status.state === 'error')) {
+            setUpdating(false);
+            showResult(status);
         }
     }
+
+    function showResult(status) {
+        const container = document.getElementById('update-progress-container');
+        let alertClass = 'alert-success';
+        let message = `Update completed: ${status.successful_updates} device(s) updated.`;
+
+        if (status.state === 'error') {
+            alertClass = 'alert-danger';
+            message = 'The update stopped with an error. See the log above, and the full log on the Dashboard.';
+        } else if (status.failed_updates > 0) {
+            alertClass = 'alert-warning';
+            message = `Update completed with issues: ${status.successful_updates} device(s) updated, ${status.failed_updates} failed.`;
+        }
+        if (status.skipped_updates > 0) {
+            message += ` ${status.skipped_updates} device(s) skipped (already had the image).`;
+        }
+
+        const alertEl = document.createElement('div');
+        alertEl.className = `alert ${alertClass} mt-3 result-alert`;
+        alertEl.innerHTML = '<i class="bi bi-info-circle"></i> ';
+        alertEl.append(message);
+        container.appendChild(alertEl);
+    }
+})();
 </script>
-{% endblock %} 
+{% endblock %}

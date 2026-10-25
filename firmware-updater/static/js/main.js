@@ -1,129 +1,86 @@
 /**
- * main.js - General JavaScript functionality for HA-CoAP Firmware Updater
+ * main.js - Helpers shared by every page of the HA-CoAP Firmware Updater
+ *
+ * Pages set window.updateInProgress while an update runs, so leaving the page asks first.
  */
 
-document.addEventListener('DOMContentLoaded', function() {
-    // Initialize Bootstrap tooltips
-    const tooltipTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'));
-    tooltipTriggerList.map(function(tooltipTriggerEl) {
-        return new bootstrap.Tooltip(tooltipTriggerEl);
-    });
-    
-    // Set up socket connection for real-time updates
-    setupGlobalSocket();
-    
-    // Add event listener for navigation confirmation when an update is in progress
-    window.addEventListener('beforeunload', function(e) {
-        // Check if an update is in progress
-        if (typeof updateInProgress !== 'undefined' && updateInProgress) {
-            // Cancel the event
-            e.preventDefault();
-            // Chrome requires returnValue to be set
-            e.returnValue = 'Update in progress. Are you sure you want to leave?';
-            // Return value for older browsers
-            return 'Update in progress. Are you sure you want to leave?';
-        }
-    });
+window.updateInProgress = false;
+
+window.addEventListener('beforeunload', function(e) {
+    if (window.updateInProgress) {
+        e.preventDefault();
+        e.returnValue = 'Update in progress. Are you sure you want to leave?';
+        return e.returnValue;
+    }
 });
 
 /**
- * Set up socket.io connection for real-time updates
+ * Fetch JSON from the server's API
+ * @param {string} url - API URL
+ * @param {Object} [options] - fetch options; a 'json' member is sent as the request body
+ * @returns {Promise<Object>} The parsed response
  */
-function setupGlobalSocket() {
-    // Initialize socket if not already done
-    if (typeof io !== 'undefined' && !window.globalSocket) {
-        window.globalSocket = io();
-        
-        // Set up global event handlers
-        window.globalSocket.on('connect', function() {
-            console.log('Connected to server');
+function apiFetch(url, options = {}) {
+    if (options.json !== undefined) {
+        options = Object.assign({}, options, {
+            method: options.method || 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(options.json)
         });
-        
-        window.globalSocket.on('disconnect', function() {
-            console.log('Disconnected from server');
-        });
-        
-        // Listen for global notifications
-        window.globalSocket.on('notification', function(data) {
-            showNotification(data.type, data.message);
-        });
+        delete options.json;
     }
+    return fetch(url, options).then(response => {
+        if (!response.ok) {
+            throw new Error(`HTTP error ${response.status}`);
+        }
+        return response.json();
+    });
 }
 
 /**
  * Show a notification toast
- * @param {string} type - The notification type (success, warning, error)
+ * @param {string} type - The notification type (success, warning, error, info)
  * @param {string} message - The notification message
  */
 function showNotification(type, message) {
-    // Create toast container if it doesn't exist
     let toastContainer = document.getElementById('toast-container');
-    
     if (!toastContainer) {
         toastContainer = document.createElement('div');
         toastContainer.id = 'toast-container';
         toastContainer.className = 'toast-container position-fixed bottom-0 end-0 p-3';
         document.body.appendChild(toastContainer);
     }
-    
-    // Map type to Bootstrap color class
+
     const colorClass = {
         'success': 'text-bg-success',
         'warning': 'text-bg-warning',
         'error': 'text-bg-danger',
         'info': 'text-bg-info'
     }[type] || 'text-bg-secondary';
-    
-    // Create toast element
-    const toastId = 'toast-' + Date.now();
+
     const toast = document.createElement('div');
-    toast.id = toastId;
     toast.className = `toast ${colorClass}`;
     toast.setAttribute('role', 'alert');
     toast.setAttribute('aria-live', 'assertive');
     toast.setAttribute('aria-atomic', 'true');
-    
-    // Create toast header
-    const header = document.createElement('div');
-    header.className = 'toast-header';
-    
-    const title = document.createElement('strong');
-    title.className = 'me-auto';
-    title.textContent = type.charAt(0).toUpperCase() + type.slice(1);
-    
-    const timestamp = document.createElement('small');
-    timestamp.textContent = 'just now';
-    
+
+    const body = document.createElement('div');
+    body.className = 'toast-body d-flex';
+    const text = document.createElement('div');
+    text.className = 'me-auto';
+    text.textContent = message;
     const closeButton = document.createElement('button');
     closeButton.type = 'button';
-    closeButton.className = 'btn-close';
+    closeButton.className = 'btn-close btn-close-white ms-2';
     closeButton.setAttribute('data-bs-dismiss', 'toast');
     closeButton.setAttribute('aria-label', 'Close');
-    
-    header.appendChild(title);
-    header.appendChild(timestamp);
-    header.appendChild(closeButton);
-    
-    // Create toast body
-    const body = document.createElement('div');
-    body.className = 'toast-body';
-    body.textContent = message;
-    
-    // Assemble toast
-    toast.appendChild(header);
+    body.appendChild(text);
+    body.appendChild(closeButton);
     toast.appendChild(body);
-    
-    // Add to container
     toastContainer.appendChild(toast);
-    
-    // Initialize and show toast
-    const bsToast = new bootstrap.Toast(toast);
-    bsToast.show();
-    
-    // Remove from DOM after hiding
-    toast.addEventListener('hidden.bs.toast', function() {
-        toast.remove();
-    });
+
+    new bootstrap.Toast(toast).show();
+    toast.addEventListener('hidden.bs.toast', () => toast.remove());
 }
 
 /**
@@ -132,50 +89,39 @@ function showNotification(type, message) {
  * @returns {string} Formatted date string
  */
 function formatDate(dateString) {
-    const date = new Date(dateString);
-    return date.toLocaleString();
+    return dateString ? new Date(dateString).toLocaleString() : 'Never';
 }
 
 /**
- * Format a filesize for display
+ * Format a file size for display
  * @param {number} bytes - Size in bytes
- * @returns {string} Formatted filesize
+ * @returns {string} Formatted file size
  */
 function formatFileSize(bytes) {
-    if (bytes === 0) return '0 Bytes';
-    
-    const k = 1024;
-    const sizes = ['Bytes', 'KB', 'MB', 'GB'];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
-    
-    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+    if (bytes < 1024) return `${bytes} B`;
+    return `${(bytes / 1024).toFixed(1)} KiB`;
 }
 
 /**
- * Check if a file exists on the server
- * @param {string} path - File path to check
- * @returns {Promise<boolean>} Promise resolving to true if file exists
+ * Check that a device address is an IPv6 address mcumgr can use (no brackets or zone)
+ * @param {string} address - Address to check
+ * @returns {boolean} True if valid
  */
-function checkFileExists(path) {
-    return fetch(`/api/check_file?path=${encodeURIComponent(path)}`)
-        .then(response => response.json())
-        .then(data => data.exists)
-        .catch(error => {
-            console.error('Error checking file:', error);
-            return false;
-        });
+function isValidIPv6(address) {
+    return /^[0-9A-Fa-f:]+$/.test(address) && address.includes(':') && address.length >= 2;
 }
 
 /**
- * Download a file from the server
- * @param {string} path - File path to download
- * @param {string} filename - Name to save as
+ * Devices kept in the browser between pages: [{name, address, selected}]
  */
-function downloadFile(path, filename) {
-    const a = document.createElement('a');
-    a.href = `/api/download?path=${encodeURIComponent(path)}`;
-    a.download = filename || path.split('/').pop();
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
+function loadSavedDevices() {
+    try {
+        return JSON.parse(localStorage.getItem('savedDevices')) || [];
+    } catch (e) {
+        return [];
+    }
+}
+
+function saveDevices(devices) {
+    localStorage.setItem('savedDevices', JSON.stringify(devices));
 }

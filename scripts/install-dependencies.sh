@@ -3,6 +3,9 @@
 # ┌─────────────────────────────────────────────┐
 # │     Go & Mcumgr Installer                   │
 # └─────────────────────────────────────────────┘
+#
+# For Debian/Ubuntu on x86-64 (uses apt and sudo). On macOS and Windows, see
+# README → Firmware updates → Scripts for the equivalent install commands.
 
 set -e  # Exit on error
 
