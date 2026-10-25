@@ -8,7 +8,7 @@ Start here when you come back. To pick up with Claude, say: *"Resume from docs/N
 |---|---|---|
 | `main` | The firmware as it was before this work | Unchanged |
 | `claude` | Firmware fixes and refactor, the power changes from step 4, reproducible builds, private signing key and PSKd, cross-platform update scripts, working web updater, firmware unit tests, reviews in `docs/` | [PR #6](https://github.com/yanntalhouarne/ha-coap-server/pull/6), **not merged: no board has run it yet**. CI passes on Linux, macOS and Windows |
-| `fleet-manager` | `claude` plus the fleet manager app (`manager/`): inventory and updates (plan phases 0–2) | Tested against a simulated device on all three OSes, **not on a board yet** |
+| `fleet-manager` | `claude` plus the fleet manager app (`manager/`): inventory, updates and firmware builds (plan phases 0–2 and 5) | Tested against a simulated device on all three OSes, **not on a board yet** |
 
 The order to go in:
 1. Test PR #6 on the boards (steps 1–3 below), then merge it.
@@ -89,9 +89,10 @@ Share the test results and decisions with Claude. It updates the status tables i
 
 ## 6. Then: the fleet manager
 
-**What's built** (on the `fleet-manager` branch, in `manager/`): the plan's phases 0–2. It's a local web app for Windows, macOS and Linux that:
+**What's built** (on the `fleet-manager` branch, in `manager/`): the plan's phases 0–2 and 5. It's a local web app for Windows, macOS and Linux that:
 - finds devices (or adds them by address) and shows their firmware, battery, readings and when they were last seen
-- keeps a library of firmware images, from files or from your builds
+- builds firmware from named profiles (variant plus the settings you change, in a form made from `application/Kconfig`), with a live log, checking your signing key first
+- keeps a library of firmware images, from files or from those builds
 - updates devices over the air or over USB: upload, trial boot, check the device comes back running it, confirm. One device at a time, stopping at the first failure, with a history
 
 It talks to the devices directly (no `mcumgr` tool needed). Details and instructions: `manager/README.md`. The plan, with what's next: `docs/FLEET-MANAGER-PLAN.md`.
@@ -110,7 +111,7 @@ After PR #6's board tests (the fast polling during updates is in that firmware):
 2. In the browser page it opens:
    - [ ] **Find devices** lists every board, and their status fills in (battery, readings)
    - [ ] **Actions → Firmware slots** answers for a board
-   - [ ] **Images → Builds on this computer → Add** your latest build
+   - [ ] **Builds → Build with this profile** (Production) makes an image signed with your key (already checked on this PC), or **Images → Builds on this computer → Add** your latest build
    - [ ] **Update** one board over the air: it goes through uploading, rebooting, waiting, confirming, and ends as *updated*. Note how long the upload takes.
    - [ ] **Update** one board on USB (choose its serial port). This path has no simulated test, so it's the most likely to need a fix.
 3. Tell Claude what happened. Once it works, `fleet-manager` can become a pull request, and the web updater can go.
@@ -126,7 +127,7 @@ That PC does all the talking:
 | Boards over the air | UDP to their IPv6 addresses, through the border router |
 | Device discovery | mDNS on your LAN (the border router answers for the Thread devices) |
 | Commissioning (later) | the border router's REST API (port 8081) |
-| Builds (later) | the nRF Connect toolchain installed on that PC |
+| Builds | the nRF Connect toolchain installed on that PC (`scripts/setup`) |
 
 So it needs to be on the same network as the border router, like the scripts.
 
@@ -139,4 +140,4 @@ So it needs to be on the same network as the border router, like the scripts.
   sudo ot-ctl version
   ```
   If `curl` from another computer fails but works on the border router itself, its REST API only listens locally (`otbr-agent` option `--rest-listen-address`). If the commissioner endpoints are missing, update ot-br-posix; otherwise the app falls back to showing the `ot-ctl` commands.
-- **5. Builds and 6. Polish** need no firmware change.
+- **6. Polish** (export/import, backups, release downloads) needs no firmware change. Phase 5 (builds) is done.
