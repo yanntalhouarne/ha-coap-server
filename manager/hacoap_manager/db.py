@@ -52,6 +52,12 @@ CREATE TABLE IF NOT EXISTS profiles (
     notes    TEXT NOT NULL DEFAULT '',
     updated  REAL NOT NULL
 );
+CREATE TABLE IF NOT EXISTS network_events (
+    id        INTEGER PRIMARY KEY AUTOINCREMENT,
+    time      REAL NOT NULL,
+    device_id TEXT NOT NULL,
+    message   TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS builds (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
     profile    TEXT NOT NULL,
@@ -222,3 +228,12 @@ class Database:
         """Marks builds left 'running' by an app that was closed mid-build."""
         self._execute("UPDATE builds SET result = 'failed', message = 'The app was closed during the build' "
                       "WHERE result = 'running'")
+
+    # ------------------------------------------------------------ network events
+
+    def add_network_event(self, device_id, message):
+        self._execute("INSERT INTO network_events (time, device_id, message) VALUES (?, ?, ?)",
+                      (time.time(), device_id, message))
+
+    def network_events(self, limit=50):
+        return self._query("SELECT * FROM network_events ORDER BY id DESC LIMIT ?", (limit,))

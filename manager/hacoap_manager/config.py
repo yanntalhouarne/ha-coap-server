@@ -29,6 +29,7 @@ class Settings:
     online_minutes: int = 30        # a device that answered within this time is online
     auto_refresh_minutes: int = 15  # refresh every device's status while the app runs (0: never)
     reboot_timeout_s: float = 180.0  # how long an updated device has to come back
+    border_router_url: str = ""     # the border router's REST API, such as http://192.168.1.20:8081
 
     def link_settings(self):
         return LinkSettings(udp_port=self.smp_port, udp_mtu=self.udp_mtu, serial_buffer=self.serial_buffer,

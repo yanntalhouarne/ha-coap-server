@@ -79,6 +79,7 @@ function showTab(name) {
   if (name === 'updates') { renderUpdateForm(); loadHistory(); }
   if (name === 'images') { loadImages(); loadBuilds(); }
   if (name === 'builds') loadBuildsTab();
+  if (name === 'network') loadNetwork();
   if (name === 'settings') { loadSettings(); loadBackups(); }
 }
 
@@ -374,6 +375,274 @@ document.getElementById('upload-image').addEventListener('click', (event) => bus
   loadImages(); loadBuilds();
 }));
 
+// ------------------------------------------------------------------ network
+
+const net = { state: null, positions: new Map(), selected: null, layout: null };
+const SVG_NS = 'http://www.w3.org/2000/svg';
+
+function svg(tag, attrs = {}, ...children) {
+  const el = document.createElementNS(SVG_NS, tag);
+  for (const [key, value] of Object.entries(attrs)) {
+    if (value === undefined || value === null) continue;
+    if (key.startsWith('on')) el.addEventListener(key.slice(2), value);
+    else el.setAttribute(key, value);
+  }
+  for (const child of children.flat()) {
+    if (child === undefined || child === null) continue;
+    el.append(child instanceof Node ? child : document.createTextNode(String(child)));
+  }
+  return el;
+}
+
+const nodeStyles = {
+  'border router': { r: 18, color: '#212529', label: 'Border router' },
+  router: { r: 15, color: '#0d6efd', label: 'Router' },
+  'FTD child': { r: 11, color: '#6f42c1', label: 'FTD child (can become a router)' },
+  MED: { r: 9, color: '#fd7e14', label: 'MED (end device, always listening)' },
+  SED: { r: 9, color: '#198754', label: 'SED (sleepy end device)' },
+};
+const qualityColors = { 3: '#198754', 2: '#e0a800', 1: '#dc3545', 0: '#dc3545' };
+
+function nodeStyle(node) {
+  if (node.border_router) return nodeStyles['border router'];
+  return nodeStyles[node.kind] || nodeStyles[node.role === 'child' ? 'SED' : 'router'];
+}
+
+function nodeLabel(node) {
+  if (node.name) return node.name;
+  if (node.border_router) return 'Border router';
+  return `${node.kind || node.role || 'node'} ${node.rloc16_hex}`.trim();
+}
+
+// How strong a link is: its signal margin (dB) if the border router gives it, else its link
+// quality (0-3). Stronger links get shorter lines.
+function linkStrength(link) {
+  if (link.link_margin !== null && link.link_margin !== undefined) {
+    const margin = link.link_margin;
+    const quality = margin > 20 ? 3 : margin > 10 ? 2 : margin > 2 ? 1 : 0;
+    const rssi = link.average_rssi !== null && link.average_rssi !== undefined ? `, ${link.average_rssi} dBm` : '';
+    return { length: Math.max(60, Math.min(320, 330 - margin * 4)), quality, text: `${margin} dB margin${rssi}` };
+  }
+  const values = [link.link_quality_in, link.link_quality_out].filter((v) => v !== null && v !== undefined);
+  if (values.length) {
+    const quality = Math.min(...values);
+    return { length: { 3: 110, 2: 190, 1: 270, 0: 300 }[quality], quality, text: `link quality ${quality} of 3` };
+  }
+  return { length: 170, quality: null, text: 'no signal information' };
+}
+
+// A small force layout: lines pull their two ends towards their length, nodes push each
+// other apart, and the border router stays in the middle.
+function layoutNetwork(topology) {
+  // Start from where nodes were, else routers on a circle and each child next to its parent,
+  // so the forces only have to settle the details.
+  const nodes = topology.nodes.map((node) => ({ node, x: 0, y: 0, vx: 0, vy: 0, pinned: node.border_router }));
+  const byId = new Map(nodes.map((n) => [n.node.id, n]));
+  const routers = nodes.filter((n) => !n.node.parent && !n.pinned);
+  routers.forEach((n, i) => {
+    const angle = (i / Math.max(1, routers.length)) * 2 * Math.PI;
+    n.x = Math.cos(angle) * 180; n.y = Math.sin(angle) * 180;
+  });
+  const childCount = new Map();
+  for (const n of nodes.filter((n) => n.node.parent)) {
+    const parent = byId.get(n.node.parent) || { x: 0, y: 0 };
+    const k = childCount.get(n.node.parent) || 0;
+    childCount.set(n.node.parent, k + 1);
+    const outward = Math.atan2(parent.y, parent.x) + (k - 1) * 0.7;
+    const link = topology.links.find((l) => l.a === n.node.id || l.b === n.node.id);
+    const distance = link ? linkStrength(link).length : 120;
+    n.x = parent.x + Math.cos(outward) * distance; n.y = parent.y + Math.sin(outward) * distance;
+  }
+  for (const n of nodes) {
+    const known = net.positions.get(n.node.id);
+    if (known) { n.x = known.x; n.y = known.y; }
+  }
+  const springs = topology.links.map((link) => ({ a: byId.get(link.a), b: byId.get(link.b), link, ...linkStrength(link) }))
+    .filter((s) => s.a && s.b);
+  const fresh = nodes.some((n) => !net.positions.has(n.node.id));
+  for (let step = 0, heat = 1; step < (fresh ? 500 : 150); step++, heat *= 0.992) {
+    for (let i = 0; i < nodes.length; i++) {
+      for (let j = i + 1; j < nodes.length; j++) {
+        const a = nodes[i], b = nodes[j];
+        let dx = b.x - a.x, dy = b.y - a.y;
+        const d2 = Math.max(dx * dx + dy * dy, 25), d = Math.sqrt(d2);
+        const force = 6000 / d2;
+        dx /= d; dy /= d;
+        a.vx -= dx * force; a.vy -= dy * force; b.vx += dx * force; b.vy += dy * force;
+      }
+    }
+    for (const s of springs) {
+      let dx = s.b.x - s.a.x, dy = s.b.y - s.a.y;
+      const d = Math.max(Math.sqrt(dx * dx + dy * dy), 1);
+      const force = (d - s.length) * 0.08;
+      dx /= d; dy /= d;
+      s.a.vx += dx * force; s.a.vy += dy * force; s.b.vx -= dx * force; s.b.vy -= dy * force;
+    }
+    for (const n of nodes) {
+      if (n.pinned || n.dragged) { n.vx = n.vy = 0; continue; }
+      n.vx -= n.x * 0.002; n.vy -= n.y * 0.002;
+      n.x += Math.max(-30, Math.min(30, n.vx * heat)); n.y += Math.max(-30, Math.min(30, n.vy * heat));
+      n.vx *= 0.5; n.vy *= 0.5;
+    }
+  }
+  for (const n of nodes) net.positions.set(n.node.id, { x: n.x, y: n.y });
+  return { nodes, springs, byId };
+}
+
+function renderNetwork() {
+  const canvas = document.getElementById('network-canvas');
+  const topology = net.state && net.state.topology;
+  document.getElementById('network-empty').classList.toggle('d-none', !!topology);
+  canvas.querySelector('svg')?.remove();
+  document.getElementById('network-warnings').replaceChildren(...((topology && topology.warnings) || []).map((w) =>
+    h('div', { class: 'alert alert-warning py-1 small mb-2' }, w)));
+  if (!topology) return;
+
+  const layout = net.layout = layoutNetwork(topology);
+  const xs = layout.nodes.map((n) => n.x), ys = layout.nodes.map((n) => n.y);
+  const pad = 60;
+  const box = [Math.min(...xs, -100) - pad, Math.min(...ys, -100) - pad,
+    Math.max(...xs, 100) - Math.min(...xs, -100) + 2 * pad, Math.max(...ys, 100) - Math.min(...ys, -100) + 2 * pad];
+  const lines = layout.springs.map((s) => {
+    const color = s.quality === null ? '#adb5bd' : qualityColors[s.quality];
+    const line = svg('line', { x1: s.a.x, y1: s.a.y, x2: s.b.x, y2: s.b.y, stroke: color,
+      'stroke-width': s.link.kind === 'mesh' ? 3 : 2, 'stroke-dasharray': s.link.kind === 'child' ? '6 4' : null,
+      onclick: () => showLinkDetails(s) }, svg('title', {}, s.text));
+    s.line = line;
+    return line;
+  });
+  const groups = layout.nodes.map((n) => {
+    const style = nodeStyle(n.node);
+    const shape = n.node.border_router
+      ? svg('rect', { x: -style.r, y: -style.r, width: 2 * style.r, height: 2 * style.r, rx: 4, fill: style.color })
+      : svg('circle', { r: style.r, fill: style.color, stroke: n.node.device_id ? '#ffc107' : 'none', 'stroke-width': 3 });
+    const group = svg('g', { class: `node${net.selected === n.node.id ? ' selected' : ''}`, transform: `translate(${n.x},${n.y})` },
+      shape, svg('text', { y: style.r + 14, 'text-anchor': 'middle' }, nodeLabel(n.node)), svg('title', {}, nodeLabel(n.node)));
+    n.group = group;
+    makeDraggable(group, n);
+    return group;
+  });
+  const drawing = svg('svg', { viewBox: box.join(' '), preserveAspectRatio: 'xMidYMid meet' }, ...lines, ...groups);
+  canvas.append(drawing);
+
+  const counts = { routers: 0, children: 0, sleepy: 0, boards: 0 };
+  for (const n of topology.nodes) {
+    if (n.kind === 'router' || n.border_router) counts.routers++; else counts.children++;
+    if (n.kind === 'SED') counts.sleepy++;
+    if (n.device_id) counts.boards++;
+  }
+  document.getElementById('network-summary').textContent =
+    `${counts.routers} router(s), ${counts.children} child(ren) (${counts.sleepy} sleepy), ${counts.boards} of your boards. ` +
+    `Read ${ago(topology.fetched)} (${topology.source === 'api' ? 'with signal strength' : 'link quality only'}).`;
+}
+
+function makeDraggable(group, n) {
+  let moved = false;
+  group.addEventListener('pointerdown', (event) => {
+    group.setPointerCapture(event.pointerId);
+    n.dragged = true;
+    moved = false;
+  });
+  group.addEventListener('pointermove', (event) => {
+    if (!n.dragged) return;
+    const point = group.ownerSVGElement.createSVGPoint();
+    point.x = event.clientX; point.y = event.clientY;
+    const p = point.matrixTransform(group.ownerSVGElement.getScreenCTM().inverse());
+    n.x = p.x; n.y = p.y; moved = true;
+    group.setAttribute('transform', `translate(${n.x},${n.y})`);
+    for (const s of net.layout.springs) {
+      if (s.a === n) { s.line.setAttribute('x1', n.x); s.line.setAttribute('y1', n.y); }
+      if (s.b === n) { s.line.setAttribute('x2', n.x); s.line.setAttribute('y2', n.y); }
+    }
+    net.positions.set(n.node.id, { x: n.x, y: n.y });
+  });
+  group.addEventListener('pointerup', () => {
+    n.dragged = false;
+    if (!moved) showNodeDetails(n.node);
+  });
+}
+
+function detailsTable(rows) {
+  return h('table', { class: 'table table-sm mb-0' }, h('tbody', {}, rows.filter(([, v]) => v !== '' && v !== null && v !== undefined)
+    .map(([k, v]) => h('tr', {}, h('th', { class: 'fw-normal text-body-secondary' }, k), h('td', { class: 'text-break' }, v)))));
+}
+
+function showNodeDetails(node) {
+  net.selected = node.id;
+  for (const n of net.layout.nodes) n.group.classList.toggle('selected', n.node.id === node.id);
+  const topology = net.state.topology;
+  const nodes = new Map(topology.nodes.map((n) => [n.id, n]));
+  const links = topology.links.filter((l) => l.a === node.id || l.b === node.id).map((l) => {
+    const other = nodes.get(l.a === node.id ? l.b : l.a);
+    return h('li', {}, `${other ? nodeLabel(other) : '?'}: ${linkStrength(l).text}`);
+  });
+  document.getElementById('network-details').replaceChildren(
+    h('h6', {}, nodeLabel(node)),
+    detailsTable([
+      ['Board', node.device_id ? `${node.name} (${node.device_id})` : ''],
+      ['Role', node.border_router ? `border router, ${node.role}` : node.role],
+      ['Type', node.kind],
+      ['RLOC16', node.rloc16_hex],
+      ['Extended address', node.ext_address],
+      ['Parent', node.parent && nodes.get(node.parent) ? nodeLabel(nodes.get(node.parent)) : ''],
+      ['Child timeout', node.timeout ? `${node.timeout} s` : ''],
+      ['Host name', node.hostname],
+      ['IPv6', node.ipv6.join(', ')],
+    ]),
+    links.length ? h('div', { class: 'mt-2' }, h('b', {}, 'Links'), h('ul', { class: 'mb-0 ps-3' }, links)) : null);
+}
+
+function showLinkDetails(spring) {
+  document.getElementById('network-details').replaceChildren(
+    h('h6', {}, `${nodeLabel(spring.a.node)} ↔ ${nodeLabel(spring.b.node)}`),
+    detailsTable([
+      ['Kind', spring.link.kind === 'mesh' ? 'router to router' : 'child to parent'],
+      ['Link margin', spring.link.link_margin !== null && spring.link.link_margin !== undefined ? `${spring.link.link_margin} dB` : ''],
+      ['Average RSSI', spring.link.average_rssi !== null && spring.link.average_rssi !== undefined ? `${spring.link.average_rssi} dBm` : ''],
+      ['Last RSSI', spring.link.last_rssi !== null && spring.link.last_rssi !== undefined ? `${spring.link.last_rssi} dBm` : ''],
+      ['Link quality in / out', spring.link.link_quality_in !== null && spring.link.link_quality_in !== undefined
+        ? `${spring.link.link_quality_in} / ${spring.link.link_quality_out ?? '?'} (of 3)` : ''],
+    ]));
+}
+
+function renderNetworkLegend() {
+  const kinds = ['border router', 'router', 'FTD child', 'MED', 'SED'].map((k) => [nodeStyles[k].color, nodeStyles[k].label]);
+  document.getElementById('network-legend').replaceChildren(
+    ...kinds.flatMap(([color, label]) => [h('span', { class: 'legend-swatch', style: `background:${color}` }), label]),
+    h('span', { class: 'legend-swatch', style: 'background:#fff;border:3px solid #ffc107' }), 'your board',
+    h('div', { class: 'mt-1' }, 'Solid lines: router to router. Dashed: child to its parent. Green, amber, red: strong, ',
+      'fair, weak. Shorter lines are stronger links: it shows radio closeness, not distance (walls and antennas count). ',
+      'Your boards never link to each other: each one talks only to its parent. Drag nodes to tidy up.'));
+}
+
+async function loadNetwork() {
+  net.state = await api('GET', '/api/network');
+  document.getElementById('border-router-url').value = net.state.border_router_url || '';
+  renderNetwork();
+  renderNetworkLegend();
+  document.getElementById('network-events').replaceChildren(...(net.state.events.length
+    ? net.state.events.map((e) => h('li', { class: 'mb-1' }, h('span', { class: 'text-body-secondary' }, `${when(e.time)} `), e.message))
+    : [h('li', { class: 'text-body-secondary' }, 'No changes seen yet. Boards changing parent show here.')]));
+}
+
+document.getElementById('network-refresh').addEventListener('click', (event) => busy(event.target, async () => {
+  net.state = await api('POST', '/api/network/refresh');
+  await loadNetwork();
+}));
+
+document.getElementById('border-router-form').addEventListener('submit', (event) => {
+  event.preventDefault();
+  api('PUT', '/api/settings', { border_router_url: document.getElementById('border-router-url').value.trim() })
+    .then(() => notify('Saved', 'success', 2000), () => {});
+});
+
+document.getElementById('border-router-find').addEventListener('click', (event) => busy(event.target, async () => {
+  const result = await api('POST', '/api/network/find-border-router');
+  if (!result.found.length) return notify('No border router with a REST API found on this network.', 'warning');
+  document.getElementById('border-router-url').value = result.border_router_url || result.found[0];
+  notify(`Found: ${result.found.join(', ')}`, 'success');
+}));
+
 // ------------------------------------------------------------------ builds
 
 const builds = { schema: [], variants: [], profiles: [], profile: null, buildId: null };
@@ -592,6 +861,7 @@ const settingLabels = {
   online_minutes: ['Online for (min)', 'A device that answered within this time shows as online'],
   auto_refresh_minutes: ['Automatic refresh (min)', 'Refreshes every device\'s status while the app runs. 0 turns it off.'],
   reboot_timeout_s: ['Reboot timeout (s)', 'How long an updated device has to come back'],
+  border_router_url: ['Border router REST API', 'For the Network page, such as http://192.168.1.20:8081 (the ot-br-posix REST server). Empty: not used.'],
 };
 
 async function loadSettings() {
@@ -600,8 +870,9 @@ async function loadSettings() {
   const form = document.getElementById('settings-form');
   form.replaceChildren(...Object.entries(status.settings).map(([key, value]) => {
     const [label, help] = settingLabels[key] || [key, ''];
-    return h('div', { class: 'col-sm-6' }, h('label', { class: 'form-label', for: `setting-${key}` }, label),
-      h('input', { class: 'form-control', id: `setting-${key}`, name: key, type: 'number', step: 'any', value }),
+    const text = typeof value === 'string';
+    return h('div', { class: text ? 'col-12' : 'col-sm-6' }, h('label', { class: 'form-label', for: `setting-${key}` }, label),
+      h('input', { class: 'form-control', id: `setting-${key}`, name: key, type: text ? 'text' : 'number', step: text ? null : 'any', value }),
       help ? h('div', { class: 'form-text' }, help) : null);
   }), h('div', { class: 'col-12' }, h('button', { class: 'btn btn-primary', type: 'submit' }, 'Save')));
   const about = [['Version', status.version], ['Data folder', status.data_dir],
@@ -640,7 +911,9 @@ document.getElementById('import-devices').addEventListener('click', (event) => b
 
 document.getElementById('settings-form').addEventListener('submit', (event) => {
   event.preventDefault();
-  const values = Object.fromEntries([...new FormData(event.target).entries()].map(([k, v]) => [k, Number(v)]));
+  const current = (state.status && state.status.settings) || {};
+  const values = Object.fromEntries([...new FormData(event.target).entries()].map(([k, v]) =>
+    [k, typeof current[k] === 'string' ? v.trim() : Number(v)]));
   api('PUT', '/api/settings', values).then(() => notify('Saved', 'success', 2000), () => {});
 });
 
@@ -663,6 +936,8 @@ function connectEvents(delay = 1000) {
       renderDevices();
     } else if (event.type === 'devices') {
       loadDevices().catch(() => {});
+    } else if (event.type === 'network') {
+      if (!document.getElementById('tab-network').classList.contains('d-none')) loadNetwork().catch(() => {});
     } else if (event.type === 'build-log') {
       onBuildLog(event);
     } else if (event.type === 'build') {

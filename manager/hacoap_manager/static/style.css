@@ -10,3 +10,10 @@ td.error-text { color: var(--bs-danger); font-size: .875em; }
   padding: .5rem; border-radius: var(--bs-border-radius); white-space: pre-wrap; word-break: break-all; }
 .setting-changed { border-color: var(--bs-primary); box-shadow: 0 0 0 .1rem rgba(var(--bs-primary-rgb), .25); }
 fieldset legend { font-size: 1rem; font-weight: 600; margin-top: .5rem; }
+.network-canvas { position: relative; min-height: 32rem; background: var(--bs-body-bg); overflow: hidden; }
+.network-canvas svg { width: 100%; height: 36rem; display: block; touch-action: none; user-select: none; }
+.network-canvas .node { cursor: grab; }
+.network-canvas .node text { font-size: 11px; fill: var(--bs-body-color); paint-order: stroke; stroke: var(--bs-body-bg); stroke-width: 3px; }
+.network-canvas line { cursor: pointer; }
+.network-canvas .selected circle, .network-canvas .selected rect { stroke: var(--bs-primary); stroke-width: 3px; }
+.legend-swatch { display: inline-block; width: .8rem; height: .8rem; border-radius: 50%; margin: 0 .25rem 0 .75rem; vertical-align: -1px; }

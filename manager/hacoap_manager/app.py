@@ -25,6 +25,7 @@ from .db import Database
 from .events import EventBus
 from .images import ImageLibrary, build_images, find_repository
 from .inventory import Inventory, InventoryError
+from .network import NetworkError, NetworkService
 from .updates import UpdateError, UpdateManager
 
 log = logging.getLogger(__name__)
@@ -45,6 +46,7 @@ class Services:
     updates: UpdateManager
     repository: Path
     builds: BuildRunner
+    network: NetworkService
 
 
 def create_services(data_dir, discover=discovery.discover):
@@ -61,7 +63,8 @@ def create_services(data_dir, discover=discovery.discover):
     db.interrupted_builds()
     if not db.profiles():
         db.save_profile("Production", "battery", {}, "The firmware as configured in the repository")
-    return Services(data_dir, settings, db, events, inventory, images, updates, repository, builds)
+    network = NetworkService(data_dir, db, settings, events)
+    return Services(data_dir, settings, db, events, inventory, images, updates, repository, builds, network)
 
 
 def _host_name(host_header):
@@ -341,6 +344,29 @@ def create_app(services, background_tasks=True):
     @app.get("/api/history")
     async def history(device_id: str = None):
         return s.db.updates(device_id)
+
+    # ------------------------------------------------------------ the Thread network
+
+    @app.get("/api/network")
+    async def network():
+        return s.network.state()
+
+    @app.post("/api/network/refresh")
+    async def refresh_network():
+        try:
+            return await s.network.refresh()
+        except NetworkError as exc:
+            raise _bad_request(exc)
+
+    @app.post("/api/network/find-border-router")
+    async def find_border_router():
+        if not discovery.discovery_available():
+            raise _bad_request("Finding the border router needs the zeroconf package")
+        urls = await s.network.find_border_router(s.settings.discovery_timeout_s)
+        if urls and not s.settings.border_router_url:
+            s.settings.border_router_url = urls[0]
+            config.save_settings(s.data_dir, s.settings)
+        return {"found": urls, "border_router_url": s.settings.border_router_url}
 
     # ------------------------------------------------------------ backups and export
 

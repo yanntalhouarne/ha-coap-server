@@ -6,6 +6,9 @@ when a tested image isn't confirmed before the next reset.
 
 Run one from the command line:
     python -m hacoap_manager.simdevice [--host 127.0.0.1] [--smp-port 1337] [--coap-port 5683]
+                                       [--border-router api|legacy] [--border-router-port 8081]
+With --border-router, a simulated border router REST API serves a small made-up network in
+which this device is one of the boards (see simborder.py).
 """
 
 import argparse
@@ -289,6 +292,9 @@ def main():
     parser.add_argument("--smp-port", type=int, default=1337)
     parser.add_argument("--coap-port", type=int, default=5683)
     parser.add_argument("--device-id", default="1a2b3c4d")
+    parser.add_argument("--border-router", choices=("api", "legacy"),
+                        help="also simulate a border router REST API, as a 2025+ (api) or older (legacy) one")
+    parser.add_argument("--border-router-port", type=int, default=8081)
     args = parser.parse_args()
 
     async def run():
@@ -297,7 +303,17 @@ def main():
         async with SimulatorServer(device, args.host, args.smp_port, args.coap_port) as server:
             print(f"Simulated device {args.device_id}: mcumgr on {args.host}:{server.smp_port}, "
                   f"CoAP on {args.host}:{server.coap_port}. Ctrl+C to stop.")
-            await asyncio.Event().wait()
+            border = None
+            if args.border_router:
+                from .simborder import SimulatedBorderRouter, scenario
+                border = SimulatedBorderRouter(args.border_router, args.host, args.border_router_port,
+                                               scenario((args.host, "fd11:22::2"))).start()
+                print(f"Simulated border router ({args.border_router} API): {border.url}")
+            try:
+                await asyncio.Event().wait()
+            finally:
+                if border is not None:
+                    border.stop()
 
     try:
         asyncio.run(run())

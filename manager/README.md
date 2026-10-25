@@ -1,6 +1,6 @@
 # HA-CoAP Fleet Manager
 
-One application for Windows, macOS and Linux to look after a fleet of ha-coap devices. It finds them on the network, shows their status, builds firmware with the settings you choose, keeps a library of firmware images, and updates devices over the air or over USB.
+One application for Windows, macOS and Linux to look after a fleet of ha-coap devices. It finds them on the network, shows their status, draws the Thread mesh they form, builds firmware with the settings you choose, keeps a library of firmware images, and updates devices over the air or over USB.
 
 It runs on your PC when you need it. The app starts a small web server that only this computer can reach (`http://127.0.0.1:8710`), and opens it in your browser. Close the app's window and everything stops.
 
@@ -52,6 +52,19 @@ The status refreshes every 15 minutes while the app runs, or with **Refresh all*
 Tick devices to update them.
 
 **Images.** The library of firmware images. You can add an `app_update.bin` file, or add a build from this computer: when the app runs from the ha-coap-server folder, it lists `application/build*/zephyr/app_update.bin`. Images are identified by their SHA-256 hash, the same one `mcumgr image list` shows. Use the notes to say what each one is, because the firmware doesn't have version numbers yet (every image is `0.0.0`).
+
+**Network.** A map of the Thread network, read from your border router's REST API (ot-br-posix, port 8081). Set its address on the page (for example `http://192.168.1.20:8081`), or click **Find it** (the app looks for border routers on the LAN), then **Read the network**.
+- **What it shows:**
+  - every router (the border router as a square) and every child: FTD child, MED (always listening) or SED (sleepy, like your boards)
+  - solid lines between routers, and dashed lines from each child to its parent
+  - your boards, named and ringed in yellow, matched by their IPv6 address
+- **Signal strength.** Line colour shows link strength (green, amber, red), and line length follows it: strong links are short, weak ones long. That's radio closeness, not distance, since walls and antennas count. Your boards never link to each other: each one only talks to its parent.
+- **What your border router reports depends on its version.**
+  - **2025 or later** (`/api/devices`): signal margin and RSSI for every link, and children's addresses, so boards get named.
+  - **Older** (`/diagnostics`): link quality 0–3 between routers only, and no addresses for children, so boards show as "SED 0x5c01". The page says which one it got.
+- **Interacting:** drag nodes to tidy the map, and click a node or a line for details.
+- **Changes** logs boards that changed parent between two readings, or disappeared.
+- To try it without a border router: `python -m hacoap_manager.simdevice --border-router api` (or `legacy`), then use `http://127.0.0.1:8081`.
 
 **Updates.** Choose an image and either the devices ticked on the Devices tab (over the air) or one board on a USB serial port. Each device goes through these steps:
 1. **Connect and read its slots.** A device already running this image is left alone.
@@ -118,6 +131,8 @@ Then, in the app, add a device at address `127.0.0.1`. To try an update, add any
 | `hacoap_manager/mcuboot.py` | Reads an image's version and hash |
 | `hacoap_manager/builds.py`, `kconfig.py` | Build profiles (from `application/Kconfig`), checks, the build runner |
 | `hacoap_manager/backup.py` | Backups, restore, the device list as CSV |
+| `hacoap_manager/otbr.py`, `network.py` | The border router's REST API (both generations), the Network page's map and change log |
+| `hacoap_manager/simborder.py` | A simulated border router REST API, with a small made-up network |
 | `hacoap_manager/db.py` | The SQLite database |
 | `hacoap_manager/simdevice.py` | The simulated device |
 | `hacoap_manager/static/` | The page: plain JavaScript and Bootstrap, no build step, nothing loaded from the internet |
@@ -138,4 +153,4 @@ CI runs the tests and builds the packaged app on Windows, macOS and Linux (job `
 
 The same workflow can be run by hand from the Actions tab: it then only builds the packages, without a release.
 
-**Not covered by the tests yet:** USB serial (there's no simulated serial port), and real Thread timing. Both need a board. Builds are tested with a stand-in for the build script (CI has no nRF toolchain for the app's tests); a real build through the app was checked on Windows.
+**Not covered by the tests yet:** USB serial (there's no simulated serial port), real Thread timing, and a real border router's REST API (the simulated one follows ot-br-posix's published API and source). They need the hardware. Builds are tested with a stand-in for the build script (CI has no nRF toolchain for the app's tests); a real build through the app was checked on Windows.
