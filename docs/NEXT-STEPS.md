@@ -94,6 +94,7 @@ Share the test results and decisions with Claude. It updates the status tables i
 - builds firmware from named profiles (variant plus the settings you change, in a form made from `application/Kconfig`), with a live log, checking your signing key first
 - keeps a library of firmware images, from files or from those builds
 - backs up its data (daily, and on demand) and restores it, and exports or imports the device list as CSV
+- draws the Thread mesh (the **Network** page): routers, children, your boards, and link strength as line colour and length, from the border router's REST API
 - updates devices over the air or over USB: upload, trial boot, check the device comes back running it, confirm. One device at a time, stopping at the first failure, with a history
 
 It talks to the devices directly (no `mcumgr` tool needed). Details and instructions: `manager/README.md`. The plan, with what's next: `docs/FLEET-MANAGER-PLAN.md`.
@@ -115,6 +116,7 @@ After PR #6's board tests (the fast polling during updates is in that firmware):
    - [ ] **Builds → Build with this profile** (Production) makes an image signed with your key (already checked on this PC), or **Images → Builds on this computer → Add** your latest build
    - [ ] **Update** one board over the air: it goes through uploading, rebooting, waiting, confirming, and ends as *updated*. Note how long the upload takes.
    - [ ] **Update** one board on USB (choose its serial port). This path has no simulated test, so it's the most likely to need a fix.
+   - [ ] **Network:** set the border router's address (or **Find it**), then **Read the network**. It works without the boards too. Note what the page says it got: "with signal strength" (a 2025+ border router) or "link quality only" (an older one, where boards can't be named on the map).
 3. Tell Claude what happened. Once it works, `fleet-manager` can become a pull request, and the web updater can go.
 
 ### Which machine runs it
