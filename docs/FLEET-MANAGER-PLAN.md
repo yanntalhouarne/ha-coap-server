@@ -110,7 +110,7 @@ Also added (2026-10-25 and 26):
 - **flashing a board over SWD** with a J-Link, and an optional install of the SWD tools (`nrfutil device`; Nordic's replacement for the nRF Command Line Tools)
 - a **simulated fleet** (`simdevice --count N`) with a simulated border router, to try all of it without boards
 
-**What the first hardware test should check** (phases 1–2): Find devices lists every board; status refreshes; Firmware slots answers; an over-the-air update of one board goes through upload, reset, return and confirm; a USB update of one board does too (the USB path has no simulated test). Also note how long an over-the-air upload takes.
+**What the first hardware test should check** (phases 1–2): Find devices lists every board; status refreshes; Firmware slots answers; an over-the-air update of one board goes through upload, reset, return and confirm; a USB update of one board does too (the USB path has no simulated test); flashing a board over SWD with **Keep its network** brings it back on the network (no real J-Link test yet either). Also note how long an over-the-air upload takes.
 
 ## Open questions
 

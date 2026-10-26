@@ -122,6 +122,8 @@ Without `west`: `nrfjprog --program application/build/zephyr/merged.hex --chiper
 
 Both write MCUboot and the application together, so the bootloader and the image always match. After that, use [firmware updates](#-firmware-updates).
 
+**From the fleet manager** (`manager/`): its **Builds** tab has **Flash a board over SWD**, which does the same from a page: pick a build and the J-Link, then keep the credentials or erase everything. It uses `nrfutil device` (Nordic's replacement for the nRF Command Line Tools, installed by a button on the same tab) and still needs the J-Link software. It hasn't flashed a real board yet, so the commands above stay the reference until it has.
+
 **Moving existing boards to your own key.** Boards flashed before you created a key run a bootloader that only trusts the public development key, and boards with your key's bootloader only trust your key. A key change can't go through mcumgr. Flash each board once over SWD with a build signed with your key (second row above). From then on, USB and over-the-air updates work as long as you sign with the same key.
 
 ## 🧵 Joining a Thread network
@@ -390,7 +392,7 @@ The SDK comes from forks of `sdk-nrf` and `sdk-zephyr`, pinned to exact commits 
 
 - [ ] Implement dynamic SRP client hostname reassignment when duplicates are detected
 - [x] Refactor SRP functionality out of `coap_server.c` (now `src/srp.c`)
-- [ ] Fleet manager: one app for Windows, macOS and Linux to find, commission, configure, build and update the whole fleet. Inventory, updates, firmware builds, backups, release downloads, a network map, plant tracking and alerts are done (`manager/`, see [its README](manager/README.md)), not yet tried on boards; runtime settings and commissioning are next, after the board tests. Plan: `docs/FLEET-MANAGER-PLAN.md`
+- [ ] Fleet manager: one app for Windows, macOS and Linux to find, commission, configure, build and update the whole fleet. Inventory, updates, firmware builds, backups, release downloads, a network map, plant tracking, alerts and flashing over SWD are done (`manager/`, see [its README](manager/README.md)), not yet tried on boards; runtime settings and commissioning are next, after the board tests. Plan: `docs/FLEET-MANAGER-PLAN.md`
 
 ## 📚 References
 
