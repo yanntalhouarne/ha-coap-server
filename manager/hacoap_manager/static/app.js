@@ -508,7 +508,7 @@ document.getElementById('upload-image').addEventListener('click', (event) => bus
 
 // ------------------------------------------------------------------ network
 
-const net = { state: null, positions: new Map(), selected: null, layout: null };
+const net = { state: null, positions: new Map(), selected: null, layout: null, zoom: {} };
 const SVG_NS = 'http://www.w3.org/2000/svg';
 
 function svg(tag, attrs = {}, ...children) {
@@ -669,9 +669,9 @@ function renderNetwork() {
     makeDraggable(group, n);
     return group;
   });
-  const drawing = svg('svg', { viewBox: (net.zoom || box).join(' '), preserveAspectRatio: 'xMidYMid meet' }, ...lines, ...groups);
+  const drawing = svg('svg', { viewBox: (net.zoom.mesh || box).join(' '), preserveAspectRatio: 'xMidYMid meet' }, ...lines, ...groups);
   canvas.append(drawing);
-  enableZoom(canvas, drawing, box);
+  enableZoom(canvas, drawing, box, 'mesh');
 
   const counts = { routers: 0, children: 0, sleepy: 0, boards: 0 };
   for (const n of topology.nodes) {
@@ -685,10 +685,13 @@ function renderNetwork() {
 }
 
 // The scroll wheel (or a trackpad pinch) zooms around the pointer, dragging the background
-// pans, and a double click or "fit" shows the whole map again. The zoom survives a re-read.
-function enableZoom(canvas, drawing, box) {
+// pans, and a double click or "fit" shows the whole map again. Each view ('mesh', 'floorplan')
+// keeps its zoom across redraws; maxIn and maxOut are how far in and out it can go (maxOut 1:
+// the whole map, no more).
+function enableZoom(canvas, drawing, box, key, { maxIn = 12, maxOut = 2 } = {}) {
   const view = () => { const v = drawing.viewBox.baseVal; return [v.x, v.y, v.width, v.height]; };
-  const show = (v) => { net.zoom = v; drawing.setAttribute('viewBox', (v || box).join(' ')); };
+  const show = (v) => { net.zoom[key] = v; drawing.setAttribute('viewBox', (v || box).join(' ')); };
+  const isBackground = (target) => !target.closest('.node') && target.tagName !== 'line';
   const toMap = (clientX, clientY) => {
     const p = drawing.createSVGPoint();
     p.x = clientX; p.y = clientY;
@@ -696,7 +699,7 @@ function enableZoom(canvas, drawing, box) {
   };
   const zoomBy = (factor, at) => {
     const [x, y, w, height] = view();
-    const scale = Math.max(box[2] / 12, Math.min(box[2] * 2, w * factor)) / w;  // 12× in to 2× out
+    const scale = Math.max(box[2] / maxIn, Math.min(box[2] * maxOut, w * factor)) / w;
     show([at.x - (at.x - x) * scale, at.y - (at.y - y) * scale, w * scale, height * scale]);
   };
   const center = () => { const [x, y, w, height] = view(); return { x: x + w / 2, y: y + height / 2 }; };
@@ -707,7 +710,7 @@ function enableZoom(canvas, drawing, box) {
   }, { passive: false });
   let pan = null;
   drawing.addEventListener('pointerdown', (event) => {
-    if (event.target !== drawing) return;  // nodes drag themselves, lines are clicked
+    if (!isBackground(event.target)) return;  // nodes drag themselves, lines are clicked
     pan = { id: event.pointerId, start: toMap(event.clientX, event.clientY) };
     drawing.setPointerCapture(event.pointerId);
     drawing.classList.add('panning');
@@ -721,7 +724,7 @@ function enableZoom(canvas, drawing, box) {
   const endPan = () => { pan = null; drawing.classList.remove('panning'); };
   drawing.addEventListener('pointerup', endPan);
   drawing.addEventListener('pointercancel', endPan);
-  drawing.addEventListener('dblclick', (event) => { if (event.target === drawing) show(null); });
+  drawing.addEventListener('dblclick', (event) => { if (isBackground(event.target)) show(null); });
 
   canvas.querySelector('.zoom-controls')?.remove();
   canvas.append(h('div', { class: 'zoom-controls' },
@@ -1343,10 +1346,21 @@ function renderFloorplan() {
   document.getElementById('floorplan-empty').classList.toggle('d-none', !!plan);
   document.getElementById('floorplan-remove').classList.toggle('d-none', !plan);
   if (!plan || net.view !== 'floorplan') return;
-  const img = h('img', { src: `/api/network/floorplan?t=${plan.time}`, alt: 'Floor plan', draggable: 'false' });
-  const stage = h('div', { class: 'floorplan-stage' }, img);
+  const img = new Image();
+  img.src = `/api/network/floorplan?t=${plan.time}`;
+  const stage = h('div', { class: 'floorplan-stage' });
   container.append(stage);
-  img.addEventListener('load', () => drawFloorplanNodes(stage, img));
+  img.addEventListener('load', () => {
+    // Shown as large as fits, but no taller than 75 % of the window or twice the picture's own
+    // height: a small screenshot stretched further only gets blurrier (zoom in to see detail).
+    const aspect = img.naturalHeight / img.naturalWidth;
+    const maxHeight = Math.min(window.innerHeight * 0.75, img.naturalHeight * 2);
+    const W = Math.round(Math.min(stage.clientWidth || 1000, maxHeight / aspect));
+    const size = { W, H: Math.round(W * aspect) };
+    if (!net.floorplanSize || net.floorplanSize.W !== size.W) net.zoom.floorplan = null;  // a zoom in other units
+    net.floorplanSize = size;
+    drawFloorplanNodes(stage, img);
+  });
 }
 
 function drawFloorplanNodes(stage, img) {
@@ -1356,7 +1370,7 @@ function drawFloorplanNodes(stage, img) {
     stage.append(h('div', { class: 'floorplan-hint' }, 'Read the network first: the nodes come from it.'));
     return;
   }
-  const W = 1000, H = Math.round(1000 * img.naturalHeight / img.naturalWidth);
+  const { W, H } = net.floorplanSize;  // map units are screen pixels at the full view
   const positions = net.state.positions || {};
   const tray = [];
   const points = new Map();
@@ -1380,7 +1394,10 @@ function drawFloorplanNodes(stage, img) {
     return svg('line', { x1: a.x, y1: a.y, x2: b.x, y2: b.y, style: `stroke: ${color}`, 'stroke-width': link.kind === 'mesh' ? 4 : 3,
       'stroke-dasharray': link.kind === 'child' ? '8 6' : null, 'data-a': link.a, 'data-b': link.b }, svg('title', {}, strength.text));
   });
-  const drawing = svg('svg', { viewBox: `0 0 ${W} ${H}`, preserveAspectRatio: 'none', class: columns > 1 ? 'tray-compact' : null },
+  const box = [0, 0, W, H];
+  const drawing = svg('svg', { viewBox: (net.zoom.floorplan || box).join(' '), width: W, height: H,
+    preserveAspectRatio: 'xMidYMid meet', class: columns > 1 ? 'tray-compact' : null },
+    svg('image', { href: img.src, x: 0, y: 0, width: W, height: H, preserveAspectRatio: 'none', class: 'floorplan-picture' }),
     svg('rect', { x: 0, y: 0, width: trayWidth, height: H, class: 'tray' }),
     svg('text', { x: trayWidth / 2, y: H - 28, 'text-anchor': 'middle', class: 'tray-label' }, 'not'),
     svg('text', { x: trayWidth / 2, y: H - 12, 'text-anchor': 'middle', class: 'tray-label' }, 'placed'),
@@ -1415,6 +1432,8 @@ function drawFloorplanNodes(stage, img) {
     drawing.append(group);
   }
   stage.append(drawing);
+  // In until each of the picture's pixels is 4 screen pixels (at least 3×): beyond, it's only blur
+  enableZoom(stage, drawing, box, 'floorplan', { maxIn: Math.max(3, 4 * img.naturalWidth / W), maxOut: 1 });
 }
 
 document.getElementById('floorplan-upload').addEventListener('click', (event) => busy(event.target, async () => {
