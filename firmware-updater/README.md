@@ -4,6 +4,8 @@ A local web interface for updating ha-coap devices over the air (Thread, mcumgr 
 
 It does the update with the same tool as the command line: it runs `../scripts/mcumgr-update-all.sh` in its non-interactive mode and shows the progress live. For USB updates, use the scripts (see the main README).
 
+The fleet manager (`../manager/`, on the `fleet-manager` branch) does all of this and more. It is meant to replace this updater once it has updated real boards; until then, this one stays.
+
 ## Features
 
 - **Dashboard**: checks that everything it needs is installed, counts past updates, and shows each run's log.

@@ -2,7 +2,7 @@
 
 A cross-platform application (Windows, Linux, macOS) to manage, maintain and update the firmware on a fleet of ha-coap devices: find them, commission new ones, configure them, build firmware and update it over USB or over the air.
 
-Status (2026-10-25): **phases 0–2, 5 and 6 are built** in `manager/` (version 0.1.0) (see `manager/README.md`), tested against a simulated device on Windows, macOS and Linux, **not yet with boards**. Where things stand overall, and what to do first: `docs/NEXT-STEPS.md`. Decisions so far:
+Status (2026-10-26): **phases 0–2, 5 and 6 are built** in `manager/` (version 0.1.0) (see `manager/README.md`), with many additions (below), tested against simulated devices and a simulated border router on Windows, macOS and Linux, **not yet with boards**. Phases 3 and 4 wait for PR #6 to be tested on boards and merged. Where things stand overall, and what to do first: `docs/NEXT-STEPS.md`. Decisions so far:
 - **Form:** a local web app (Python backend, browser UI), packaged as one download per OS.
 - **Where it runs:** on your PC when you need it, listening only on that computer (no login needed). Remote access: not for now (decided 2026-10-25), maybe later.
 - **Settings:** build-time (Kconfig) and runtime (changed on a running device, no reflash).
@@ -90,7 +90,7 @@ The command-line scripts stay, for automation and as a fallback.
 
 **Added along the way:** a **Network** page (2026-10-25): a map of the Thread mesh from the border router's REST API, with link strength drawn as line colour and length, boards named by address, and a parent-change log. It supports both REST API generations: `/api/devices` + `/api/actions` (2025+, with RSSI and link margin) and `/diagnostics` (older, link quality only). The first real check is reading your border router.
 
-Also added (2026-10-25):
+Also added (2026-10-25 and 26):
 - a **dashboard**
 - **device pages** with history charts (readings and link strength) and pump/buzzer controls
 - **groups** (location and tags)
@@ -104,8 +104,10 @@ Also added (2026-10-25):
 - a **signature check** before updates, and a **battery check** that skips devices under 20 % over the air
 - **plant photos**, watering targets and a **needs water** list
 - **alerts**, also as browser notifications
-- **network history** with a slider, and a **signal heatmap** on the floor plan
+- **network history** with a slider, and a **signal heatmap** on the floor plan and the mesh
+- a **board's card** on the network map: click a board for its plant photo, battery, soil, humidity and temperature
 - **Ctrl+K search**, actions for **all ticked devices**, a **readings CSV**, a **problem report**, an optional **app update check**, and a **phone layout**
+- a **simulated fleet** (`simdevice --count N`) with a simulated border router, to try all of it without boards
 
 **What the first hardware test should check** (phases 1–2): Find devices lists every board; status refreshes; Firmware slots answers; an over-the-air update of one board goes through upload, reset, return and confirm; a USB update of one board does too (the USB path has no simulated test). Also note how long an over-the-air upload takes.
 

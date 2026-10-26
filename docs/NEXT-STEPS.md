@@ -1,4 +1,4 @@
-# Next steps (paused 2026-10-25)
+# Next steps (paused 2026-10-26)
 
 Start here when you come back. To pick up with Claude, say: *"Resume from docs/NEXT-STEPS.md"*.
 
@@ -8,7 +8,7 @@ Start here when you come back. To pick up with Claude, say: *"Resume from docs/N
 |---|---|---|
 | `main` | The firmware as it was before this work | Unchanged |
 | `claude` | Firmware fixes and refactor, the power changes from step 4, reproducible builds, private signing key and PSKd, cross-platform update scripts, working web updater, firmware unit tests, reviews in `docs/` | [PR #6](https://github.com/yanntalhouarne/ha-coap-server/pull/6), **not merged: no board has run it yet**. CI passes on Linux, macOS and Windows |
-| `fleet-manager` | `claude` plus the fleet manager app (`manager/`): inventory, updates, firmware builds, backups and release downloads (plan phases 0–2, 5 and 6; version 0.1.0) | Tested against a simulated device on all three OSes, **not on a board yet** |
+| `fleet-manager` | `claude` plus the fleet manager app (`manager/`): inventory, updates, firmware builds, backups and release downloads (plan phases 0–2, 5 and 6; version 0.1.0), and many additions (see step 6) | Tested against simulated devices and a simulated border router on all three OSes, CI passes, **not on a board or your border router yet**. No release published yet (no `manager-v*` tag pushed) |
 
 The order to go in:
 1. Test PR #6 on the boards (steps 1–3 below), then merge it.
@@ -92,12 +92,22 @@ Share the test results and decisions with Claude. It updates the status tables i
 **What's built** (on the `fleet-manager` branch, in `manager/`): the plan's phases 0–2, 5 and 6, as version 0.1.0. It's a local web app for Windows, macOS and Linux that:
 - finds devices (or adds them by address) and shows their firmware, battery, readings and when they were last seen
 - builds firmware from named profiles (variant plus the settings you change, in a form made from `application/Kconfig`), with a live log, checking your signing key first
-- keeps a library of firmware images, from files or from those builds
+- keeps a library of firmware images, from files or from those builds, and shows who signed each one (your key, the development key, another key, unsigned)
 - backs up its data (daily, and on demand) and restores it, and exports or imports the device list as CSV
 - draws the Thread mesh (the **Network** page): routers, children, your boards, and link strength as line colour and length, from the border router's REST API
-- updates devices over the air or over USB: upload, trial boot, check the device comes back running it, confirm. One device at a time, stopping at the first failure, with a history
+- updates devices over the air or over USB: upload, trial boot, check the device comes back running it, confirm. One device at a time, stopping at the first failure, with a history. It asks before using an image your boards would refuse, and skips devices under 20 % battery over the air
 
-It talks to the devices directly (no `mcumgr` tool needed). Details and instructions: `manager/README.md`. The plan, with what's next: `docs/FLEET-MANAGER-PLAN.md`.
+Added since (2026-10-25 and 26), all described in `manager/README.md`:
+- a **dashboard**, and a **page per device** with charts, pump and buzzer controls, and a **photo of its plant**
+- **watering targets** and a **needs water** list, **alerts** (offline, low battery, needs water, failed update), also as browser notifications
+- **groups** (location and tags), a **release** image, **staged updates**, **what's new** between two images, actions for **all ticked devices**
+- on the Network page: **click a board** for its plant photo and readings, a **floor plan** of your home, a **signal heatmap** (floor plan and mesh), **network history** with a slider, zoom and pan, and a **channel scan**
+- a **serial console**, **Set up this computer** buttons (toolchain, signing key, PSKd), **Ctrl+K search**, a **readings CSV**, a **problem report**, an optional **app update check** (off by default), and a **phone layout**
+- a **simulated fleet**: `python -m hacoap_manager.simdevice --count 9 --border-router api` runs 9 devices and a border router on this PC, to try everything without boards
+
+It talks to the devices directly (no `mcumgr` tool needed). Details and instructions: `manager/README.md`. Every change: `manager/CHANGELOG.md`. The plan, with what's next: `docs/FLEET-MANAGER-PLAN.md`.
+
+**Where it was left (2026-10-26):** the last commits are pushed to `fleet-manager` and CI passed. To run your copy from the source again after pulling, re-run `.venv\Scripts\pip install -r requirements.txt` in `manager/` first: it now also needs `cryptography`, for the signature check. Then start it, and the simulator too if you want the 9 simulated devices back (they don't keep running between sessions). The app's data (devices, photos, floor plan, history) stays between runs, in `%LOCALAPPDATA%\hacoap-manager` unless you started it with `--data-dir`. If you tried things against the simulator, the simulated devices are in that list: remove them (**With selected → Remove from the list**) before using it with your boards.
 
 **Decided:**
 - A local web app, one download per OS, run on your PC when you need it.
@@ -108,15 +118,16 @@ It talks to the devices directly (no `mcumgr` tool needed). Details and instruct
 ### Try it on the boards
 After PR #6's board tests (the fast polling during updates is in that firmware):
 1. Get it, either way:
-   - `git checkout fleet-manager`, then from `manager/`: `py -m venv .venv`, `.venv\Scripts\pip install -r requirements.txt`, `.venv\Scripts\python -m hacoap_manager`
+   - `git checkout fleet-manager && git pull`, then from `manager/`: `py -m venv .venv` (once), `.venv\Scripts\pip install -r requirements.txt`, `.venv\Scripts\python -m hacoap_manager`
    - or the packaged `hacoap-manager.exe` from the latest CI run on `fleet-manager` (GitHub → Actions → Artifacts). There's no release yet: making one is a tag away (`manager/README.md` → Making a release), best done once it has updated real boards.
 2. In the browser page it opens:
    - [ ] **Find devices** lists every board, and their status fills in (battery, readings)
    - [ ] **Actions → Firmware slots** answers for a board
-   - [ ] **Builds → Build with this profile** (Production) makes an image signed with your key (already checked on this PC), or **Images → Builds on this computer → Add** your latest build
+   - [ ] **Builds → Build with this profile** (Production) makes an image signed with your key (already checked on this PC), or **Images → Builds on this computer → Add** your latest build. Its **Signed** column says *your key*
    - [ ] **Update** one board over the air: it goes through uploading, rebooting, waiting, confirming, and ends as *updated*. Note how long the upload takes.
    - [ ] **Update** one board on USB (choose its serial port). This path has no simulated test, so it's the most likely to need a fix.
-   - [ ] **Network:** set the border router's address (or **Find it**), then **Read the network**. It works without the boards too. Note what the page says it got: "with signal strength" (a 2025+ border router) or "link quality only" (an older one, where boards can't be named on the map).
+   - [ ] **Network:** set the border router's address (or **Find it**), then **Read the network**. It works without the boards too. Note what the page says it got: "with signal strength" (a 2025+ border router) or "link quality only" (an older one, where boards can't be named on the map). Then click one of your boards on the map: its card should show its readings.
+   - [ ] **Run the pump** and **Beep** from a device's page reach the board (within 3 s)
 3. Tell Claude what happened. Once it works, `fleet-manager` can become a pull request, and the web updater can go.
 
 ### Which machine runs it

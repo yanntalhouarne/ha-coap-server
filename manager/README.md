@@ -6,7 +6,7 @@ One application for Windows, macOS and Linux to look after a fleet of ha-coap de
 
 It runs on your PC when you need it. The app starts a small web server that only this computer can reach (`http://127.0.0.1:8710`), and opens it in your browser. Close the app's window and everything stops.
 
-**Status (2026-10-25):** version 0.1.0, the plan's phases 0–2, 5 and 6 (foundations, inventory, updates, builds, backups and releases), plus a dashboard, device pages with history charts and plant photos, groups, staged updates with signature and battery checks, alerts, a floor plan with a signal heatmap, network history, a channel scan, a serial console and one-click setup of a new computer. Tested against a simulated device on Windows, macOS and Linux, and a real firmware build on Windows, **not yet with real boards**. Runtime settings and commissioning come later (see [the plan](../docs/FLEET-MANAGER-PLAN.md)). Until it has updated real boards, keep using the scripts or the web updater for anything important.
+**Status (2026-10-26):** version 0.1.0, the plan's phases 0–2, 5 and 6 (foundations, inventory, updates, builds, backups and releases), plus a dashboard, device pages with history charts and plant photos, groups, staged updates with signature and battery checks, alerts, a network map with each board's plant and readings, a floor plan, a signal heatmap, network history, a channel scan, a serial console and one-click setup of a new computer. Tested against simulated devices and a simulated border router on Windows, macOS and Linux, and a real firmware build on Windows, **not yet with real boards or a real border router**. Runtime settings and commissioning come later (see [the plan](../docs/FLEET-MANAGER-PLAN.md)). Until it has updated real boards, keep using the scripts or the web updater for anything important.
 
 ## Getting it
 
@@ -64,12 +64,14 @@ On a phone (over Remote Desktop, say) the layout narrows: the tabs scroll sidewa
 - when it last answered
 
 The status refreshes every 15 minutes while the app runs, or with **Refresh all**. Each device's **Actions** menu has:
+- Open (its page)
 - Refresh
 - Firmware slots (what mcumgr reports)
+- Update history
 - Beep
 - Rename
 - Notes
-- Remove
+- Remove from the list (it comes back with **Find devices**)
 
 Tick devices to update them, or to use **With selected**: refresh them, read their firmware, beep, add them to a group or remove them from one, set their location or watering target, or remove them from the list, all at once.
 
@@ -196,7 +198,7 @@ python -m hacoap_manager.simdevice          # mcumgr on 127.0.0.1:1337, CoAP on 
 ```
 It also announces itself over mDNS like a real board, so **Find devices** finds it (as `ha-coap-1a2b3c4d` at `127.0.0.1`; `--no-mdns` turns that off), or add it by address `127.0.0.1`. Discovery only accepts a loopback address from the simulator, which marks its announcement as simulated. To try an update, add any `app_update.bin`: the simulator accepts unsigned images too. `--border-router api` adds a simulated border router for the Network page.
 
-A whole fleet: `python -m hacoap_manager.simdevice --count 24 --border-router api` simulates 24 devices at 127.0.0.1 to 127.0.0.24, each with its own readings and battery, every fifth running an older image (v0.9.0). The border router places them all on the map, spread over five routers. Windows and Linux answer on every 127.0.0.x address. macOS needs the extra addresses added first: `for i in $(seq 2 24); do sudo ifconfig lo0 alias 127.0.0.$i up; done`.
+A whole fleet: `python -m hacoap_manager.simdevice --count 9 --border-router api` simulates 9 devices at 127.0.0.1 to 127.0.0.9 (up to 200 work). With `--count 24`, 24 devices at 127.0.0.1 to 127.0.0.24, each with its own readings and battery, every fifth running an older image (v0.9.0). The border router places them all on the map, spread over five routers. Windows and Linux answer on every 127.0.0.x address. macOS needs the extra addresses added first: `for i in $(seq 2 24); do sudo ifconfig lo0 alias 127.0.0.$i up; done`.
 
 ## Development
 

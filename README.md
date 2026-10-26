@@ -317,8 +317,8 @@ Older versions of this repository had a Thread network key and network name in `
 | `application/tests/unit/` | Unit tests of the firmware's logic, run on a PC |
 | `scripts/` | Setup, key generation, build and firmware update scripts |
 | `firmware-updater/` | Web interface for batch updates |
-| `manager/` | The fleet manager app (inventory, updates, builds; see its README) |
-| `docs/` | Schematic, code and power reviews (PDF) |
+| `manager/` | The fleet manager app (inventory, updates, builds, network map, plants; see its README) |
+| `docs/` | Schematic, code and power reviews (PDF), the fleet manager plan, and where things stand (`NEXT-STEPS.md`) |
 | `external/` | The SDK, fetched by the setup script (not in git) |
 
 ### Source layout
@@ -390,7 +390,7 @@ The SDK comes from forks of `sdk-nrf` and `sdk-zephyr`, pinned to exact commits 
 
 - [ ] Implement dynamic SRP client hostname reassignment when duplicates are detected
 - [x] Refactor SRP functionality out of `coap_server.c` (now `src/srp.c`)
-- [ ] Fleet manager: one app for Windows, macOS and Linux to find, commission, configure, build and update the whole fleet. Inventory, updates, firmware builds, backups and release downloads are done (`manager/`, see [its README](manager/README.md)), not yet tried on boards; runtime settings and commissioning are next, after the board tests. Plan: `docs/FLEET-MANAGER-PLAN.md`
+- [ ] Fleet manager: one app for Windows, macOS and Linux to find, commission, configure, build and update the whole fleet. Inventory, updates, firmware builds, backups, release downloads, a network map, plant tracking and alerts are done (`manager/`, see [its README](manager/README.md)), not yet tried on boards; runtime settings and commissioning are next, after the board tests. Plan: `docs/FLEET-MANAGER-PLAN.md`
 
 ## 📚 References
 
