@@ -24,6 +24,8 @@ PyInstaller.__main__.run([
     "--workpath", str(HERE / "build"),
     "--specpath", str(HERE / "build"),
     "--add-data", f"{HERE / 'hacoap_manager' / 'static'}{os.pathsep}hacoap_manager/static",
+    # The ha-coap logo; PyInstaller turns the PNG into Windows' .ico and macOS' .icns (with Pillow)
+    "--icon", str(HERE / "packaging" / "app-icon.png"),
     "--collect-submodules", "uvicorn",
     "--collect-submodules", "websockets",
     "--collect-submodules", "smpclient",
