@@ -188,6 +188,9 @@ fieldset legend::before { content: "// "; color: var(--t-accent-text); }
   paint-order: stroke; stroke: var(--t-bg-deep); stroke-width: 4px; }
 .network-canvas line { cursor: pointer; }
 .network-canvas .selected circle, .network-canvas .selected rect { stroke: var(--t-text) !important; stroke-width: 3px; }
+.board-disc { fill: var(--t-brand); stroke-width: 3px; }
+.board use { color: #0b1220; pointer-events: none; }
+.legend-board { width: 1.05rem; height: 1.05rem; margin: 0 .3rem 0 .9rem; vertical-align: -4px; overflow: visible; }
 .legend-swatch { display: inline-block; width: .7rem; height: .7rem; border-radius: 50%; margin: 0 .3rem 0 .9rem; vertical-align: -1px; }
 
 #theme-menu .swatch { display: inline-block; width: 1.6rem; height: .7rem; border-radius: 1px; margin-right: .6rem; vertical-align: -1px; }
@@ -244,6 +247,8 @@ fieldset legend::before { content: "// "; color: var(--t-accent-text); }
 .floorplan-stage .node text { font-size: 15px; font-family: var(--mono); fill: var(--t-text); paint-order: stroke;
   stroke: var(--t-bg-deep); stroke-width: 4px; }
 .floorplan-stage .node.unplaced { opacity: .75; }
+.floorplan-stage .tray-compact .node.unplaced text { display: none; }
+.floorplan-stage .tray-compact .node.unplaced:hover text { display: inline; }
 .floorplan-stage .tray { fill: var(--t-bg-deep); opacity: .8; }
 .floorplan-stage .tray-label { font-size: 13px; fill: var(--t-text-muted); font-family: var(--mono); }
 .floorplan-hint { position: absolute; top: 1rem; left: 1rem; background: var(--t-surface); padding: .5rem .75rem; font-size: .8rem; }

@@ -2,6 +2,7 @@
 registrations (service _ot._udp, instances ha-coap-<device ID>) over mDNS/DNS-SD."""
 
 import asyncio
+import ipaddress
 from dataclasses import dataclass
 
 SERVICE_TYPE = "_ot._udp.local."
@@ -28,17 +29,24 @@ def is_usable_ipv6(address):
 
 
 SIMULATOR_FLAG = b"sim"  # TXT entry set only by the simulated device (simdevice.py)
-LOOPBACK = ("127.0.0.1", "::1")
+
+
+def is_loopback(address):
+    try:
+        return ipaddress.ip_address(address).is_loopback
+    except ValueError:
+        return False
 
 
 def pick_address(addresses, properties=None):
     """The address to reach a device at: its global or unique-local IPv6 address. A loopback
-    address only for the simulated device, which says so in its TXT record."""
+    address only for the simulated device, which says so in its TXT record (the simulated
+    fleet uses 127.0.0.1, 127.0.0.2 and so on)."""
     usable = [a for a in addresses if is_usable_ipv6(a)]
     if usable:
         return usable[0]
     if (properties or {}).get(SIMULATOR_FLAG) == b"1":
-        return next((a for a in addresses if a in LOOPBACK), None)
+        return next((a for a in addresses if is_loopback(a)), None)
     return None
 
 

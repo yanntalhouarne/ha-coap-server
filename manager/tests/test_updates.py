@@ -167,3 +167,13 @@ async def test_one_job_at_a_time(fleet, start_sim):
     with pytest.raises(UpdateError, match="already running"):
         fleet.updates.start(NEW_HASH, [{"device_id": "1a2b3c4d"}])
     await fleet.updates.wait(job.id)
+
+
+def test_simulated_fleet():
+    from hacoap_manager.simdevice import fleet
+    devices = fleet(24)
+    assert [host for host, _ in devices][:3] == ["127.0.0.1", "127.0.0.2", "127.0.0.3"]
+    assert devices[0][1].device_id == "1a2b3c4d"
+    assert len({d.device_id for _, d in devices}) == 24
+    assert len({d.slots[0].info.hash for _, d in devices}) == 2   # some run an older image
+    assert len({d.readings() for _, d in devices}) > 12          # and their readings differ

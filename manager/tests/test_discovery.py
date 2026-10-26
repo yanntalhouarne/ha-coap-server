@@ -15,6 +15,8 @@ def test_pick_address():
     assert pick(["fe80::1", "::1"]) is None                       # a real board never uses these
     assert pick(["127.0.0.1"]) is None
     assert pick(["127.0.0.1"], {b"sim": b"1"}) == "127.0.0.1"     # the simulator says so
+    assert pick(["127.0.0.7"], {b"sim": b"1"}) == "127.0.0.7"     # a simulated fleet
+    assert pick(["127.0.0.7"]) is None
     assert pick(["fd11:22::1", "127.0.0.1"], {b"sim": b"1"}) == "fd11:22::1"
     assert pick(["192.168.1.9"], {b"sim": b"1"}) is None
 

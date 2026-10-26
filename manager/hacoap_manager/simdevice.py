@@ -7,9 +7,11 @@ when a tested image isn't confirmed before the next reset.
 Run one from the command line:
     python -m hacoap_manager.simdevice [--host 127.0.0.1] [--smp-port 1337] [--coap-port 5683]
                                        [--border-router api|legacy] [--border-router-port 8081]
-                                       [--no-mdns]
-With --border-router, a simulated border router REST API serves a small made-up network in
-which this device is one of the boards (see simborder.py). Unless --no-mdns, it announces
+                                       [--no-mdns] [--count 24]
+With --count N, it simulates a fleet of N devices at 127.0.0.1, 127.0.0.2 and so on, with
+different readings, some running an older image. With --border-router, a simulated border
+router REST API serves a made-up network in which the simulated devices are boards (see
+simborder.py). Unless --no-mdns, it announces
 itself over mDNS like a real board (through its border router), so the app's Find devices
 finds it.
 """
@@ -59,6 +61,8 @@ class SimulatedDevice:
     drop_coap_first: int = 0         # drop the first N CoAP requests
     dynamic: bool = False            # readings change over time (battery drains), for trying the app
     battery_drain_per_hour: float = 0.5
+    battery_start: float = 87
+    phase: float = 0.0               # shifts the dynamic readings, so a fleet's devices differ
     pump_running: bool = False
     pump_duration: int = 1
     pings: int = 0
@@ -80,10 +84,10 @@ class SimulatedDevice:
         if not self.dynamic:
             return self.data
         hours = (time.time() - self._started) / 3600
-        battery = max(3, round(87 - hours * self.battery_drain_per_hour))
-        soil = round(45 + 20 * math.sin(hours / 6))
-        humidity = round(55 + 10 * math.sin(hours / 9 + 1))
-        temperature = round(18 + 6 * math.sin(hours / 4))
+        battery = max(3, round(self.battery_start - hours * self.battery_drain_per_hour))
+        soil = round(45 + 20 * math.sin(hours / 6 + self.phase))
+        humidity = round(55 + 10 * math.sin(hours / 9 + 1 + self.phase))
+        temperature = round(18 + 6 * math.sin(hours / 4 + self.phase))
         return bytes([soil, battery, humidity, temperature & 0xFF])
 
     @property
@@ -328,19 +332,46 @@ class SimulatorServer:
 async def announce(device_id, host, coap_port):
     """Announces the device over mDNS as ha-coap-<id>._ot._udp, like a real board's border
     router does, with a TXT flag that lets discovery accept a loopback address."""
+    aiozc = await announce_all([(device_id, host, coap_port)])
+    print(f"Announced over mDNS as ha-coap-{device_id}._ot._udp.local.")
+    return aiozc
+
+
+async def announce_all(devices):
+    """Announces several devices, given as (device_id, host, coap_port). Returns the
+    AsyncZeroconf to close when done."""
     import socket
 
     from zeroconf import ServiceInfo
     from zeroconf.asyncio import AsyncZeroconf
 
-    family = socket.AF_INET6 if ":" in host else socket.AF_INET
-    info = ServiceInfo("_ot._udp.local.", f"ha-coap-{device_id}._ot._udp.local.",
-                       addresses=[socket.inet_pton(family, host)], port=coap_port,
-                       properties={"sim": "1"}, server=f"ha-coap-{device_id}.local.")
     aiozc = AsyncZeroconf()
-    await aiozc.async_register_service(info)
-    print(f"Announced over mDNS as ha-coap-{device_id}._ot._udp.local.")
+    registrations = []
+    for device_id, host, coap_port in devices:
+        family = socket.AF_INET6 if ":" in host else socket.AF_INET
+        info = ServiceInfo("_ot._udp.local.", f"ha-coap-{device_id}._ot._udp.local.",
+                           addresses=[socket.inet_pton(family, host)], port=coap_port,
+                           properties={"sim": "1"}, server=f"ha-coap-{device_id}.local.")
+        registrations.append(await aiozc.async_register_service(info))
+    await asyncio.gather(*registrations)  # registered together: each one probes for about a second
     return aiozc
+
+
+def fleet(count):
+    """A simulated fleet of 'count' devices, as (host, device): device i answers at 127.0.0.<i+1>.
+    Each has its own battery level, drain and readings, and every fifth runs an older image,
+    so the dashboard has something to show. The first is the usual 1a2b3c4d."""
+    current = mcuboot.build_image(b"simulated firmware" * 100, (1, 0, 0, 0))
+    older = mcuboot.build_image(b"simulated firmware, older" * 100, (0, 9, 0, 0))
+    result = []
+    for i in range(count):
+        device_id = "1a2b3c4d" if i == 0 else hashlib.sha256(f"simulated {i}".encode()).hexdigest()[:8]
+        device = SimulatedDevice.with_image(older if i % 5 == 3 else current, device_id=device_id, dynamic=True,
+                                            battery_start=87 if i == 0 else 95 - (i * 37) % 80,
+                                            battery_drain_per_hour=0.5 if i == 0 else 0.2 + (i % 4) * 0.25,
+                                            phase=i * 0.7)
+        result.append((f"127.0.0.{i + 1}", device))
+    return result
 
 
 def main():
@@ -353,20 +384,48 @@ def main():
                         help="also simulate a border router REST API, as a 2025+ (api) or older (legacy) one")
     parser.add_argument("--border-router-port", type=int, default=8081)
     parser.add_argument("--no-mdns", action="store_true", help="don't announce the device over mDNS")
+    parser.add_argument("--count", type=int, default=1,
+                        help="simulate this many devices, at 127.0.0.1, 127.0.0.2 and so on (up to 200)")
     args = parser.parse_args()
+    if not 1 <= args.count <= 200:
+        parser.error("--count must be between 1 and 200")
 
     async def run():
-        device = SimulatedDevice.with_image(mcuboot.build_image(b"simulated firmware" * 100, (1, 0, 0, 0)),
-                                            device_id=args.device_id, dynamic=True)
-        async with SimulatorServer(device, args.host, args.smp_port, args.coap_port) as server:
-            print(f"Simulated device {args.device_id}: mcumgr on {args.host}:{server.smp_port}, "
-                  f"CoAP on {args.host}:{server.coap_port}. Ctrl+C to stop.")
-            announcement = None if args.no_mdns else await announce(args.device_id, args.host, server.coap_port)
+        if args.count == 1:
+            devices = [(args.host, SimulatedDevice.with_image(
+                mcuboot.build_image(b"simulated firmware" * 100, (1, 0, 0, 0)), device_id=args.device_id, dynamic=True))]
+        else:
+            devices = fleet(args.count)
+        servers = []
+        try:
+            for host, device in devices:
+                try:
+                    servers.append(await SimulatorServer(device, host, args.smp_port, args.coap_port).start())
+                except OSError as exc:
+                    hint = (" On macOS, only 127.0.0.1 exists until you add the others, for example: "
+                            "for i in $(seq 2 24); do sudo ifconfig lo0 alias 127.0.0.$i up; done") \
+                        if host != "127.0.0.1" else ""
+                    raise SystemExit(f"Can't listen on {host}: {exc}.{hint}")
+            first = servers[0]
+            if len(servers) == 1:
+                print(f"Simulated device {first.device.device_id}: mcumgr on {first.host}:{first.smp_port}, "
+                      f"CoAP on {first.host}:{first.coap_port}. Ctrl+C to stop.")
+            else:
+                print(f"{len(servers)} simulated devices, at 127.0.0.1 to {servers[-1].host} "
+                      f"(mcumgr on port {first.smp_port}, CoAP on {first.coap_port}). Ctrl+C to stop.")
+            announcement = None
+            if not args.no_mdns:
+                if len(servers) == 1:
+                    announcement = await announce(first.device.device_id, first.host, first.coap_port)
+                else:
+                    announcement = await announce_all([(s.device.device_id, s.host, s.coap_port) for s in servers])
+                    print("Announced over mDNS as ha-coap-<ID>._ot._udp.local., for each device.")
             border = None
             if args.border_router:
                 from .simborder import SimulatedBorderRouter, scenario
-                border = SimulatedBorderRouter(args.border_router, args.host, args.border_router_port,
-                                               scenario((args.host, "fd11:22::2"))).start()
+                addresses = [s.host for s in servers] if len(servers) > 1 else [first.host, "fd11:22::2"]
+                border = SimulatedBorderRouter(args.border_router, first.host, args.border_router_port,
+                                               scenario(addresses)).start()
                 print(f"Simulated border router ({args.border_router} API): {border.url}")
             try:
                 await asyncio.Event().wait()
@@ -375,6 +434,9 @@ def main():
                     border.stop()
                 if announcement is not None:
                     await announcement.async_close()
+        finally:
+            for server in servers:
+                await server.stop()
 
     try:
         asyncio.run(run())

@@ -124,3 +124,19 @@ async def test_network_api(tmp_path, border):
         assert len(response.json()["topology"]["nodes"]) == 7
         assert (await client.get("/api/network")).json()["border_router_url"] == sim.url
     services.db.close()
+
+
+@pytest.mark.parametrize("mode", ["api", "legacy"])
+def test_a_bigger_fleet(border, mode):
+    """24 boards: two more routers, every board a sleepy child somewhere."""
+    addresses = [f"127.0.0.{i + 1}" for i in range(24)]
+    sim = border(mode, scenario(addresses))
+    topology = BorderRouter(sim.url, poll_interval=0.01).topology().as_dict()
+    routers = [n for n in topology["nodes"] if n["kind"] == "router" or n.get("border_router")]
+    assert len(routers) == 5
+    sleepy = [n for n in topology["nodes"] if n["kind"] == "SED"]
+    assert len(sleepy) == 24
+    assert len({n["rloc16_hex"] for n in topology["nodes"]}) == len(topology["nodes"])
+    if mode == "api":   # only the current API gives children's addresses
+        found = {a for n in sleepy for a in n["ipv6"]}
+        assert set(addresses) <= found

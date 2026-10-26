@@ -539,6 +539,25 @@ function nodeStyle(node) {
   return nodeStyles[node.kind] || nodeStyles[node.role === 'child' ? 'SED' : 'router'];
 }
 
+// Your boards are drawn larger, with the ha-coap logo, ringed in the colour of their kind.
+const BOARD_R = 15;
+
+function nodeShape(node, scale = 1) {
+  const style = nodeStyle(node);
+  if (node.border_router) {
+    const r = style.r * scale;
+    return { r, el: svg('rect', { x: -r, y: -r, width: 2 * r, height: 2 * r, rx: 4, style: `fill: ${style.color}` }) };
+  }
+  if (!node.device_id) {
+    const r = style.r * scale;
+    return { r, el: svg('circle', { r, style: `fill: ${style.color}` }) };
+  }
+  const r = BOARD_R * scale;
+  return { r, el: svg('g', { class: 'board' },
+    svg('circle', { r, class: 'board-disc', style: `stroke: ${style.color}` }),
+    svg('use', { href: '#hacoap-glyph', x: -r, y: -r, width: 2 * r, height: 2 * r })) };
+}
+
 function nodeLabel(node) {
   if (node.name) return node.name;
   if (node.border_router) return 'Border router';
@@ -643,12 +662,9 @@ function renderNetwork() {
     return line;
   });
   const groups = layout.nodes.map((n) => {
-    const style = nodeStyle(n.node);
-    const shape = n.node.border_router
-      ? svg('rect', { x: -style.r, y: -style.r, width: 2 * style.r, height: 2 * style.r, rx: 4, style: `fill: ${style.color}` })
-      : svg('circle', { r: style.r, style: `fill: ${style.color}; stroke: ${n.node.device_id ? 'var(--t-yellow)' : 'none'}`, 'stroke-width': 3 });
+    const shape = nodeShape(n.node);
     const group = svg('g', { class: `node${net.selected === n.node.id ? ' selected' : ''}`, transform: `translate(${n.x},${n.y})` },
-      shape, svg('text', { y: style.r + 14, 'text-anchor': 'middle' }, nodeLabel(n.node)), svg('title', {}, nodeLabel(n.node)));
+      shape.el, svg('text', { y: shape.r + 14, 'text-anchor': 'middle' }, nodeLabel(n.node)), svg('title', {}, nodeLabel(n.node)));
     n.group = group;
     makeDraggable(group, n);
     return group;
@@ -740,7 +756,8 @@ function renderNetworkLegend() {
   const kinds = ['border router', 'router', 'FTD child', 'MED', 'SED'].map((k) => [nodeStyles[k].color, nodeStyles[k].label]);
   document.getElementById('network-legend').replaceChildren(
     ...kinds.flatMap(([color, label]) => [h('span', { class: 'legend-swatch', style: `background:${color}` }), label]),
-    h('span', { class: 'legend-swatch', style: 'background:var(--t-bg-deep);border:3px solid var(--t-yellow)' }), 'your board',
+    svg('svg', { class: 'legend-board', viewBox: '-18 -18 36 36' }, nodeShape({ device_id: 'legend', kind: 'SED' }).el),
+    'your board (ringed in its kind\'s colour)',
     h('div', { class: 'mt-1' }, 'Solid lines: router to router. Dashed: child to its parent. Green, amber, red: strong, ',
       'fair, weak. Shorter lines are stronger links: it shows radio closeness, not distance (walls and antennas count). ',
       'Your boards never link to each other: each one talks only to its parent. Drag nodes to tidy up.'));
@@ -1300,7 +1317,13 @@ function drawFloorplanNodes(stage, img) {
     if (p) points.set(node.id, { x: p.x * W, y: p.y * H, placed: true });
     else tray.push(node);
   }
-  tray.forEach((node, i) => points.set(node.id, { x: 30, y: 30 + i * 42, placed: false }));
+  // The tray of unplaced nodes wraps into more columns when they don't fit in one; their labels
+  // then only show on hover, or they would cover the next column.
+  const perColumn = Math.max(1, Math.floor((H - 70) / 40));
+  const columns = Math.max(1, Math.ceil(tray.length / perColumn));
+  const trayWidth = 70 * columns;
+  tray.forEach((node, i) => points.set(node.id,
+    { x: 35 + 70 * Math.floor(i / perColumn), y: 30 + (i % perColumn) * 40, placed: false }));
   const lines = topology.links.map((link) => {
     const a = points.get(link.a), b = points.get(link.b);
     if (!a || !b || !a.placed || !b.placed) return null;
@@ -1309,20 +1332,16 @@ function drawFloorplanNodes(stage, img) {
     return svg('line', { x1: a.x, y1: a.y, x2: b.x, y2: b.y, style: `stroke: ${color}`, 'stroke-width': link.kind === 'mesh' ? 4 : 3,
       'stroke-dasharray': link.kind === 'child' ? '8 6' : null, 'data-a': link.a, 'data-b': link.b }, svg('title', {}, strength.text));
   });
-  const drawing = svg('svg', { viewBox: `0 0 ${W} ${H}`, preserveAspectRatio: 'none' },
-    svg('rect', { x: 0, y: 0, width: 70, height: H, class: 'tray' }),
-    svg('text', { x: 35, y: H - 28, 'text-anchor': 'middle', class: 'tray-label' }, 'not'),
-    svg('text', { x: 35, y: H - 12, 'text-anchor': 'middle', class: 'tray-label' }, 'placed'),
+  const drawing = svg('svg', { viewBox: `0 0 ${W} ${H}`, preserveAspectRatio: 'none', class: columns > 1 ? 'tray-compact' : null },
+    svg('rect', { x: 0, y: 0, width: trayWidth, height: H, class: 'tray' }),
+    svg('text', { x: trayWidth / 2, y: H - 28, 'text-anchor': 'middle', class: 'tray-label' }, 'not'),
+    svg('text', { x: trayWidth / 2, y: H - 12, 'text-anchor': 'middle', class: 'tray-label' }, 'placed'),
     ...lines.filter(Boolean));
   for (const node of topology.nodes) {
     const p = points.get(node.id);
-    const style = nodeStyle(node);
-    const r = style.r * 1.1;
-    const shape = node.border_router
-      ? svg('rect', { x: -r, y: -r, width: 2 * r, height: 2 * r, rx: 4, style: `fill: ${style.color}` })
-      : svg('circle', { r, style: `fill: ${style.color}; stroke: ${node.device_id ? 'var(--t-yellow)' : 'none'}`, 'stroke-width': 3 });
+    const shape = nodeShape(node, 1.1);
     const group = svg('g', { class: `node${p.placed ? '' : ' unplaced'}`, transform: `translate(${p.x},${p.y})` },
-      shape, svg('text', { x: r + 6, y: 4 }, nodeLabel(node)), svg('title', {}, `${nodeLabel(node)}: drag it to where it is`));
+      shape.el, svg('text', { x: shape.r + 6, y: 4 }, nodeLabel(node)), svg('title', {}, `${nodeLabel(node)}: drag it to where it is`));
     group.addEventListener('pointerdown', (event) => {
       group.setPointerCapture(event.pointerId);
       group.dataset.drag = '1';
@@ -1338,7 +1357,7 @@ function drawFloorplanNodes(stage, img) {
     group.addEventListener('pointerup', async () => {
       if (!group.dataset.drag) return;
       delete group.dataset.drag;
-      const inTray = p.x < 70;
+      const inTray = p.x < trayWidth;
       const body = inTray ? { x: null, y: null } : { x: p.x / W, y: p.y / H };
       await api('PUT', `/api/network/positions/${encodeURIComponent(nodeKey(node))}`, body).catch(() => {});
       net.state.positions = net.state.positions || {};

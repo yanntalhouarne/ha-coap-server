@@ -89,7 +89,7 @@ Tick devices to update them.
 - **What it shows:**
   - every router (the border router as a square) and every child: FTD child, MED (always listening) or SED (sleepy, like your boards)
   - solid lines between routers, and dashed lines from each child to its parent
-  - your boards, named and ringed in yellow, matched by their IPv6 address
+  - your boards, named, with the ha-coap logo and ringed in the colour of their kind, matched by their IPv6 address
 - **Signal strength.** Line colour shows link strength (green, amber, red), and line length follows it: strong links are short, weak ones long. That's radio closeness, not distance, since walls and antennas count. Your boards never link to each other: each one only talks to its parent.
 - **What your border router reports depends on its version.**
   - **2025 or later** (`/api/devices`): signal margin and RSSI for every link, and children's addresses, so boards get named.
@@ -162,6 +162,8 @@ The simulated device answers like a real one: mcumgr over UDP, CoAP, and MCUboot
 python -m hacoap_manager.simdevice          # mcumgr on 127.0.0.1:1337, CoAP on 127.0.0.1:5683
 ```
 It also announces itself over mDNS like a real board, so **Find devices** finds it (as `ha-coap-1a2b3c4d` at `127.0.0.1`; `--no-mdns` turns that off), or add it by address `127.0.0.1`. Discovery only accepts a loopback address from the simulator, which marks its announcement as simulated. To try an update, add any `app_update.bin`: the simulator accepts unsigned images too. `--border-router api` adds a simulated border router for the Network page.
+
+A whole fleet: `python -m hacoap_manager.simdevice --count 24 --border-router api` simulates 24 devices at 127.0.0.1 to 127.0.0.24, each with its own readings and battery, every fifth running an older image (v0.9.0). The border router places them all on the map, spread over five routers. Windows and Linux answer on every 127.0.0.x address. macOS needs the extra addresses added first: `for i in $(seq 2 24); do sudo ifconfig lo0 alias 127.0.0.$i up; done`.
 
 ## Development
 

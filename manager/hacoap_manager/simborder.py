@@ -1,7 +1,8 @@
 """A simulated border router REST API (ot-br-posix), for tests and for trying the Network page.
 
 It serves a small made-up network: the border router (leader), two more routers, and
-children of different kinds, two of them boards at the given addresses. "api" mode answers
+children of different kinds, two of them boards at the given addresses. Given more board
+addresses, it adds two routers and spreads the boards over all of them. "api" mode answers
 like a 2025+ border router (/api/devices, /api/actions, /api/diagnostics), "legacy" mode like
 an older one (/node and /diagnostics only).
 """
@@ -36,6 +37,18 @@ def scenario(board_addresses=("fd11:22::1", "fd11:22::2")):
         {"rloc16": 0x5003, "ext": "f400000000000004", "parent": 0x5000, "rx_on": True, "ftd": True, "margin": 50,
          "ipv6": ["fd11:22::f4"]},
     ]
+    # A bigger fleet: two more routers, and the other boards spread over all five as sleepy
+    # children, with link margins from weak (6 dB) to strong.
+    extra = list(board_addresses[2:])
+    if extra:
+        routers += [{"name": "lamp", "rloc16": 0x8800, "ext": "dd00000000000004", "ipv6": ["fd11:22::dd"]},
+                    {"name": "outlet", "rloc16": 0x9400, "ext": "ee00000000000005", "ipv6": ["fd11:22::ee"]}]
+        router_links += [(0x7c00, 0x8800, 22), (0x6800, 0x8800, 31), (0x5000, 0x9400, 38), (0x8800, 0x9400, 12)]
+        parents = [r["rloc16"] for r in routers]
+        for i, address in enumerate(extra):
+            parent = parents[i % len(parents)]
+            children.append({"rloc16": parent + 0x10 + i // len(parents), "ext": f"b0{i:014x}", "parent": parent,
+                             "rx_on": False, "ftd": False, "margin": 6 + (i * 23) % 55, "ipv6": [address]})
     return {"routers": routers, "router_links": router_links, "children": children}
 
 
