@@ -280,6 +280,9 @@ What they need:
 - **For USB**, they list the serial ports, with the board's first when they can tell (always on Windows, and with `pip install pyserial` on Linux and macOS). If they list nothing, type the port name: `COM7` on Windows, `/dev/ttyACM0` on Linux, `/dev/cu.usbmodem…` on macOS.
 - **Tests:** `scripts/tests/test-scripts.sh` runs them against a fake `mcumgr`. CI runs it on all three systems.
 
+### Versions
+Each image carries a version in its MCUboot header, from `application/VERSION` (Zephyr's format: `VERSION_MAJOR`, `VERSION_MINOR`, `PATCHLEVEL`, and `VERSION_TWEAK` as a build number). `mcumgr image list` and the fleet manager show it, and the build prints it (`Image version: 1.0.0+0`). Raise it for each firmware release you send to the boards, so you can tell images apart at a glance. It's informational: MCUboot doesn't refuse older versions here, so a downgrade still works. The git commit stays in `info`, as before.
+
 ### Keeping updates compatible
 - MCUboot itself can't be updated with mcumgr. A new application image must fit the bootloader already on the boards: sign it with the same key, keep the same partition layout, and don't change MCUboot's size or the partition settings.
 - An image signed with a different key uploads without error, but MCUboot refuses to boot it and keeps running the old image. To change keys, reflash over SWD (see [Moving existing boards to your own key](#-flashing-over-swd)).

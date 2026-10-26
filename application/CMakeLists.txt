@@ -19,6 +19,21 @@ if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/local.conf)
     set(EXTRA_CONF_FILE ${CMAKE_CURRENT_SOURCE_DIR}/local.conf)
 endif()
 
+# Firmware version, from the VERSION file (Zephyr's format), into the MCUboot image header:
+# what mcumgr's image list and the fleet manager show. VERSION_TWEAK is the build number.
+file(READ ${CMAKE_CURRENT_SOURCE_DIR}/VERSION version_file)
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/VERSION)
+foreach(field VERSION_MAJOR VERSION_MINOR PATCHLEVEL VERSION_TWEAK)
+    if(NOT version_file MATCHES "${field} = ([0-9]+)")
+        message(FATAL_ERROR "application/VERSION has no ${field}")
+    endif()
+    set(${field} ${CMAKE_MATCH_1})
+endforeach()
+set(image_version "${VERSION_MAJOR}.${VERSION_MINOR}.${PATCHLEVEL}+${VERSION_TWEAK}")
+file(WRITE ${CMAKE_BINARY_DIR}/image_version.conf "CONFIG_MCUBOOT_IMAGE_VERSION=\"${image_version}\"\n")
+list(APPEND EXTRA_CONF_FILE ${CMAKE_BINARY_DIR}/image_version.conf)
+message(STATUS "Image version: ${image_version}")
+
 # Settings from the file named by $HACOAP_EXTRA_CONF (the fleet manager's build profiles),
 # merged after local.conf.
 if(DEFINED ENV{HACOAP_EXTRA_CONF})

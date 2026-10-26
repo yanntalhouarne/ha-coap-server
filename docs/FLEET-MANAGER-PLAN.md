@@ -78,7 +78,7 @@ Each phase ends with a working, tested app. Tests run in CI on Linux, macOS and 
 
 | Phase | Delivers | State |
 |---|---|---|
-| **0. Foundations** | New `manager/` app skeleton, simulated device, CI packaging into executables for the 3 OSes, firmware version numbers | Done, except the firmware version numbers (a firmware change: waits for a board) |
+| **0. Foundations** | New `manager/` app skeleton, simulated device, CI packaging into executables for the 3 OSes, firmware version numbers | Done. Firmware version numbers: in the image header from `application/VERSION` (build only); in `info`, a firmware change, still to do |
 | **1. Inventory** | Discovery, inventory, live status (version, battery, sensors, online), device pages | Done |
 | **2. Updates** | USB and over-the-air updates through smpclient, an image library, test, verify, confirm, staged rollout, history. Replaces `firmware-updater/` | Done; replaces the web updater once it has updated real boards |
 | **3. Runtime settings** | Firmware settings and the `hacoap` mcumgr group. Settings pages for one device or the fleet | |
