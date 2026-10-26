@@ -10,5 +10,5 @@ First version: the plan's phases 0, 1, 2, 5 and 6. Tested against a simulated de
 - **Builds:** build profiles (variant and settings, from the firmware's Kconfig), checks for the toolchain and signing key, builds with a live log.
 - **Network:** a map of the Thread mesh from the border router's REST API: routers, children, your boards by name, link strength as line colour and length, and a log of parent changes.
 - **Data:** backups (one file; daily automatic ones, and one before every restore), restore, and the device list as CSV.
-- A look after [Omarchy](https://omarchy.org/): a terminal feel, JetBrains Mono, 12 colour themes (Tokyo Night by default, **T** cycles them), keys 1 to 6 for the tabs, and a status bar.
+- A look after [Omarchy](https://omarchy.org/): a terminal feel, JetBrains Mono, 12 colour themes (Tokyo Night by default, **T** cycles them) with Home Assistant's blue as the accent, the ha-coap logo, keys 1 to 6 for the tabs, and a status bar.
 - Answers only on this computer (127.0.0.1).

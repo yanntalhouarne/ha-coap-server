@@ -102,6 +102,7 @@ function renderDevices() {
   const body = document.querySelector('#devices-table tbody');
   body.replaceChildren(...[...state.devices.values()].map(deviceRow));
   document.getElementById('devices-empty').classList.toggle('d-none', state.devices.size > 0);
+  document.querySelector('.empty-logo').classList.toggle('d-none', state.devices.size > 0);
   const count = state.selected.size;
   document.getElementById('selection-count').textContent = count ? `${count} selected` : '';
   document.getElementById('update-selected').disabled = count === 0;
@@ -1016,8 +1017,8 @@ function cycleTheme(step) {
 
 document.getElementById('theme-menu').replaceChildren(...window.HACOAP_THEMES.map((theme) => h('li', {},
   h('a', { class: 'dropdown-item', href: '#', 'data-theme-id': theme.id, onclick: (e) => { e.preventDefault(); setTheme(theme.id); } },
-    h('span', { class: 'swatch', 'data-theme': theme.id, style: 'background: var(--t-brand); box-shadow: 0.7rem 0 0 var(--t-bg), 0.7rem 0 0 1px var(--t-border-strong)' }),
-    h('span', { class: 'ms-3' }, theme.name)))));
+    h('span', { class: 'swatch', 'data-theme': theme.id, style: 'background: linear-gradient(90deg, var(--t-bg) 0 40%, var(--t-magenta) 40% 70%, var(--t-green) 70%); outline: 1px solid var(--t-border-strong)' }),
+    h('span', {}, theme.name)))));
 
 document.addEventListener('keydown', (event) => {
   const target = event.target;

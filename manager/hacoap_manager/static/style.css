@@ -26,7 +26,7 @@
   --bs-tertiary-color: var(--t-text-muted);
   --bs-border-color: var(--t-border-strong);
   --bs-border-color-translucent: var(--t-border-subtle);
-  --bs-link-color: var(--t-brand);
+  --bs-link-color: var(--t-accent-text);
   --bs-link-hover-color: var(--t-text);
   --bs-code-color: var(--t-magenta);
   --bs-border-radius: 2px;
@@ -46,7 +46,7 @@ body { font-feature-settings: "calt" 1, "zero" 1; -webkit-font-smoothing: antial
 ::selection { background: var(--t-selection); }
 * { scrollbar-color: var(--t-border-strong) transparent; }
 h5, h6, .h5, .h6 { font-size: .8rem; font-weight: 600; text-transform: lowercase; letter-spacing: .02em; color: var(--t-text-muted); }
-h5::before, h6::before { content: "// "; color: var(--t-brand); }
+h5::before, h6::before { content: "// "; color: var(--t-accent-text); }
 .text-body-secondary { color: var(--t-text-muted) !important; }
 .text-danger { color: var(--t-red) !important; }
 .text-success { color: var(--t-green) !important; }
@@ -57,8 +57,15 @@ code { font-size: .9em; }
 
 .topbar { background: var(--t-bg-deep); border-bottom: 1px solid var(--t-border-subtle); padding: .35rem 1rem;
   display: flex; align-items: center; gap: 1.25rem; position: sticky; top: 0; z-index: 1020; }
-.brand { font-weight: 700; color: var(--t-brand); white-space: nowrap; letter-spacing: -.01em; }
-.brand span { color: var(--t-text-muted); font-weight: 400; }
+/* The ha-coap logo (logo.svg), drawn in the current colour through a mask */
+.logo { display: inline-block; width: 1.35em; height: 1.35em; background-color: currentColor; vertical-align: -.3em;
+  -webkit-mask: url("logo.svg") center / contain no-repeat; mask: url("logo.svg") center / contain no-repeat; }
+.brand { font-weight: 700; color: var(--t-accent-text); white-space: nowrap; letter-spacing: -.01em; display: flex; align-items: center; }
+.brand .logo { margin-right: .55rem; width: 1.75rem; height: 1.75rem; }
+.statusbar .seg-brand .logo { width: 1.05rem; height: 1.05rem; margin-right: .2rem; }
+.empty-logo { display: block; width: 7rem; height: 7rem; margin: 3rem auto 1rem; color: var(--t-border-strong); }
+#devices-empty { text-align: center; }
+.brand span:not(.logo) { color: var(--t-text-muted); font-weight: 400; }
 .tabs { display: flex; gap: .15rem; margin: 0; padding: 0; list-style: none; flex-wrap: wrap; }
 .tabs a { display: block; padding: .3rem .6rem; color: var(--t-text-secondary); text-decoration: none; border: 1px solid transparent; }
 .tabs a kbd { background: none; padding: 0; color: var(--t-text-muted); font-size: .75em; margin-right: .35rem; box-shadow: none; }
@@ -83,7 +90,7 @@ code { font-size: .9em; }
   --bs-card-border-radius: 2px; --bs-card-inner-border-radius: 2px; }
 .card-header { font-size: .75rem; text-transform: lowercase; letter-spacing: .03em; color: var(--t-text-muted);
   border-bottom-color: var(--t-border-subtle); padding: .45rem .9rem; }
-.card-header::before { content: "▍"; color: var(--t-brand); margin-right: .35rem; }
+.card-header::before { content: "▍"; color: var(--t-accent-text); margin-right: .35rem; }
 .modal { --bs-modal-bg: var(--t-surface); --bs-modal-border-color: var(--t-border-strong); --bs-modal-border-radius: 2px;
   --bs-modal-header-border-color: var(--t-border-subtle); }
 .dropdown-menu { --bs-dropdown-bg: var(--t-surface); --bs-dropdown-border-color: var(--t-border-strong); --bs-dropdown-border-radius: 2px;
@@ -122,21 +129,19 @@ code { font-size: .9em; }
   --bs-btn-active-color: var(--t-brand-ink); --bs-btn-active-border-color: var(--bs-btn-hover-bg);
   --bs-btn-disabled-color: var(--t-brand-ink); --bs-btn-disabled-bg: var(--t-brand); --bs-btn-disabled-border-color: var(--t-brand);
 }
-.btn-success { --bs-btn-bg: var(--t-green); --bs-btn-border-color: var(--t-green); --bs-btn-disabled-bg: var(--t-green);
-  --bs-btn-disabled-border-color: var(--t-green); --bs-btn-hover-bg: color-mix(in srgb, var(--t-green) 85%, var(--t-text)); }
 .btn-outline-primary, .btn-outline-secondary {
   --bs-btn-color: var(--t-text-secondary); --bs-btn-border-color: var(--t-border-strong);
   --bs-btn-hover-color: var(--t-text); --bs-btn-hover-bg: var(--t-surface-2); --bs-btn-hover-border-color: var(--t-text-muted);
   --bs-btn-active-color: var(--t-text); --bs-btn-active-bg: var(--t-surface-2); --bs-btn-active-border-color: var(--t-brand);
   --bs-btn-disabled-color: var(--t-text-muted); --bs-btn-disabled-border-color: var(--t-border-subtle);
 }
-.btn-outline-primary { --bs-btn-color: var(--t-brand); --bs-btn-border-color: color-mix(in srgb, var(--t-brand) 60%, transparent); }
+.btn-outline-primary { --bs-btn-color: var(--t-accent-text); --bs-btn-border-color: color-mix(in srgb, var(--t-brand) 60%, transparent); }
 .btn-outline-danger {
   --bs-btn-color: var(--t-red); --bs-btn-border-color: color-mix(in srgb, var(--t-red) 60%, transparent);
   --bs-btn-hover-color: var(--t-bg); --bs-btn-hover-bg: var(--t-red); --bs-btn-hover-border-color: var(--t-red);
   --bs-btn-active-bg: var(--t-red); --bs-btn-active-color: var(--t-bg);
 }
-.btn-link { --bs-btn-color: var(--t-brand); --bs-btn-hover-color: var(--t-text); }
+.btn-link { --bs-btn-color: var(--t-accent-text); --bs-btn-hover-color: var(--t-text); }
 .btn-close { filter: none; }
 [data-bs-theme=dark] .btn-close { filter: invert(1) grayscale(100%) brightness(200%); }
 
@@ -171,7 +176,7 @@ td.error-text { color: var(--t-red); font-size: .8125em; }
   padding: .5rem .75rem; border-radius: 2px; white-space: pre-wrap; word-break: break-all; }
 .setting-changed { border-color: var(--t-brand) !important; box-shadow: inset 2px 0 0 var(--t-brand); }
 fieldset legend { font-size: .75rem; font-weight: 600; margin-top: .75rem; text-transform: lowercase; color: var(--t-text-muted); }
-fieldset legend::before { content: "// "; color: var(--t-brand); }
+fieldset legend::before { content: "// "; color: var(--t-accent-text); }
 
 .network-canvas { position: relative; min-height: 32rem; overflow: hidden; border-color: var(--t-border-subtle) !important;
   background-color: var(--t-bg-deep);
@@ -185,4 +190,4 @@ fieldset legend::before { content: "// "; color: var(--t-brand); }
 .network-canvas .selected circle, .network-canvas .selected rect { stroke: var(--t-text) !important; stroke-width: 3px; }
 .legend-swatch { display: inline-block; width: .7rem; height: .7rem; border-radius: 50%; margin: 0 .3rem 0 .9rem; vertical-align: -1px; }
 
-#theme-menu .swatch { display: inline-block; width: .65rem; height: .65rem; border-radius: 1px; margin-right: .5rem; vertical-align: -1px; }
+#theme-menu .swatch { display: inline-block; width: 1.6rem; height: .7rem; border-radius: 1px; margin-right: .6rem; vertical-align: -1px; }

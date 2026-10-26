@@ -1,3 +1,5 @@
+<img src="hacoap_manager/static/icon.svg" alt="ha-coap logo" width="88" align="right">
+
 # HA-CoAP Fleet Manager
 
 One application for Windows, macOS and Linux to look after a fleet of ha-coap devices. It finds them on the network, shows their status, draws the Thread mesh they form, builds firmware with the settings you choose, keeps a library of firmware images, and updates devices over the air or over USB.
@@ -35,7 +37,7 @@ Options: `--port 8710` (the next free port is used if it's taken), `--data-dir <
 
 ## Using it
 
-The look follows [Omarchy](https://omarchy.org/): a terminal feel, JetBrains Mono, and its colour themes. Tokyo Night is the default; pick another from the menu at the top right, or press **T** to cycle through them (**Shift+T** goes back). The browser remembers the choice, and `?theme=gruvbox` in the address picks one too. Keys **1** to **6** switch tabs. The status bar at the bottom shows the connection to the app, how many devices are online, and what's running (an update's progress, a build).
+The look follows [Omarchy](https://omarchy.org/): a terminal feel, JetBrains Mono, and its colour themes, with the ha-coap logo and Home Assistant's blue as the accent in every theme. Tokyo Night is the default; pick another from the menu at the top right, or press **T** to cycle through them (**Shift+T** goes back). The browser remembers the choice, and `?theme=gruvbox` in the address picks one too. Keys **1** to **6** switch tabs. The status bar at the bottom shows the connection to the app, how many devices are online, and what's running (an update's progress, a build).
 
 **Devices.** **Find devices** asks the network for every `ha-coap-*` device (the border router answers for them). You can also add one by its IPv6 address. Each device shows:
 - its firmware (the git commit, from `info`)

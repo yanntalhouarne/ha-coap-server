@@ -12,7 +12,7 @@
 </head>
 <body>
 <header class="topbar">
-  <span class="brand">ha-coap<span>::fleet</span></span>
+  <span class="brand"><span class="logo" aria-hidden="true"></span>ha-coap<span>::fleet</span></span>
   <ul class="tabs" id="tabs">
     <li><a class="active" href="#devices" data-tab="devices"><kbd>1</kbd>devices</a></li>
     <li><a href="#network" data-tab="network"><kbd>2</kbd>network</a></li>
@@ -29,7 +29,7 @@
 </header>
 
 <footer class="statusbar">
-  <span class="seg-brand">HA-COAP</span>
+  <span class="seg-brand"><span class="logo" aria-hidden="true"></span>HA-COAP</span>
   <span><span id="connection" title="Live updates from the app">●</span><span id="connection-text">connecting</span></span>
   <span id="status-devices">– devices</span>
   <span id="status-activity">idle</span>
@@ -67,6 +67,7 @@
         <tbody></tbody>
       </table>
     </div>
+    <div class="empty-logo logo" aria-hidden="true"></div>
     <p class="text-body-secondary" id="devices-empty">No devices yet. <b>Find devices</b> looks for them on the network
       (through the border router), or add one by its address.</p>
   </section>

@@ -1,4 +1,14 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
-  <rect width="32" height="32" rx="7" fill="#198754"/>
-  <path d="M16 6c-5 6-7 10-7 13a7 7 0 0 0 14 0c0-3-2-7-7-13z" fill="#fff"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" fill="none" stroke="#808080" stroke-linecap="round" stroke-linejoin="round">
+  <title>ha-coap</title>
+  <circle cx="256" cy="256" r="244" stroke-width="24"/>
+  <g stroke-width="16">
+    <circle cx="256" cy="140" r="28"/>
+    <circle cx="163" cy="254" r="28"/>
+    <circle cx="349" cy="214" r="28"/>
+  </g>
+  <g stroke-width="17">
+    <path d="M256 168V397"/>
+    <path d="M163 282V322H256"/>
+    <path d="M349 242V281H256"/>
+  </g>
 </svg>
