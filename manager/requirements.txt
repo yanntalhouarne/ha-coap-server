@@ -5,3 +5,4 @@ websockets~=17.3
 smpclient[serial]~=7.3
 zeroconf~=0.151
 platformdirs~=4.13
+cryptography~=50.0

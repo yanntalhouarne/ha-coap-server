@@ -1,4 +1,5 @@
-"""Fleet health: battery forecasts, which devices run the release image, and the dashboard."""
+"""Fleet health: battery forecasts, which devices run the release image, which plants need
+water, and the dashboard."""
 
 import time
 
@@ -27,6 +28,20 @@ def battery_forecast(readings, empty_at=0):
         return None
     latest = points[-1][1]
     return {"days_left": max(0.0, (latest - empty_at) / -per_day), "per_day": per_day}
+
+
+def water_target(device, settings):
+    """The soil moisture % under which the device's plant needs water, or None (not watched):
+    its own target, else the default."""
+    target = device.get("water_below")
+    if target is None:
+        target = settings.water_below_default
+    return target or None
+
+
+def needs_water(device, settings):
+    target = water_target(device, settings)
+    return target is not None and device.get("soil_moisture") is not None and device["soil_moisture"] < target
 
 
 def image_status(device, release):
@@ -69,13 +84,15 @@ def dashboard(db, inventory, topology):
     release = db.release_image()
     images = {i["hash"]: i for i in db.images()}
     by_image = {}
-    outdated, unknown, low, offline = [], [], [], []
+    outdated, unknown, low, offline, dry = [], [], [], [], []
     for device in devices:
         health = device_health(db, device, release)
         entry = {"device_id": device["device_id"], "name": device["name"] or device["device_id"],
                  "battery": device["battery"], "last_seen": device["last_seen"], "online": device["online"],
                  "image_version": device["image_version"], "image_hash": device["image_hash"],
-                 "battery_forecast": health["battery_forecast"], "tags": device["tags"]}
+                 "battery_forecast": health["battery_forecast"], "tags": device["tags"], "plant": device["plant"],
+                 "photo": device["photo"], "soil_moisture": device["soil_moisture"],
+                 "water_target": device["water_target"]}
         key = device["image_hash"] or ""
         group = by_image.setdefault(key, {"image_hash": key, "version": device["image_version"],
                                           "notes": images.get(key, {}).get("notes", ""), "count": 0,
@@ -91,16 +108,21 @@ def dashboard(db, inventory, topology):
             low.append(entry)
         if not device["online"]:
             offline.append(entry)
+        if device["needs_water"]:
+            dry.append(entry)
+    dry.sort(key=lambda e: e["soil_moisture"] - e["water_target"])  # the driest first
     low.sort(key=lambda e: (e["battery_forecast"] or {}).get("days_left", e["battery"] or 0))
     return {
         "counts": {"devices": len(devices), "online": sum(1 for d in devices if d["online"]),
-                   "outdated": len(outdated), "unknown": len(unknown), "low_battery": len(low)},
+                   "outdated": len(outdated), "unknown": len(unknown), "low_battery": len(low),
+                   "needs_water": len(dry)},
         "release": release,
         "firmware": sorted(by_image.values(), key=lambda g: -g["count"]),
         "outdated": outdated,
         "unknown": unknown,
         "low_battery": low,
         "offline": offline,
+        "needs_water": dry,
         "weak_links": weak_links(topology)[:10],
         "recent_updates": db.updates(limit=8),
         "network_read": topology.get("fetched") if topology else None,

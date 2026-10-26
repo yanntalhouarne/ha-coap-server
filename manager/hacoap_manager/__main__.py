@@ -56,7 +56,7 @@ def main(argv=None):
         data_dir = tempfile.mkdtemp(prefix="hacoap-manager-selftest-")
         # Modules loaded only when used: a packaged app must still contain them.
         for module in ("zeroconf.asyncio", "serial.tools.list_ports", "smpclient.transport.udp",
-                       "smpclient.transport.serial"):
+                       "smpclient.transport.serial", "cryptography.hazmat.primitives.asymmetric.ec"):
             importlib.import_module(module)
 
     port = _free_port(0 if args.self_test else args.port)

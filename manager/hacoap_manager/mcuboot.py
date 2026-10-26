@@ -40,14 +40,19 @@ def format_version(major, minor, revision, build):
     return f"{major}.{minor}.{revision}+{build}"
 
 
-def parse_image(data: bytes) -> ImageInfo:
-    """Reads the version and hash of an MCUboot image (app_update.bin)."""
+def _header(data):
     if len(data) < HEADER_SIZE:
         raise ImageError("too short to be an MCUboot image")
-    magic, _, header_size, _, image_size, _, major, minor, revision, build, _ = struct.unpack_from(HEADER_FORMAT, data)
-    if magic != IMAGE_MAGIC:
+    header = struct.unpack_from(HEADER_FORMAT, data)
+    if header[0] != IMAGE_MAGIC:
         raise ImageError("not an MCUboot image (use app_update.bin, not zephyr.bin or a .hex file)")
+    return header
 
+
+def tlvs(data: bytes) -> dict:
+    """The image's TLVs, as {type: value} (the first of each type)."""
+    _, _, header_size, _, image_size, *_ = _header(data)
+    found = {}
     offset = header_size + image_size
     while offset + 4 <= len(data):
         info_magic, total = struct.unpack_from("<HH", data, offset)
@@ -57,16 +62,20 @@ def parse_image(data: bytes) -> ImageInfo:
         tlv = offset + 4
         while tlv + 4 <= end:
             tlv_type, tlv_len = struct.unpack_from("<BxH", data, tlv)
-            if tlv_type == TLV_SHA256:
-                return ImageInfo(
-                    version=format_version(major, minor, revision, build),
-                    hash=data[tlv + 4: tlv + 4 + tlv_len].hex(),
-                    size=len(data),
-                    image_size=image_size,
-                )
+            found.setdefault(tlv_type, data[tlv + 4: tlv + 4 + tlv_len])
             tlv += 4 + tlv_len
         offset = end
-    raise ImageError("no SHA-256 hash in the image (is it signed?)")
+    return found
+
+
+def parse_image(data: bytes) -> ImageInfo:
+    """Reads the version and hash of an MCUboot image (app_update.bin)."""
+    _, _, _, _, image_size, _, major, minor, revision, build, _ = _header(data)
+    digest = tlvs(data).get(TLV_SHA256)
+    if digest is None:
+        raise ImageError("no SHA-256 hash in the image (is it signed?)")
+    return ImageInfo(version=format_version(major, minor, revision, build), hash=digest.hex(), size=len(data),
+                     image_size=image_size)
 
 
 def build_image(payload: bytes, version=(0, 0, 0, 0)) -> bytes:

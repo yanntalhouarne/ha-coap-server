@@ -26,7 +26,9 @@ CREATE TABLE IF NOT EXISTS devices (
     added         REAL NOT NULL,
     tags          TEXT NOT NULL DEFAULT '',   -- comma-separated groups, such as "greenhouse"
     location      TEXT NOT NULL DEFAULT '',
-    plant         TEXT NOT NULL DEFAULT ''
+    plant         TEXT NOT NULL DEFAULT '',
+    water_below   INTEGER,                    -- soil moisture % under which it needs water (NULL: the default)
+    photo         REAL                        -- when its photo was added (photos/<device_id>), or NULL
 );
 CREATE TABLE IF NOT EXISTS images (
     hash     TEXT PRIMARY KEY,
@@ -88,6 +90,24 @@ CREATE TABLE IF NOT EXISTS floorplan_positions (
     x        REAL NOT NULL,                    -- 0 to 1, across the floor plan picture
     y        REAL NOT NULL
 );
+CREATE TABLE IF NOT EXISTS alerts (
+    id        INTEGER PRIMARY KEY AUTOINCREMENT,
+    key       TEXT NOT NULL,                   -- what it's about, such as "battery:1a2b3c4d"
+    kind      TEXT NOT NULL,                   -- offline, battery, dry, update
+    device_id TEXT NOT NULL DEFAULT '',
+    message   TEXT NOT NULL,
+    raised    REAL NOT NULL,
+    cleared   REAL,                            -- when it went away (or was dismissed)
+    dismissed INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS alerts_open ON alerts (cleared);
+CREATE TABLE IF NOT EXISTS network_snapshots (
+    id       INTEGER PRIMARY KEY AUTOINCREMENT,
+    time     REAL NOT NULL,
+    nodes    INTEGER NOT NULL,
+    boards   INTEGER NOT NULL,
+    topology BLOB NOT NULL                     -- zlib-compressed JSON
+);
 CREATE TABLE IF NOT EXISTS builds (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
     profile    TEXT NOT NULL,
@@ -105,7 +125,7 @@ CREATE TABLE IF NOT EXISTS builds (
 
 DEVICE_FIELDS = ("name", "address", "serial_port", "fw_version", "hw_version", "image_version", "image_hash",
                  "soil_moisture", "battery", "air_humidity", "temperature", "last_seen", "last_error", "notes",
-                 "tags", "location", "plant")
+                 "tags", "location", "plant", "water_below", "photo")
 
 # Columns added after the first version: (table, column, definition), added to older databases
 ADDED_COLUMNS = [
@@ -114,6 +134,8 @@ ADDED_COLUMNS = [
     ("devices", "plant", "TEXT NOT NULL DEFAULT ''"),
     ("images", "git_commit", "TEXT NOT NULL DEFAULT ''"),
     ("images", "release", "INTEGER NOT NULL DEFAULT 0"),
+    ("devices", "water_below", "INTEGER"),
+    ("devices", "photo", "REAL"),
 ]
 
 
@@ -311,6 +333,16 @@ class Database:
                       "VALUES (?, ?, ?, ?, ?, ?)",
                       (device_id, when or time.time(), battery, soil_moisture, air_humidity, temperature))
 
+    def all_readings(self, since=0, device_id=None):
+        """Readings of every device (or one), oldest first, with the device's name."""
+        where, params = "r.time >= ?", [since]
+        if device_id:
+            where += " AND r.device_id = ?"
+            params.append(device_id)
+        return self._query("SELECT r.device_id, d.name, r.time, r.battery, r.soil_moisture, r.air_humidity, "
+                           "r.temperature FROM readings r LEFT JOIN devices d ON d.device_id = r.device_id "
+                           f"WHERE {where} ORDER BY r.time, r.device_id", params)
+
     def readings(self, device_id, since=0):
         return self._query("SELECT time, battery, soil_moisture, air_humidity, temperature FROM readings "
                            "WHERE device_id = ? AND time >= ? ORDER BY time", (device_id, since))
@@ -339,3 +371,37 @@ class Database:
         else:
             self._execute("INSERT OR REPLACE INTO floorplan_positions (node_key, x, y) VALUES (?, ?, ?)",
                           (node_key, x, y))
+
+    # ------------------------------------------------------------ alerts
+
+    def open_alerts(self):
+        return self._query("SELECT * FROM alerts WHERE cleared IS NULL ORDER BY raised DESC")
+
+    def recent_alerts(self, limit=50):
+        return self._query("SELECT * FROM alerts ORDER BY id DESC LIMIT ?", (limit,))
+
+    def add_alert(self, key, kind, device_id, message):
+        cursor = self._execute("INSERT INTO alerts (key, kind, device_id, message, raised) VALUES (?, ?, ?, ?, ?)",
+                               (key, kind, device_id, message, time.time()))
+        return self._query("SELECT * FROM alerts WHERE id = ?", (cursor.lastrowid,))[0]
+
+    def clear_alert(self, alert_id, dismissed=False):
+        return self._execute("UPDATE alerts SET cleared = ?, dismissed = ? WHERE id = ? AND cleared IS NULL",
+                             (time.time(), int(dismissed), alert_id)).rowcount > 0
+
+    # ------------------------------------------------------------ network history
+
+    def add_network_snapshot(self, when, nodes, boards, blob, keep=1000):
+        with self._lock:
+            self._conn.execute("INSERT INTO network_snapshots (time, nodes, boards, topology) VALUES (?, ?, ?, ?)",
+                               (when, nodes, boards, blob))
+            self._conn.execute("DELETE FROM network_snapshots WHERE id NOT IN "
+                               "(SELECT id FROM network_snapshots ORDER BY time DESC LIMIT ?)", (keep,))
+            self._conn.commit()
+
+    def network_snapshots(self):
+        return self._query("SELECT id, time, nodes, boards FROM network_snapshots ORDER BY time")
+
+    def network_snapshot(self, snapshot_id):
+        rows = self._query("SELECT * FROM network_snapshots WHERE id = ?", (snapshot_id,))
+        return rows[0] if rows else None

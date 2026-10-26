@@ -4,7 +4,7 @@ import asyncio
 import logging
 import time
 
-from . import coap, discovery
+from . import coap, discovery, fleet
 from .mcumgr import DeviceLink, McumgrError
 
 log = logging.getLogger(__name__)
@@ -20,16 +20,18 @@ class Inventory:
         self.settings = settings
         self.events = events
         self._discover = discover
+        self.refreshed = False  # every device asked at least once since the app started
 
     def _changed(self, device):
         self.events.publish("device", device=self.describe(device))
         return device
 
     def describe(self, device):
-        """The device as the API returns it, with whether it's online."""
+        """The device as the API returns it, with whether it's online and needs water."""
         seen = device.get("last_seen")
         online = seen is not None and time.time() - seen < self.settings.online_minutes * 60
-        return {**device, "online": online}
+        return {**device, "online": online, "water_target": fleet.water_target(device, self.settings),
+                "needs_water": fleet.needs_water(device, self.settings)}
 
     def devices(self):
         return [self.describe(d) for d in self.db.devices()]
@@ -103,6 +105,7 @@ class Inventory:
                     pass
 
         await asyncio.gather(*(one(d) for d in self.db.devices() if d["address"]))
+        self.refreshed = True
         return self.devices()
 
     async def read_slots(self, device_id, transport="udp", serial_port=""):

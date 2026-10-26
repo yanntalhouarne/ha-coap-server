@@ -101,6 +101,11 @@ Also added (2026-10-25):
 - a **channel scan**
 - a **serial console**
 - **Set up this computer**: buttons on the Builds tab that install the toolchain and SDK, create the signing key and set the PSKd
+- a **signature check** before updates, and a **battery check** that skips devices under 20 % over the air
+- **plant photos**, watering targets and a **needs water** list
+- **alerts**, also as browser notifications
+- **network history** with a slider, and a **signal heatmap** on the floor plan
+- **Ctrl+K search**, actions for **all ticked devices**, a **readings CSV**, a **problem report**, an optional **app update check**, and a **phone layout**
 
 **What the first hardware test should check** (phases 1–2): Find devices lists every board; status refreshes; Firmware slots answers; an over-the-air update of one board goes through upload, reset, return and confirm; a USB update of one board does too (the USB path has no simulated test). Also note how long an over-the-air upload takes.
 

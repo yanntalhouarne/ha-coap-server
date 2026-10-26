@@ -129,7 +129,7 @@ async def test_staged_update_waits_after_the_first_device(client, services, star
     services.db.upsert_device("aaaa", address="127.0.0.1")
     services.db.upsert_device("bbbb", address="::1")
     await client.post("/api/images", content=NEW_IMAGE, headers=CHANGE)
-    job = (await client.post("/api/updates", json={"image_hash": NEW_HASH, "staged": True,
+    job = (await client.post("/api/updates", json={"image_hash": NEW_HASH, "staged": True, "allow_unverified": True,
                                                     "targets": [{"device_id": "aaaa"}, {"device_id": "bbbb"}]},
                              headers=CHANGE)).json()
     for _ in range(600):
@@ -223,7 +223,7 @@ async def test_console_echoes_on_a_loopback_port(client, services):
 async def test_console_and_usb_update_dont_share_a_port(client, services):
     await client.post("/api/console/open", json={"port": "loop://"}, headers=CHANGE)
     await client.post("/api/images", content=NEW_IMAGE, headers=CHANGE)
-    response = await client.post("/api/updates", json={"image_hash": NEW_HASH, "targets": [
+    response = await client.post("/api/updates", json={"image_hash": NEW_HASH, "allow_unverified": True, "targets": [
         {"transport": "serial", "serial_port": "loop://"}]}, headers=CHANGE)
     assert response.status_code == 400 and "console" in response.json()["detail"]
 

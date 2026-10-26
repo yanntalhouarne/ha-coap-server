@@ -8,8 +8,10 @@ Each device goes through:
      old one, MCUboot reverted it: the update failed and the device is as it was
   5. confirm the new image, so it stays
 
-An update job stops at the first failure unless asked to go on, so a bad image reaches
-one device, not the whole fleet. A staged job also pauses after the first device, until
+A device whose battery was last read under the limit (settings.min_battery_for_update) is
+skipped over the air: a flat battery mid-update leaves it running the old image, but costs
+a battery change. An update job stops at the first failure unless asked to go on, so a bad
+image reaches one device, not the whole fleet. A staged job also pauses after the first device, until
 asked to continue. Cancelling skips the devices not started yet; the one in progress
 finishes, so it's never left half-way.
 """
@@ -51,6 +53,7 @@ class UpdateJob:
     targets: list
     stop_on_failure: bool = True
     staged: bool = False     # pause after the first device
+    ignore_battery: bool = False  # update devices under the battery limit too
     state: str = "running"   # running, paused, done, failed, cancelled
     created: float = field(default_factory=time.time)
     cancel_requested: bool = False
@@ -71,11 +74,12 @@ class UpdateManager:
         self.events = events
         self.jobs = {}
         self._tasks = {}
+        self.on_failure = None  # called with (job, target) when a device's update fails
 
     def running_job(self):
         return next((j for j in self.jobs.values() if j.state in ("running", "paused")), None)
 
-    def start(self, image_hash, targets, stop_on_failure=True, staged=False, console=None):
+    def start(self, image_hash, targets, stop_on_failure=True, staged=False, console=None, ignore_battery=False):
         """Starts an update job. 'targets' are dicts with device_id, and transport ("udp" by
         default) or serial_port."""
         if self.running_job() is not None:
@@ -109,7 +113,7 @@ class UpdateManager:
             job_targets.append(Target(device_id, transport, address, label=label))
 
         job = UpdateJob(uuid.uuid4().hex[:12], image_hash, image["version"], job_targets, stop_on_failure,
-                        staged=staged and len(job_targets) > 1)
+                        staged=staged and len(job_targets) > 1, ignore_battery=ignore_battery)
         self.jobs[job.id] = job
         self._tasks[job.id] = asyncio.create_task(self._run(job, data))
         self._publish(job)
@@ -148,6 +152,10 @@ class UpdateManager:
                 target.status, target.message = "cancelled", "Cancelled before it started"
             elif failed and job.stop_on_failure:
                 target.status, target.message = "skipped", "Skipped: an earlier device failed"
+            elif (low := self._low_battery(job, target)) is not None:
+                target.status, target.message = "skipped", (
+                    f"Skipped: battery at {low} %, under {self.settings.min_battery_for_update} %. Replace or "
+                    "charge it, or start the update with \"update low batteries too\"")
             else:
                 await self._update_target(job, target, data)
                 failed = failed or target.status == "failed"
@@ -162,6 +170,15 @@ class UpdateManager:
                 self._publish(job)
         job.state = "cancelled" if job.cancel_requested else ("failed" if failed else "done")
         self._publish(job)
+
+    def _low_battery(self, job, target):
+        """The device's last battery reading if it's under the limit for an over-the-air update."""
+        limit = self.settings.min_battery_for_update
+        if job.ignore_battery or not limit or target.transport != "udp" or not target.device_id:
+            return None  # over USB, the board runs from USB power
+        device = self.db.device(target.device_id)
+        battery = device["battery"] if device else None
+        return battery if battery is not None and battery < limit else None
 
     def _record(self, job, target):
         self.db.add_update(job.id, target.device_id or f"usb:{target.address}", target.transport, job.image_hash,
@@ -185,6 +202,11 @@ class UpdateManager:
         target.step = ""
         target.finished = time.time()
         self._record(job, target)
+        if target.status == "failed" and self.on_failure is not None:
+            try:
+                self.on_failure(job, target)
+            except Exception:  # noqa: BLE001 - an alert is a nicety, never a reason to stop
+                log.exception("update failure alert")
         if target.device_id and target.status in ("updated", "already-current"):
             self.db.upsert_device(target.device_id, image_hash=job.image_hash, image_version=job.image_version,
                                   last_seen=time.time())

@@ -4,6 +4,7 @@
 const state = {
   devices: new Map(), selected: new Set(), images: [], jobs: new Map(), status: null,
   release: null, filter: { text: '', tag: null }, pendingImage: null, setup: null, console: null,
+  alerts: [], appUpdate: null,
 };
 
 // ------------------------------------------------------------------ helpers
@@ -73,6 +74,7 @@ function ago(seconds) {
 const when = (seconds) => seconds ? new Date(seconds * 1000).toLocaleString() : '';
 const pct = (value) => (value === null || value === undefined) ? '–' : `${value} %`;
 const shortHash = (hash) => hash ? hash.slice(0, 8) : '';
+const photoUrl = (device) => `/api/devices/${encodeURIComponent(device.device_id)}/photo?t=${device.photo}`;
 
 // ------------------------------------------------------------------ tabs
 
@@ -142,7 +144,7 @@ function renderTagFilter() {
     class: `btn btn-sm ${state.filter.tag === tag ? 'btn-primary' : 'btn-outline-secondary'}`,
     onclick: () => { state.filter.tag = tag; renderDevices(); } }, label);
   document.getElementById('tag-filter').replaceChildren(chip('all', null), ...tags.map((t) => chip(t, t)),
-    tags.length ? null : h('span', { class: 'small text-body-secondary' }, 'none yet (add some on a device\'s page)'));
+    ...(tags.length ? [] : [h('span', { class: 'small text-body-secondary' }, 'none yet (add some on a device\'s page)')]));
 }
 
 function renderDevices() {
@@ -154,6 +156,7 @@ function renderDevices() {
   const count = state.selected.size;
   document.getElementById('selection-count').textContent = count ? `${count} selected` : '';
   document.getElementById('update-selected').disabled = count === 0;
+  document.getElementById('bulk-button').disabled = count === 0;
   document.getElementById('select-all').checked = visible.length > 0 && visible.every((d) => state.selected.has(d.device_id));
   renderTagFilter();
   renderStatusDevices();
@@ -187,15 +190,18 @@ function deviceRow(device) {
   return h('tr', { 'data-id': id },
     h('td', {}, h('input', { class: 'form-check-input', type: 'checkbox', checked: state.selected.has(id),
       onchange: (e) => { e.target.checked ? state.selected.add(id) : state.selected.delete(id); renderDevices(); } })),
-    h('td', {}, h('a', { href: `#device/${encodeURIComponent(id)}`, class: 'device-link' }, deviceName(device)),
-      (device.plant || device.location) ? h('div', { class: 'small text-body-secondary' },
-        [device.plant, device.location].filter(Boolean).join(' · ')) : null,
-      deviceTags(device).length ? h('div', {}, deviceTags(device).map((t) => h('span', { class: 'tag' }, t))) : null),
+    h('td', {}, h('div', { class: 'd-flex align-items-center gap-2' },
+      device.photo ? h('img', { class: 'thumb', src: photoUrl(device), alt: '', loading: 'lazy' }) : null,
+      h('div', {}, h('a', { href: `#device/${encodeURIComponent(id)}`, class: 'device-link' }, deviceName(device)),
+        device.needs_water ? h('span', { class: 'badge water-badge ms-2', title: `Soil under its target of ${device.water_target} %` }, 'needs water') : null,
+        (device.plant || device.location) ? h('div', { class: 'small text-body-secondary' },
+          [device.plant, device.location].filter(Boolean).join(' · ')) : null,
+        deviceTags(device).length ? h('div', {}, deviceTags(device).map((t) => h('span', { class: 'tag' }, t))) : null))),
     h('td', { class: 'mono' }, id),
     h('td', { class: 'mono small' }, device.address || '–'),
     firmware,
     h('td', { class: 'text-end' }, pct(device.battery)),
-    h('td', { class: 'text-end' }, pct(device.soil_moisture)),
+    h('td', { class: `text-end${device.needs_water ? ' text-warning' : ''}` }, pct(device.soil_moisture)),
     h('td', { class: 'text-end' }, pct(device.air_humidity)),
     h('td', { class: 'text-end' }, (device.temperature === null || device.temperature === undefined) ? '–' : `${device.temperature} °C`),
     h('td', { title: device.last_error || '' },
@@ -326,6 +332,7 @@ async function renderUpdateForm() {
   if (state.pendingImage) { select.value = state.pendingImage; state.pendingImage = null; } else if (previous) select.value = previous;
   const names = [...state.selected].map((id) => deviceName(state.devices.get(id) || { device_id: id }));
   document.getElementById('update-selection').textContent = names.length ? names.join(', ') : 'no devices selected';
+  renderUpdateChecks();
   if (!document.getElementById('serial-port').options.length) loadPorts();
 }
 
@@ -352,10 +359,14 @@ document.getElementById('update-form').addEventListener('submit', (event) => {
   }
   const imageHash = document.getElementById('update-image').value;
   if (!imageHash) return notify('Add an image on the Images tab first', 'warning');
+  const image = state.images.find((i) => i.hash === imageHash);
+  const refused = !!image && REFUSED_SIGNERS.includes(image.signer);
+  if (refused && !confirm(`${image.detail}.\n\nSend it anyway? Only for the simulator, or a board with a development bootloader.`)) return;
   busy(event.submitter, async () => {
     const job = await api('POST', '/api/updates', {
       image_hash: imageHash, targets, stop_on_failure: document.getElementById('stop-on-failure').checked,
-      staged: document.getElementById('staged').checked,
+      staged: document.getElementById('staged').checked, allow_unverified: refused,
+      ignore_battery: document.getElementById('ignore-battery').checked,
     });
     state.jobs.set(job.id, job);
     renderJobs();
@@ -464,6 +475,7 @@ async function loadImages() {
     h('td', {}, `v${image.version}`, image.release ? h('span', { class: 'badge text-bg-primary ms-2' }, '★ release') : null),
     h('td', { class: 'mono small', title: image.hash }, shortHash(image.hash)),
     h('td', { class: 'mono small' }, image.git_commit || '–'),
+    h('td', { class: `small text-nowrap ${signerClass[image.signer] || ''}`, title: image.detail }, signerShort[image.signer] || image.signer),
     h('td', {}, `${Math.round(image.size / 1024)} KB`), h('td', { class: 'small' }, when(image.added)),
     h('td', { class: 'small' }, image.notes || image.filename),
     h('td', { class: 'text-nowrap' }, h('button', { class: 'btn btn-sm btn-outline-primary me-1', onclick: async () => {
@@ -486,6 +498,7 @@ async function loadBuilds() {
   }
   container.replaceChildren(h('table', { class: 'table table-sm mb-0' }, h('tbody', {}, builds.map((b) => h('tr', {},
     h('td', {}, b.variant), h('td', {}, `v${b.version}`), h('td', { class: 'mono small' }, shortHash(b.hash)),
+    h('td', { class: `small text-nowrap ${signerClass[b.signer] || ''}`, title: b.detail }, signerShort[b.signer] || b.signer),
     h('td', { class: 'small' }, when(b.modified)),
     h('td', {}, b.in_library ? h('span', { class: 'text-body-secondary small' }, 'in library') :
       h('button', { class: 'btn btn-sm btn-outline-primary', onclick: async (e) => busy(e.target, async () => {
@@ -508,7 +521,10 @@ document.getElementById('upload-image').addEventListener('click', (event) => bus
 
 // ------------------------------------------------------------------ network
 
-const net = { state: null, positions: new Map(), selected: null, layout: null, zoom: {} };
+const net = { state: null, positions: new Map(), selected: null, layout: null, zoom: {}, viewing: null, history: [],
+  heatmap: false };
+// The reading on screen: the latest, or an earlier one picked on the history slider.
+const shownTopology = () => (net.viewing ? net.viewing.topology : net.state && net.state.topology);
 const SVG_NS = 'http://www.w3.org/2000/svg';
 
 function svg(tag, attrs = {}, ...children) {
@@ -641,7 +657,7 @@ function layoutNetwork(topology) {
 
 function renderNetwork() {
   const canvas = document.getElementById('network-canvas');
-  const topology = net.state && net.state.topology;
+  const topology = shownTopology();
   document.getElementById('network-empty').classList.toggle('d-none', !!topology);
   canvas.querySelector('svg')?.remove();
   document.getElementById('network-warnings').replaceChildren(...((topology && topology.warnings) || []).map((w) =>
@@ -679,7 +695,7 @@ function renderNetwork() {
     if (n.kind === 'SED') counts.sleepy++;
     if (n.device_id) counts.boards++;
   }
-  document.getElementById('network-summary').textContent =
+  document.getElementById('network-summary').textContent = (net.viewing ? 'Earlier reading: ' : '') +
     `${counts.routers} router(s), ${counts.children} child(ren) (${counts.sleepy} sleepy), ${counts.boards} of your boards. ` +
     `Read ${ago(topology.fetched)} (${topology.source === 'api' ? 'with signal strength' : 'link quality only'}).`;
 }
@@ -708,20 +724,41 @@ function enableZoom(canvas, drawing, box, key, { maxIn = 12, maxOut = 2 } = {}) 
     event.preventDefault();
     zoomBy(Math.exp(Math.max(-100, Math.min(100, event.deltaY)) * 0.002), toMap(event.clientX, event.clientY));
   }, { passive: false });
-  let pan = null;
+  // One pointer on the background pans; two (fingers on a touch screen) pinch to zoom.
+  let pan = null, pinch = null;
+  const pointers = new Map();
+  const spread = () => { const [a, b] = [...pointers.values()]; return { d: Math.hypot(a.x - b.x, a.y - b.y), x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 }; };
   drawing.addEventListener('pointerdown', (event) => {
     if (!isBackground(event.target)) return;  // nodes drag themselves, lines are clicked
-    pan = { id: event.pointerId, start: toMap(event.clientX, event.clientY) };
+    pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
     drawing.setPointerCapture(event.pointerId);
+    if (pointers.size === 2) {
+      pan = null;
+      pinch = spread().d;
+      return;
+    }
+    pan = { id: event.pointerId, start: toMap(event.clientX, event.clientY) };
     drawing.classList.add('panning');
   });
   drawing.addEventListener('pointermove', (event) => {
+    if (pointers.has(event.pointerId)) pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+    if (pinch && pointers.size === 2) {
+      const now = spread();
+      if (now.d > 0) zoomBy(pinch / now.d, toMap(now.x, now.y));
+      pinch = now.d;
+      return;
+    }
     if (!pan || event.pointerId !== pan.id) return;
     const p = toMap(event.clientX, event.clientY);
     const [x, y, w, height] = view();
     show([x - (p.x - pan.start.x), y - (p.y - pan.start.y), w, height]);  // keeps the grabbed point under the pointer
   });
-  const endPan = () => { pan = null; drawing.classList.remove('panning'); };
+  const endPan = (event) => {
+    pointers.delete(event.pointerId);
+    if (pointers.size < 2) pinch = null;
+    pan = null;
+    drawing.classList.remove('panning');
+  };
   drawing.addEventListener('pointerup', endPan);
   drawing.addEventListener('pointercancel', endPan);
   drawing.addEventListener('dblclick', (event) => { if (isBackground(event.target)) show(null); });
@@ -767,7 +804,7 @@ function detailsTable(rows) {
 function showNodeDetails(node) {
   net.selected = node.id;
   for (const n of net.layout.nodes) n.group.classList.toggle('selected', n.node.id === node.id);
-  const topology = net.state.topology;
+  const topology = shownTopology();
   const nodes = new Map(topology.nodes.map((n) => [n.id, n]));
   const links = topology.links.filter((l) => l.a === node.id || l.b === node.id).map((l) => {
     const other = nodes.get(l.a === node.id ? l.b : l.a);
@@ -821,6 +858,7 @@ async function loadNetwork() {
   renderNetworkLegend();
   renderFloorplan();
   renderChannelScan(net.state.channel_scan);
+  loadNetworkHistory().catch(() => {});
   document.getElementById('network-events').replaceChildren(...(net.state.events.length
     ? net.state.events.map((e) => h('li', { class: 'mb-1' }, h('span', { class: 'text-body-secondary' }, `${when(e.time)} `), e.message))
     : [h('li', { class: 'text-body-secondary' }, 'No changes seen yet. Boards changing parent show here.')]));
@@ -1092,6 +1130,7 @@ async function loadDashboard() {
   const c = d.counts;
   document.getElementById('dash-tiles').replaceChildren(
     tile('online', `${c.online}/${c.devices}`, c.devices && c.online < c.devices ? 'warn' : 'ok'),
+    tile('needs water', c.needs_water, c.needs_water ? 'warn' : 'ok', 'Plants whose soil is under their watering target'),
     tile('behind the release', d.release ? c.outdated : '–', c.outdated ? 'warn' : 'ok',
       d.release ? 'Devices not running the release image' : 'No release image yet: mark one on the Images tab'),
     tile('firmware unknown', c.unknown, c.unknown ? 'muted' : 'ok', 'Devices whose running image was never read'),
@@ -1130,6 +1169,17 @@ async function loadDashboard() {
 
   const table = (rows, empty) => rows.length ? h('table', { class: 'table table-sm mb-0' }, h('tbody', {}, rows)) :
     h('p', { class: 'text-body-secondary mb-0' }, empty);
+  document.getElementById('dash-water').replaceChildren(table(d.needs_water.map((e) => h('tr', {},
+    h('td', { class: 'thumb-cell' }, e.photo ? h('img', { class: 'thumb', src: photoUrl(e), alt: '' }) : null),
+    h('td', {}, deviceLink(e), e.plant ? h('div', { class: 'small text-body-secondary' }, e.plant) : null),
+    h('td', { class: 'text-end text-warning text-nowrap' }, pct(e.soil_moisture)),
+    h('td', { class: 'small text-body-secondary text-nowrap' }, `under ${e.water_target} %`),
+    h('td', { class: 'text-end' }, h('button', { class: 'btn btn-sm btn-outline-primary text-nowrap', onclick: (event) => busy(event.target, async () => {
+      await api('POST', `/api/devices/${encodeURIComponent(e.device_id)}/pump`, { on: true });
+      notify(`Watering ${e.name}`, 'success', 3000);
+    }) }, 'Run the pump')))),
+  'Every plant has enough water. Set a target per plant on its page, or the default in Settings.'));
+  renderAlerts();
   document.getElementById('dash-batteries').replaceChildren(table(d.low_battery.map((e) => h('tr', {},
     h('td', {}, deviceLink(e)), h('td', { class: 'text-end' }, pct(e.battery)), h('td', { class: 'small' }, daysText(e.battery_forecast)))),
   'No battery is low. Forecasts appear once a device has a few readings over several hours.'));
@@ -1198,6 +1248,8 @@ async function loadDevicePage(id) {
     return;
   }
   devicePage.details = details;
+  document.getElementById('device-csv').href = `/api/readings.csv?device_id=${encodeURIComponent(id)}`;
+  renderDevicePhoto(details.device);
   renderDeviceStatus(details.device);
   renderDeviceFirmware(details);
   renderDeviceControls(details.device);
@@ -1276,14 +1328,18 @@ function renderDeviceForm(device) {
   const field = (name, label, value, attrs = {}) => h('div', { class: attrs.wide ? 'col-12' : 'col-sm-6' },
     h('label', { class: 'form-label', for: `device-${name}` }, label),
     h(attrs.textarea ? 'textarea' : 'input', { class: 'form-control form-control-sm', id: `device-${name}`, name,
-      value: attrs.textarea ? null : value, placeholder: attrs.placeholder || null, rows: attrs.textarea ? 2 : null },
+      value: attrs.textarea ? null : value, placeholder: attrs.placeholder || null, rows: attrs.textarea ? 2 : null,
+      type: attrs.type || null, min: attrs.min ?? null, max: attrs.max ?? null },
     attrs.textarea ? value : null));
+  const defaultTarget = state.status ? state.status.settings.water_below_default : null;
   const form = document.getElementById('device-form');
   form.replaceChildren(
     field('name', 'Name', device.name || ''),
     field('plant', 'Plant', device.plant || '', { placeholder: 'basil' }),
     field('location', 'Location', device.location || '', { placeholder: 'kitchen window' }),
     field('tags', 'Groups', device.tags || '', { placeholder: 'greenhouse, test' }),
+    field('water_below', 'Needs water below (%)', device.water_below ?? '', { type: 'number', min: 0, max: 100,
+      placeholder: defaultTarget ? `default: ${defaultTarget}` : 'default: off' }),
     field('notes', 'Notes', device.notes || '', { wide: true, textarea: true }),
     h('div', { class: 'col-12 d-flex gap-2' }, h('button', { class: 'btn btn-sm btn-primary', type: 'submit' }, 'Save'),
       h('button', { class: 'btn btn-sm btn-outline-danger ms-auto', type: 'button', onclick: async () => {
@@ -1345,6 +1401,7 @@ function renderFloorplan() {
   container.querySelectorAll('.floorplan-stage').forEach((e) => e.remove());
   document.getElementById('floorplan-empty').classList.toggle('d-none', !!plan);
   document.getElementById('floorplan-remove').classList.toggle('d-none', !plan);
+  document.getElementById('heatmap-note').classList.toggle('d-none', !(plan && net.heatmap && net.view === 'floorplan'));
   if (!plan || net.view !== 'floorplan') return;
   const img = new Image();
   img.src = `/api/network/floorplan?t=${plan.time}`;
@@ -1364,7 +1421,7 @@ function renderFloorplan() {
 }
 
 function drawFloorplanNodes(stage, img) {
-  const topology = net.state.topology;
+  const topology = shownTopology();
   stage.querySelector('svg')?.remove();
   if (!topology) {
     stage.append(h('div', { class: 'floorplan-hint' }, 'Read the network first: the nodes come from it.'));
@@ -1398,6 +1455,7 @@ function drawFloorplanNodes(stage, img) {
   const drawing = svg('svg', { viewBox: (net.zoom.floorplan || box).join(' '), width: W, height: H,
     preserveAspectRatio: 'xMidYMid meet', class: columns > 1 ? 'tray-compact' : null },
     svg('image', { href: img.src, x: 0, y: 0, width: W, height: H, preserveAspectRatio: 'none', class: 'floorplan-picture' }),
+    net.heatmap ? heatmapLayer(topology, points, W, H) : null,
     svg('rect', { x: 0, y: 0, width: trayWidth, height: H, class: 'tray' }),
     svg('text', { x: trayWidth / 2, y: H - 28, 'text-anchor': 'middle', class: 'tray-label' }, 'not'),
     svg('text', { x: trayWidth / 2, y: H - 12, 'text-anchor': 'middle', class: 'tray-label' }, 'placed'),
@@ -1600,6 +1658,9 @@ const settingLabels = {
   auto_refresh_minutes: ['Automatic refresh (min)', 'Refreshes every device\'s status while the app runs. 0 turns it off.'],
   reboot_timeout_s: ['Reboot timeout (s)', 'How long an updated device has to come back'],
   border_router_url: ['Border router REST API', 'For the Network page, such as http://192.168.1.20:8081 (the ot-br-posix REST server). Empty: not used.'],
+  min_battery_for_update: ['Lowest battery for an update (%)', 'Over the air, a device whose battery is under this is skipped (an update can include it anyway). 0: no check.'],
+  water_below_default: ['Needs water below (%)', 'The soil moisture under which a plant needs water, unless its page sets its own. 0: off.'],
+  check_app_updates: ['Check GitHub for app updates', 'Once a day, asks GitHub whether a newer fleet manager is out.'],
 };
 
 async function loadSettings() {
@@ -1608,6 +1669,12 @@ async function loadSettings() {
   const form = document.getElementById('settings-form');
   form.replaceChildren(...Object.entries(status.settings).map(([key, value]) => {
     const [label, help] = settingLabels[key] || [key, ''];
+    if (typeof value === 'boolean') {
+      return h('div', { class: 'col-12' }, h('div', { class: 'form-check form-switch' },
+        h('input', { class: 'form-check-input', type: 'checkbox', id: `setting-${key}`, name: key, checked: value }),
+        h('label', { class: 'form-check-label', for: `setting-${key}` }, label)),
+      help ? h('div', { class: 'form-text' }, help) : null);
+    }
     const text = typeof value === 'string';
     return h('div', { class: text ? 'col-12' : 'col-sm-6' }, h('label', { class: 'form-label', for: `setting-${key}` }, label),
       h('input', { class: 'form-control', id: `setting-${key}`, name: key, type: text ? 'text' : 'number', step: text ? null : 'any', value }),
@@ -1619,6 +1686,8 @@ async function loadSettings() {
     ['Listening on', `${location.host} (this computer only)`]];
   document.getElementById('about').replaceChildren(...about.flatMap(([k, v]) =>
     [h('dt', { class: 'col-sm-4' }, k), h('dd', { class: 'col-sm-8 text-break' }, v)]));
+  renderNotificationState();
+  checkAppUpdate().catch(() => {});
 }
 
 async function loadBackups() {
@@ -1650,9 +1719,17 @@ document.getElementById('import-devices').addEventListener('click', (event) => b
 document.getElementById('settings-form').addEventListener('submit', (event) => {
   event.preventDefault();
   const current = (state.status && state.status.settings) || {};
-  const values = Object.fromEntries([...new FormData(event.target).entries()].map(([k, v]) =>
-    [k, typeof current[k] === 'string' ? v.trim() : Number(v)]));
-  api('PUT', '/api/settings', values).then(() => notify('Saved', 'success', 2000), () => {});
+  const values = {};
+  for (const [key, value] of Object.entries(current)) {
+    const input = event.target.elements[key];
+    if (!input) continue;
+    values[key] = typeof value === 'boolean' ? input.checked : typeof value === 'string' ? input.value.trim() : Number(input.value);
+  }
+  api('PUT', '/api/settings', values).then((settings) => {
+    state.status.settings = settings;
+    notify('Saved', 'success', 2000);
+    checkAppUpdate().catch(() => {});
+  }, () => {});
 });
 
 // ------------------------------------------------------------------ live events
@@ -1667,6 +1744,8 @@ function connectEvents(delay = 1000) {
     delay = 1000;
     loadDevices().catch(() => {});
     loadJobs().catch(() => {});
+    loadStatus().catch(() => {});
+    loadAlerts().catch(() => {});
     api('GET', '/api/setup').then((setup) => { state.setup = setup.current; renderActivity(); }, () => {});
   });
   socket.addEventListener('message', (message) => {
@@ -1674,11 +1753,19 @@ function connectEvents(delay = 1000) {
     if (event.type === 'device') {
       state.devices.set(event.device.device_id, event.device);
       renderDevices();
-      if (currentRoute() === `device/${encodeURIComponent(event.device.device_id)}`) renderDeviceStatus(event.device);
+      if (currentRoute() === `device/${encodeURIComponent(event.device.device_id)}`) {
+        renderDeviceStatus(event.device);
+        renderDevicePhoto(event.device);
+      }
     } else if (event.type === 'devices') {
       loadDevices().catch(() => {});
     } else if (event.type === 'network') {
       if (!document.getElementById('tab-network').classList.contains('d-none')) loadNetwork().catch(() => {});
+    } else if (event.type === 'alert') {
+      onAlert(event.alert);
+    } else if (event.type === 'alerts') {
+      loadAlerts().catch(() => {});
+      if (currentRoute() === 'dashboard') loadDashboard().catch(() => {});
     } else if (event.type === 'setup') {
       onSetup(event.setup);
     } else if (event.type === 'setup-log') {
@@ -1773,6 +1860,11 @@ document.getElementById('theme-menu').replaceChildren(...window.HACOAP_THEMES.ma
 
 document.addEventListener('keydown', (event) => {
   const target = event.target;
+  if ((event.ctrlKey || event.metaKey) && !event.altKey && (event.key === 'k' || event.key === 'K')) {
+    event.preventDefault();
+    openPalette();
+    return;
+  }
   if (event.ctrlKey || event.metaKey || event.altKey) return;
   if (target.closest('input, textarea, select, [contenteditable]')) return;
   if (event.key >= '1' && event.key <= String(TABS.length)) {
@@ -1784,6 +1876,443 @@ document.addEventListener('keydown', (event) => {
   }
 });
 
+// ------------------------------------------------------------------ status
+
+async function loadStatus() {
+  state.status = await api('GET', '/api/status', undefined, { quiet: true });
+  return state.status;
+}
+
+// ------------------------------------------------------------------ who signed an image
+
+const signerShort = { yours: 'your key', development: 'dev key', other: 'other key', unsigned: 'unsigned', unknown: 'not checked' };
+const signerClass = { yours: 'text-success', development: 'text-danger', other: 'text-danger', unsigned: 'text-warning', unknown: 'text-body-secondary' };
+const signerIcon = { yours: '✓', development: '✗', other: '✗', unsigned: '✗', unknown: '?' };
+const REFUSED_SIGNERS = ['development', 'other', 'unsigned'];  // boards with your bootloader won't boot these
+
+// Under the image choice: who signed it, and which selected devices have a low battery.
+function renderUpdateChecks() {
+  const image = state.images.find((i) => i.hash === document.getElementById('update-image').value);
+  const signer = document.getElementById('update-image-signer');
+  signer.className = `form-text ${image ? signerClass[image.signer] || '' : ''}`;
+  signer.textContent = image && image.signer ? `${signerIcon[image.signer] || ''} ${image.detail}` : '';
+  const limit = state.status ? state.status.settings.min_battery_for_update : 20;
+  const low = [...state.selected].map((id) => state.devices.get(id))
+    .filter((d) => d && limit && d.battery !== null && d.battery !== undefined && d.battery < limit);
+  const warning = document.getElementById('update-low-batteries');
+  warning.classList.toggle('d-none', !low.length);
+  warning.textContent = low.length ? `Battery under ${limit} %: ${low.map((d) => `${deviceName(d)} (${d.battery} %)`).join(', ')}. ` +
+    'Over the air, they\'re skipped unless the box above is ticked: a battery that dies mid-update costs a battery change.' : '';
+  document.getElementById('ignore-battery-label').textContent = limit ? `Update batteries under ${limit} % too` : 'Update low batteries too';
+}
+
+document.getElementById('update-image').addEventListener('change', renderUpdateChecks);
+
+// ------------------------------------------------------------------ actions for the ticked devices
+
+async function forSelected(label, work) {
+  const devices = [...state.selected].map((id) => state.devices.get(id)).filter(Boolean);
+  let failed = 0;
+  for (const device of devices) {
+    try { await work(device); } catch (error) { failed++; }
+  }
+  notify(`${label}: ${devices.length - failed} of ${devices.length}${failed ? ` (${failed} didn't work)` : ''}`,
+    failed ? 'warning' : 'success');
+  await loadDevices();
+}
+
+const devicePath = (device, rest = '') => `/api/devices/${encodeURIComponent(device.device_id)}${rest}`;
+const patchDevice = (device, values) => api('PATCH', devicePath(device), values, { quiet: true });
+
+const bulkActions = [
+  ['Refresh', () => forSelected('Refreshed', (d) => api('POST', devicePath(d, '/refresh'), undefined, { quiet: true }))],
+  ['Read firmware', () => forSelected('Read', (d) => api('POST', devicePath(d, '/slots'), { transport: 'udp' }, { quiet: true }))],
+  ['Beep', () => forSelected('Beeped', (d) => api('POST', devicePath(d, '/ping'), undefined, { quiet: true }))],
+  null,
+  ['Add to a group…', () => {
+    const tag = prompt('The group to add them to (for example greenhouse)');
+    if (tag && tag.trim()) forSelected('Added to the group', (d) => patchDevice(d, { tags: [...deviceTags(d), tag.trim()] }));
+  }],
+  ['Remove from a group…', () => {
+    const tags = [...new Set([...state.selected].flatMap((id) => deviceTags(state.devices.get(id) || {})))];
+    const tag = prompt(`The group to remove them from${tags.length ? ` (${tags.join(', ')})` : ''}`);
+    if (tag && tag.trim()) forSelected('Removed from the group', (d) => patchDevice(d, { tags: deviceTags(d).filter((t) => t !== tag.trim().toLowerCase()) }));
+  }],
+  ['Set the location…', () => {
+    const location_ = prompt('Location (for example kitchen window)');
+    if (location_ !== null) forSelected('Location set', (d) => patchDevice(d, { location: location_ }));
+  }],
+  ['Set the watering target…', () => {
+    const value = prompt('They need water below this soil moisture (%). Leave it empty for the default (Settings).', '');
+    if (value !== null) forSelected('Watering target set', (d) => patchDevice(d, { water_below: value.trim() }));
+  }],
+  null,
+  ['Remove from the list', () => {
+    if (!confirm(`Remove ${state.selected.size} device(s) from the list? They stay on the network and come back with Find devices.`)) return;
+    forSelected('Removed', async (d) => {
+      await api('DELETE', devicePath(d), undefined, { quiet: true });
+      state.selected.delete(d.device_id);
+    });
+  }],
+];
+
+document.getElementById('bulk-menu').replaceChildren(...bulkActions.map((action) => action
+  ? h('li', {}, h('a', { class: 'dropdown-item', href: '#', onclick: (e) => { e.preventDefault(); action[1](); } }, action[0]))
+  : h('li', {}, h('hr', { class: 'dropdown-divider' }))));
+
+// ------------------------------------------------------------------ the plant's photo
+
+// Phone photos are large: shrink them to 1600 px at most (JPEG) before sending, so the page,
+// the database folder and the backups stay light.
+async function shrinkPhoto(file) {
+  const MAX = 1600;
+  let bitmap;
+  try {
+    bitmap = await createImageBitmap(file, { imageOrientation: 'from-image' });
+  } catch (error) {
+    return file;  // a format the browser can't draw: the app says whether it takes it
+  }
+  const scale = Math.min(1, MAX / Math.max(bitmap.width, bitmap.height));
+  if (scale === 1 && file.size < 1.5 * 1024 * 1024) return file;
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.round(bitmap.width * scale);
+  canvas.height = Math.round(bitmap.height * scale);
+  canvas.getContext('2d').drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+  return new Promise((resolve) => canvas.toBlob((blob) => resolve(blob || file), 'image/jpeg', 0.85));
+}
+
+function renderDevicePhoto(device) {
+  if (device.device_id !== devicePage.id) return;
+  const input = h('input', { type: 'file', class: 'd-none', accept: 'image/png,image/jpeg,image/webp' });
+  const choose = h('button', { class: 'btn btn-sm btn-outline-secondary', type: 'button', onclick: () => input.click() },
+    device.photo ? 'Change the photo' : 'Add a photo');
+  input.addEventListener('change', () => {
+    const file = input.files[0];
+    if (file) busy(choose, async () => api('POST', devicePath(device, '/photo'), await shrinkPhoto(file)));
+  });
+  const picture = device.photo
+    ? h('img', { class: 'plant-photo', src: photoUrl(device), alt: device.plant ? `The ${device.plant}` : `The plant of ${deviceName(device)}` })
+    : h('button', { class: 'plant-photo-empty', type: 'button', onclick: () => input.click() },
+      'Add a photo of the plant this device looks after');
+  const target = device.water_target;
+  let water = 'No soil reading yet.';
+  if (device.soil_moisture !== null && device.soil_moisture !== undefined) {
+    water = !target ? `Soil at ${device.soil_moisture} % (no watering target).`
+      : device.needs_water ? `Soil at ${device.soil_moisture} %: under its target of ${target} %, it needs water.`
+        : `Soil at ${device.soil_moisture} %: fine (it needs water under ${target} %).`;
+  }
+  document.getElementById('device-photo').replaceChildren(picture,
+    device.plant ? h('div', { class: 'fw-bold mt-2' }, device.plant) : null,
+    h('div', { class: `small mt-1 ${device.needs_water ? 'text-warning' : 'text-body-secondary'}` }, water),
+    h('div', { class: 'd-flex gap-2 mt-2' }, choose,
+      device.photo ? h('button', { class: 'btn btn-sm btn-outline-danger', type: 'button', onclick: async () => {
+        if (confirm('Remove the photo?')) await api('DELETE', devicePath(device, '/photo')).catch(() => {});
+      } }, 'Remove') : null),
+    input);
+}
+
+// ------------------------------------------------------------------ alerts and notifications
+
+async function loadAlerts() {
+  state.alerts = (await api('GET', '/api/alerts', undefined, { quiet: true })).open;
+  renderAlerts();
+}
+
+function renderAlerts() {
+  const count = state.alerts.length;
+  document.getElementById('status-alerts').classList.toggle('d-none', !count);
+  document.getElementById('status-alerts-link').textContent = `▲ ${count} alert${count === 1 ? '' : 's'}`;
+  document.getElementById('dash-alerts').replaceChildren(count
+    ? h('ul', { class: 'list-unstyled mb-0 alerts-list' }, state.alerts.map((a) => h('li', { class: `alert-${a.kind}` },
+      h('span', { class: 'small text-body-secondary text-nowrap' }, ago(a.raised)),
+      a.device_id ? h('a', { href: `#device/${encodeURIComponent(a.device_id)}` }, a.message) : h('span', {}, a.message),
+      h('button', { class: 'btn-close ms-auto', title: 'Dismiss', 'aria-label': 'Dismiss',
+        onclick: () => api('POST', `/api/alerts/${a.id}/dismiss`).then(loadAlerts, () => {}) }))))
+    : h('p', { class: 'text-body-secondary mb-0' }, 'Nothing needs attention.'));
+}
+
+// New alerts arrive one by one; a burst (at start, say) becomes one message.
+const pendingAlerts = [];
+
+function onAlert(alert) {
+  pendingAlerts.push(alert);
+  if (pendingAlerts.length > 1) return;
+  setTimeout(() => {
+    const batch = pendingAlerts.splice(0);
+    const text = batch.length === 1 ? batch[0].message
+      : `${batch.length} new alerts: ${batch.slice(0, 3).map((a) => a.message).join('; ')}${batch.length > 3 ? '…' : ''}`;
+    notify(text, 'warning', 10000);
+    if (notificationsOn()) {
+      try {
+        new Notification('ha-coap', { body: text, icon: '/static/icon.svg', tag: batch.length === 1 ? batch[0].key : 'hacoap-alerts' });
+      } catch (error) { /* not shown */ }
+    }
+  }, 800);
+}
+
+function notificationsOn() {
+  try {
+    return 'Notification' in window && Notification.permission === 'granted' && localStorage.getItem('hacoap-notify') === '1';
+  } catch (error) {
+    return false;
+  }
+}
+
+async function toggleNotifications() {
+  if (notificationsOn()) {
+    try { localStorage.removeItem('hacoap-notify'); } catch (error) { /* nothing kept */ }
+    renderNotificationState();
+    return;
+  }
+  if (!('Notification' in window)) return notify('This browser can\'t show notifications', 'warning');
+  const permission = await Notification.requestPermission();
+  if (permission !== 'granted') {
+    notify('The browser blocked notifications for this page: allow them in its site settings', 'warning');
+  } else {
+    try { localStorage.setItem('hacoap-notify', '1'); } catch (error) { /* only for this visit */ }
+    new Notification('ha-coap', { body: 'Notifications are on: alerts pop up here.', icon: '/static/icon.svg' });
+  }
+  renderNotificationState();
+}
+
+function renderNotificationState() {
+  const on = notificationsOn();
+  document.getElementById('notifications-enable').textContent = on ? 'Notifications on' : 'Notify me';
+  document.getElementById('settings-notifications').textContent = on ? 'Turn off' : 'Turn on';
+  let text = on ? 'On, in this browser' : 'Off';
+  if (!('Notification' in window)) text = 'Not available in this browser';
+  else if (!on && Notification.permission === 'denied') text = 'Blocked: allow notifications for this page in the browser';
+  document.getElementById('notifications-state').textContent = text;
+}
+
+document.getElementById('notifications-enable').addEventListener('click', toggleNotifications);
+document.getElementById('settings-notifications').addEventListener('click', toggleNotifications);
+
+// ------------------------------------------------------------------ app updates
+
+async function checkAppUpdate(force = false) {
+  const result = await api('GET', `/api/app-update${force ? '?force=true' : ''}`, undefined, { quiet: !force });
+  state.appUpdate = result;
+  const url = typeof result.url === 'string' && result.url.startsWith('https://github.com/') ? result.url : null;
+  document.getElementById('status-app-update').classList.toggle('d-none', !(result.newer && url));
+  if (result.newer && url) {
+    const link = document.getElementById('status-app-update-link');
+    link.href = url;
+    link.textContent = `app v${result.latest} is out`;
+  }
+  let text = 'Not checked (turn on the check above, or click Check now).';
+  if (result.checking !== false) {
+    text = result.error || (result.newer ? `Version ${result.latest} is out (this is ${result.current}).`
+      : result.latest ? `Up to date: ${result.current} (newest release ${result.latest}).`
+        : `No fleet manager release published yet (this is ${result.current}).`);
+  }
+  document.getElementById('app-update-state').textContent = text;
+}
+
+document.getElementById('app-update-check').addEventListener('click', (event) => busy(event.target, () => checkAppUpdate(true)));
+
+// ------------------------------------------------------------------ network history
+
+async function loadNetworkHistory() {
+  net.history = await api('GET', '/api/network/history', undefined, { quiet: true });
+  const slider = document.getElementById('history-slider');
+  document.getElementById('network-history').classList.toggle('d-none', net.history.length < 2);
+  slider.max = Math.max(0, net.history.length - 1);
+  const index = net.viewing ? net.history.findIndex((s) => s.id === net.viewing.id) : -1;
+  slider.value = index >= 0 ? index : slider.max;
+  renderHistoryLabel();
+}
+
+function renderHistoryLabel() {
+  const slider = document.getElementById('history-slider');
+  const index = Number(slider.value);
+  const entry = net.history[index];
+  document.getElementById('history-label').textContent = !entry ? '' :
+    index === net.history.length - 1 && !net.viewing ? 'latest' : `${when(entry.time)} · ${entry.boards} boards`;
+  document.getElementById('history-latest').classList.toggle('d-none', !net.viewing);
+}
+
+function showLatestNetwork() {
+  net.viewing = null;
+  const slider = document.getElementById('history-slider');
+  slider.value = slider.max;
+  renderHistoryLabel();
+  renderNetwork();
+  renderFloorplan();
+}
+
+document.getElementById('history-slider').addEventListener('input', renderHistoryLabel);
+document.getElementById('history-slider').addEventListener('change', async (event) => {
+  const index = Number(event.target.value);
+  const entry = net.history[index];
+  if (!entry || index === net.history.length - 1) return showLatestNetwork();
+  const topology = await api('GET', `/api/network/history/${entry.id}`).catch(() => null);
+  if (!topology) return;
+  net.viewing = { id: entry.id, time: entry.time, topology };
+  renderHistoryLabel();
+  renderNetwork();
+  renderFloorplan();
+});
+document.getElementById('history-latest').addEventListener('click', showLatestNetwork);
+
+// ------------------------------------------------------------------ signal heatmap on the floor plan
+
+// The signal over the floor plan, estimated from the placed nodes: each one counts with the
+// margin of its strongest link, blended by distance (nearer nodes weigh more), and the colour
+// fades out away from every node. A guide to dead zones, not a measurement.
+function heatmapLayer(topology, points, W, H) {
+  const samples = [];
+  for (const node of topology.nodes) {
+    const p = points.get(node.id);
+    if (!p || !p.placed) continue;
+    const margins = topology.links.filter((l) => l.a === node.id || l.b === node.id).map((l) => {
+      if (l.link_margin !== null && l.link_margin !== undefined) return l.link_margin;
+      const quality = Math.min(...[l.link_quality_in, l.link_quality_out].filter((v) => v !== null && v !== undefined));
+      return Number.isFinite(quality) ? quality * 10 + 5 : null;  // link quality 0-3 as a rough margin
+    }).filter((m) => m !== null);
+    if (margins.length) samples.push({ x: p.x, y: p.y, margin: Math.max(...margins) });
+  }
+  if (samples.length < 2) return null;
+  const cell = 8, cols = Math.ceil(W / cell), rows = Math.ceil(H / cell);
+  const canvas = document.createElement('canvas');
+  canvas.width = cols;
+  canvas.height = rows;
+  const context = canvas.getContext('2d');
+  const pixels = context.createImageData(cols, rows);
+  const reach = Math.max(W, H) * 0.3;
+  for (let row = 0; row < rows; row++) {
+    for (let col = 0; col < cols; col++) {
+      const x = (col + 0.5) * cell, y = (row + 0.5) * cell;
+      let sum = 0, weights = 0, nearest = Infinity;
+      for (const s of samples) {
+        const d2 = (s.x - x) ** 2 + (s.y - y) ** 2;
+        nearest = Math.min(nearest, d2);
+        const weight = 1 / Math.max(d2, 1);
+        sum += weight * s.margin;
+        weights += weight;
+      }
+      const alpha = Math.max(0, 1 - Math.sqrt(nearest) / reach);
+      pixels.data.set([...marginColor(sum / weights), Math.round(alpha * 100)], (row * cols + col) * 4);
+    }
+  }
+  context.putImageData(pixels, 0, 0);
+  return svg('image', { href: canvas.toDataURL(), x: 0, y: 0, width: W, height: H, preserveAspectRatio: 'none', class: 'heatmap' });
+}
+
+// Red (5 dB and under) to amber (15 dB) to green (25 dB and over), as for the links' colours.
+function marginColor(margin) {
+  const red = [239, 68, 68], amber = [245, 158, 11], green = [34, 197, 94];
+  const m = Math.max(5, Math.min(25, margin));
+  const [from, to, t] = m <= 15 ? [red, amber, (m - 5) / 10] : [amber, green, (m - 15) / 10];
+  return from.map((v, i) => Math.round(v + (to[i] - v) * t));
+}
+
+try { net.heatmap = localStorage.getItem('hacoap-heatmap') === '1'; } catch (error) { /* off */ }
+document.getElementById('heatmap-toggle').checked = net.heatmap;
+document.getElementById('heatmap-toggle').addEventListener('change', (event) => {
+  net.heatmap = event.target.checked;
+  try { localStorage.setItem('hacoap-heatmap', net.heatmap ? '1' : '0'); } catch (error) { /* not remembered */ }
+  renderFloorplan();
+});
+
+// ------------------------------------------------------------------ search (Ctrl+K)
+
+const palette = { items: [], shown: [], index: 0 };
+
+// Shows a tab, then clicks one of its buttons.
+function runOnTab(tab, buttonId) {
+  return () => {
+    location.hash = `#${tab}`;
+    setTimeout(() => document.getElementById(buttonId).click(), 100);
+  };
+}
+
+const download = (url) => () => { window.location.href = url; };
+
+function paletteItems() {
+  const items = TABS.map((tab, i) => ({ kind: 'tab', label: tab, hint: `key ${i + 1}`, run: () => { location.hash = `#${tab}`; } }));
+  for (const device of [...state.devices.values()].sort((a, b) => deviceName(a).localeCompare(deviceName(b)))) {
+    items.push({ kind: 'device', label: deviceName(device), hint: [device.plant, device.location, device.device_id].filter(Boolean).join(' · '),
+      run: () => { location.hash = `#device/${encodeURIComponent(device.device_id)}`; } });
+  }
+  const action = (label, hint, run) => items.push({ kind: 'action', label, hint, run });
+  action('Find devices', 'devices', runOnTab('devices', 'discover'));
+  action('Refresh all devices', 'devices', runOnTab('devices', 'refresh-all'));
+  action('Read all firmware', 'which image each device runs', runOnTab('devices', 'read-all-slots'));
+  action('Read the network', 'network', runOnTab('network', 'network-refresh'));
+  action('Scan the channels', 'radio noise per channel', runOnTab('network', 'channel-scan'));
+  action('Download a backup', 'settings', download('/api/backup'));
+  action('Download a problem report', 'settings', download('/api/report'));
+  action('Export readings (CSV)', 'every device', download('/api/readings.csv'));
+  action('Export devices (CSV)', 'the device list', download('/api/devices.csv'));
+  action('Next colour theme', 'T', () => cycleTheme(1));
+  action(notificationsOn() ? 'Turn off notifications' : 'Turn on notifications', 'alerts in the browser', toggleNotifications);
+  action('Check for an app update', 'GitHub', () => { location.hash = '#settings'; checkAppUpdate(true).catch(() => {}); });
+  return items;
+}
+
+function filterPalette() {
+  const words = document.getElementById('palette-input').value.toLowerCase().split(/\s+/).filter(Boolean);
+  const matches = palette.items.filter((item) => {
+    const text = `${item.label} ${item.hint} ${item.kind}`.toLowerCase();
+    return words.every((w) => text.includes(w));
+  });
+  // Labels that start with what was typed come first
+  const first = words[0] || '';
+  palette.shown = [...matches.filter((i) => i.label.toLowerCase().startsWith(first)),
+    ...matches.filter((i) => !i.label.toLowerCase().startsWith(first))].slice(0, 14);
+  palette.index = 0;
+  renderPalette();
+}
+
+function renderPalette() {
+  const list = document.getElementById('palette-list');
+  list.replaceChildren(...(palette.shown.length ? palette.shown.map((item, i) => h('li', {
+    class: i === palette.index ? 'active' : null, role: 'option', 'aria-selected': i === palette.index ? 'true' : 'false',
+    onmousedown: (e) => { e.preventDefault(); runPaletteItem(item); },
+    onmousemove: () => { if (palette.index !== i) { palette.index = i; renderPalette(); } },
+  }, h('span', { class: 'kind' }, item.kind), h('span', {}, item.label), h('span', { class: 'hint' }, item.hint)))
+    : [h('li', { class: 'empty' }, 'Nothing matches')]));
+  list.querySelector('.active')?.scrollIntoView({ block: 'nearest' });
+}
+
+function openPalette() {
+  palette.items = paletteItems();
+  const input = document.getElementById('palette-input');
+  input.value = '';
+  document.getElementById('palette').classList.remove('d-none');
+  filterPalette();
+  input.focus();
+}
+
+function closePalette() {
+  document.getElementById('palette').classList.add('d-none');
+}
+
+function runPaletteItem(item) {
+  closePalette();
+  if (item) item.run();
+}
+
+document.getElementById('palette-input').addEventListener('input', filterPalette);
+document.getElementById('palette-input').addEventListener('keydown', (event) => {
+  if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+    event.preventDefault();
+    const count = palette.shown.length;
+    if (count) palette.index = (palette.index + (event.key === 'ArrowDown' ? 1 : -1) + count) % count;
+    renderPalette();
+  } else if (event.key === 'Enter') {
+    event.preventDefault();
+    runPaletteItem(palette.shown[palette.index]);
+  } else if (event.key === 'Escape') {
+    closePalette();
+  }
+});
+document.getElementById('palette').addEventListener('mousedown', (event) => {
+  if (event.target.id === 'palette') closePalette();  // a click beside the box
+});
+document.getElementById('palette-button').addEventListener('click', openPalette);
+
 // ------------------------------------------------------------------ start
 
 setTheme(document.documentElement.getAttribute('data-theme'));
@@ -1791,3 +2320,4 @@ renderClock();
 setInterval(renderClock, 30000);
 showTab(currentRoute());
 connectEvents();
+renderNotificationState();

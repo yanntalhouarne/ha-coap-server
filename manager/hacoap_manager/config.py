@@ -30,6 +30,9 @@ class Settings:
     auto_refresh_minutes: int = 15  # refresh every device's status while the app runs (0: never)
     reboot_timeout_s: float = 180.0  # how long an updated device has to come back
     border_router_url: str = ""     # the border router's REST API, such as http://192.168.1.20:8081
+    min_battery_for_update: int = 20  # % under which an over-the-air update skips a device (0: never)
+    water_below_default: int = 30   # soil moisture % under which a plant needs water (0: off), unless set per device
+    check_app_updates: bool = False  # ask GitHub once a day whether there's a newer version of this app
 
     def link_settings(self):
         return LinkSettings(udp_port=self.smp_port, udp_mtu=self.udp_mtu, serial_buffer=self.serial_buffer,
@@ -42,7 +45,10 @@ class Settings:
         """Sets the known fields from 'values', converted to each field's type."""
         for f in fields(self):
             if f.name in values:
-                setattr(self, f.name, type(getattr(self, f.name))(values[f.name]))
+                kind, value = type(getattr(self, f.name)), values[f.name]
+                if kind is bool and isinstance(value, str):
+                    value = value.strip().lower() in ("1", "true", "yes", "on")  # bool("false") is True
+                setattr(self, f.name, kind(value))
 
 
 def load_settings(data_dir):

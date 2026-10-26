@@ -128,7 +128,7 @@ async def test_update_through_the_api(client, services, start_sim):
     await client.post("/api/devices", json={"address": "127.0.0.1"}, headers=CHANGE)
     await client.post("/api/images", content=NEW_IMAGE, headers=CHANGE)
 
-    response = await client.post("/api/updates", json={"image_hash": NEW_HASH, "targets": [{"device_id": "1a2b3c4d"}]},
+    response = await client.post("/api/updates", json={"image_hash": NEW_HASH, "allow_unverified": True, "targets": [{"device_id": "1a2b3c4d"}]},
                                  headers=CHANGE)
     assert response.status_code == 200, response.text
     job_id = response.json()["id"]

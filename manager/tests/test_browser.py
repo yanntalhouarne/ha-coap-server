@@ -58,7 +58,8 @@ def page(tmp_path_factory):
     tmp = tmp_path_factory.mktemp("browser")
     services = create_services(tmp / "data", discover=None)
     services.db.upsert_device("1a2b3c4d", name="basil", address="fd11:22::1", battery=87, temperature=-5,
-                              last_seen=time.time())
+                              soil_moisture=18, last_seen=time.time())
+    services.alerts.scan()  # basil needs water
     services.images.add(NEW_IMAGE, "app_update.bin", "browser test image")
     services.db.add_update("job", "1a2b3c4d", "udp", NEW_HASH, "1.1.0", 1.0, 2.0, "updated", "Updated and confirmed")
     services.db.set_release(NEW_HASH)
@@ -121,7 +122,8 @@ def test_updates_tab(page):
 
 
 def test_images_tab(page):
-    assert "v1.1.0" in page("images")
+    dom = page("images")
+    assert "v1.1.0" in dom and "unsigned" in dom   # who signed it
 
 
 def test_builds_tab(page):
@@ -134,6 +136,7 @@ def test_builds_tab(page):
 def test_settings_tab(page):
     dom = page("settings")
     assert "Data folder" in dom and "Border router REST API" in dom
+    assert "Check GitHub for app updates" in dom and "Download a problem report" in dom
 
 
 def test_dark_by_default(page):
@@ -146,6 +149,8 @@ def test_dashboard_tab(page):
     dom = page("dashboard")
     assert "behind the release" in dom and "low battery" in dom      # the tiles
     assert "★ release" in dom or "Release:" in dom
+    assert "basil needs water" in dom                                 # the alert
+    assert "Run the pump" in dom                                      # the needs-water list
     assert "basil" in dom                                             # under batteries
 
 
@@ -153,6 +158,7 @@ def test_device_page(page):
     dom = page("device/1a2b3c4d")
     assert "Last seen" in dom and "-5 °C" in dom
     assert "Run the pump" in dom                                      # the controls
+    assert "Add a photo of the plant" in dom and "it needs water" in dom
     assert "Soil moisture" in dom and "<svg" in dom                   # the charts
     assert "Updated and confirmed" in dom                             # its update history
 

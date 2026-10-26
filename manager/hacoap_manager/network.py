@@ -1,17 +1,18 @@
 """The Network page: the border router's view of the Thread network, with the boards from
-the inventory named, and a log of boards changing parent."""
+the inventory named, a log of boards changing parent, and every reading kept (compressed)
+to look back at."""
 
 import asyncio
 import json
 import time
+import zlib
 from pathlib import Path
 
 from .otbr import BorderRouter, BorderRouterError
+from .pictures import PictureError, picture_type
 
 MESHCOP_SERVICE = "_meshcop._udp.local."  # every Thread border router advertises it
 REST_PORT = 8081
-FLOORPLAN_MAX = 10 * 1024 * 1024
-FLOORPLAN_TYPES = {b"\x89PNG": "image/png", b"\xff\xd8\xff": "image/jpeg", b"RIFF": "image/webp"}
 
 
 class NetworkError(Exception):
@@ -75,11 +76,10 @@ class NetworkService:
         return meta if meta and self.floorplan_file.exists() else None
 
     def set_floorplan(self, data, name=""):
-        if len(data) > FLOORPLAN_MAX:
-            raise NetworkError("The picture is larger than 10 MB")
-        content_type = next((t for magic, t in FLOORPLAN_TYPES.items() if data.startswith(magic)), None)
-        if content_type is None or (content_type == "image/webp" and data[8:12] != b"WEBP"):
-            raise NetworkError("Use a PNG, JPEG or WebP picture")
+        try:
+            content_type = picture_type(data)
+        except PictureError as exc:
+            raise NetworkError(str(exc)) from exc
         self.floorplan_file.write_bytes(data)
         self.floorplan_meta.write_text(json.dumps({"content_type": content_type, "name": name, "time": time.time()}),
                                        encoding="utf-8")
@@ -108,9 +108,22 @@ class NetworkService:
             self._name_boards(topology)
             self._log_changes(self.last(), topology)
             self._record_links(topology)
-            self.cache.write_text(json.dumps(topology), encoding="utf-8")
+            text = json.dumps(topology)
+            self.cache.write_text(text, encoding="utf-8")
+            self.db.add_network_snapshot(topology.get("fetched") or time.time(), len(topology["nodes"]),
+                                         sum(1 for n in topology["nodes"] if n.get("device_id")),
+                                         zlib.compress(text.encode("utf-8")))
         self.events.publish("network")
         return self.state()
+
+    def history(self):
+        """The readings kept: [{id, time, nodes, boards}], oldest first."""
+        return self.db.network_snapshots()
+
+    def snapshot(self, snapshot_id):
+        """An earlier reading's topology, or None."""
+        row = self.db.network_snapshot(snapshot_id)
+        return json.loads(zlib.decompress(row["topology"])) if row else None
 
     def _name_boards(self, topology):
         """Names the nodes that are boards in the inventory, by their IPv6 address."""

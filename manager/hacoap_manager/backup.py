@@ -1,8 +1,9 @@
 """Backups of the app's data (one .zip), restoring them, and the device list as CSV.
 
 A backup holds the database (devices, images list, update history, build profiles and
-builds), the images themselves, the build profiles' .conf files and the settings. Restoring
-replaces all of it, after saving the current data as a backup first.
+builds), the images themselves, the build profiles' .conf files, the plant photos, the
+public half of the signing key (never the private key) and the settings. Restoring replaces
+all of it, after saving the current data as a backup first.
 """
 
 import csv
@@ -25,6 +26,8 @@ AUTO_KEEP = 7
 MAX_RESTORE_SIZE = 200 * 1024 * 1024
 IMAGE_NAME = re.compile(r"images/[0-9a-f]{64}\.bin")
 BUILD_CONF_NAME = re.compile(r"builds/build-[0-9]+\.conf")
+PHOTO_NAME = re.compile(r"photos/[A-Za-z0-9_-]{1,32}")
+PUBLIC_KEY = "signing-public-key.pem"
 REQUIRED_TABLES = {"devices", "images", "updates"}
 
 
@@ -51,7 +54,9 @@ def create_backup(data_dir, db, settings):
                 "devices": len(db.devices()), "images": len(db.images())}, indent=2))
             archive.write(copy, "manager.db")
             archive.writestr("settings.json", json.dumps(settings.as_dict(), indent=2))
-            for folder in ("images", "builds"):
+            if (data_dir / PUBLIC_KEY).is_file():
+                archive.write(data_dir / PUBLIC_KEY, PUBLIC_KEY)
+            for folder in ("images", "builds", "photos"):
                 for path in sorted((data_dir / folder).glob("*")):
                     if path.is_file():
                         archive.write(path, f"{folder}/{path.name}")
@@ -91,7 +96,7 @@ def restore_backup(data, data_dir, db, settings):
 
         db.restore_from(restored_db)
 
-    for folder, pattern in (("images", IMAGE_NAME), ("builds", BUILD_CONF_NAME)):
+    for folder, pattern in (("images", IMAGE_NAME), ("builds", BUILD_CONF_NAME), ("photos", PHOTO_NAME)):
         target = data_dir / folder
         target.mkdir(parents=True, exist_ok=True)
         for path in target.glob("*"):
@@ -101,6 +106,8 @@ def restore_backup(data, data_dir, db, settings):
             if pattern.fullmatch(name):  # only these names: nothing can land outside the data folder
                 (target / Path(name).name).write_bytes(archive.read(name))
 
+    if PUBLIC_KEY in names:
+        (data_dir / PUBLIC_KEY).write_bytes(archive.read(PUBLIC_KEY))
     if "settings.json" in names:
         try:
             settings.update(json.loads(archive.read("settings.json")))
@@ -154,6 +161,19 @@ def devices_csv(db):
         if row.get("last_seen"):
             row["last_seen"] = datetime.datetime.fromtimestamp(row["last_seen"]).isoformat(timespec="seconds")
         writer.writerow(row)
+    return out.getvalue()
+
+
+READING_COLUMNS = ["device_id", "name", "time", "battery", "soil_moisture", "air_humidity", "temperature"]
+
+
+def readings_csv(rows):
+    """Readings (from db.all_readings) as CSV, with local ISO times."""
+    out = io.StringIO()
+    writer = csv.DictWriter(out, READING_COLUMNS, extrasaction="ignore", lineterminator="\n")
+    writer.writeheader()
+    for row in rows:
+        writer.writerow({**row, "time": datetime.datetime.fromtimestamp(row["time"]).isoformat(timespec="seconds")})
     return out.getvalue()
 
 

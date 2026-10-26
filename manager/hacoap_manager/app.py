@@ -19,7 +19,9 @@ from fastapi.staticfiles import StaticFiles
 
 import re
 
-from . import __version__, backup, config, discovery, fleet, kconfig, mcuboot, serial_ports
+from . import __version__, backup, config, discovery, fleet, kconfig, mcuboot, report, serial_ports, signing
+from .alerts import AlertService
+from .appupdate import UpdateCheck
 from .builds import VARIANTS, BuildError, BuildRunner
 from .console import ConsoleError, SerialConsole
 from .db import Database
@@ -27,6 +29,7 @@ from .events import EventBus
 from .images import ImageLibrary, build_commit, build_images, changes, find_repository
 from .inventory import Inventory, InventoryError
 from .network import NetworkError, NetworkService
+from .pictures import PhotoStore, PictureError
 from .setup_tools import SetupError, SetupRunner
 from .updates import UpdateError, UpdateManager
 
@@ -51,11 +54,16 @@ class Services:
     network: NetworkService
     console: SerialConsole
     setup: SetupRunner
+    alerts: AlertService
+    signing: signing.SigningCheck
+    photos: PhotoStore
+    app_update: UpdateCheck
 
 
 def create_services(data_dir, discover=discovery.discover):
     data_dir = Path(data_dir)
     data_dir.mkdir(parents=True, exist_ok=True)
+    report.install()
     settings = config.load_settings(data_dir)
     db = Database(data_dir / "manager.db")
     events = EventBus()
@@ -71,8 +79,11 @@ def create_services(data_dir, discover=discovery.discover):
     setup = SetupRunner(repository, events)
     builds.other_busy = setup.busy                                                 # one script at a time
     setup.other_busy = lambda: "build" if builds.running() else None
+    alerts = AlertService(db, inventory, settings, events)
+    updates.on_failure = lambda job, target: alerts.update_failed(job.id, target.device_id, target.label, target.message)
     return Services(data_dir, settings, db, events, inventory, images, updates, repository, builds, network,
-                    SerialConsole(events), setup)
+                    SerialConsole(events), setup, alerts, signing.SigningCheck(repository, data_dir),
+                    PhotoStore(data_dir), UpdateCheck())
 
 
 def _host_name(host_header):
@@ -90,7 +101,8 @@ def create_app(services, background_tasks=True):
     async def lifespan(app):
         tasks = []
         if background_tasks:
-            tasks = [asyncio.create_task(_auto_refresh(services)), asyncio.create_task(_auto_backup(services))]
+            tasks = [asyncio.create_task(_auto_refresh(services)), asyncio.create_task(_auto_backup(services)),
+                     asyncio.create_task(_auto_alerts(services))]
         yield
         for task in tasks:
             task.cancel()
@@ -151,19 +163,58 @@ def create_app(services, background_tasks=True):
         if s.db.device(device_id) is None:
             raise HTTPException(404, "Unknown device")
         fields = {k: str(v).strip() for k, v in body.items() if k in ("name", "notes", "address", "location", "plant")}
+        if "water_below" in body:
+            value = body["water_below"]
+            try:
+                fields["water_below"] = None if value in (None, "") else int(value)
+            except (TypeError, ValueError):
+                raise _bad_request("The watering target is a percentage, from 0 to 100") from None
+            if fields["water_below"] is not None and not 0 <= fields["water_below"] <= 100:
+                raise _bad_request("The watering target is a percentage, from 0 to 100")
         if "tags" in body:
             tags = body["tags"] if isinstance(body["tags"], list) else str(body["tags"]).split(",")
             fields["tags"] = ",".join(sorted({t.strip().lower() for t in tags if t.strip()}))
         device = s.db.upsert_device(device_id, **fields)
         s.events.publish("device", device=s.inventory.describe(device))
+        s.alerts.scan()
         return s.inventory.describe(device)
 
     @app.delete("/api/devices/{device_id}")
     async def delete_device(device_id: str):
         if not s.db.delete_device(device_id):
             raise HTTPException(404, "Unknown device")
+        s.photos.delete(device_id)
         s.events.publish("devices")
         return {"deleted": device_id}
+
+    @app.get("/api/devices/{device_id}/photo")
+    async def device_photo(device_id: str):
+        found = s.photos.read(device_id) if s.db.device(device_id) else None
+        if found is None:
+            raise HTTPException(404, "No photo")
+        data, content_type = found
+        return Response(data, media_type=content_type, headers={"Cache-Control": "no-cache"})
+
+    @app.post("/api/devices/{device_id}/photo")
+    async def set_device_photo(device_id: str, request: Request):
+        if s.db.device(device_id) is None:
+            raise HTTPException(404, "Unknown device")
+        try:
+            s.photos.save(device_id, await request.body())
+        except PictureError as exc:
+            raise _bad_request(exc)
+        device = s.inventory.describe(s.db.upsert_device(device_id, photo=time.time()))
+        s.events.publish("device", device=device)
+        return device
+
+    @app.delete("/api/devices/{device_id}/photo")
+    async def delete_device_photo(device_id: str):
+        if s.db.device(device_id) is None:
+            raise HTTPException(404, "Unknown device")
+        s.photos.delete(device_id)
+        device = s.inventory.describe(s.db.upsert_device(device_id, photo=None))
+        s.events.publish("device", device=device)
+        return device
 
     @app.post("/api/discover")
     async def discover():
@@ -176,13 +227,17 @@ def create_app(services, background_tasks=True):
     @app.post("/api/devices/{device_id}/refresh")
     async def refresh(device_id: str):
         try:
-            return s.inventory.describe(await s.inventory.refresh(device_id))
+            device = s.inventory.describe(await s.inventory.refresh(device_id))
         except InventoryError as exc:
             raise _bad_request(exc)
+        s.alerts.scan()
+        return device
 
     @app.post("/api/refresh")
     async def refresh_all():
-        return await s.inventory.refresh_all()
+        devices = await s.inventory.refresh_all()
+        s.alerts.scan()
+        return devices
 
     @app.post("/api/devices/{device_id}/slots")
     async def slots(device_id: str, body: dict = None):
@@ -236,9 +291,13 @@ def create_app(services, background_tasks=True):
 
     # ------------------------------------------------------------ images
 
+    def _signature(image_hash, key):
+        return s.signing.check(image_hash, lambda: s.images.data(image_hash), key)
+
     @app.get("/api/images")
     async def images():
-        return s.db.images()
+        key = await asyncio.to_thread(s.signing.public_key)
+        return [{**image, **await asyncio.to_thread(_signature, image["hash"], key)} for image in s.db.images()]
 
     @app.post("/api/images")
     async def add_image(request: Request, filename: str = "app_update.bin", notes: str = ""):
@@ -257,10 +316,12 @@ def create_app(services, background_tasks=True):
                 info = mcuboot.parse_image(path.read_bytes())
             except (OSError, mcuboot.ImageError):
                 continue
+            data = path.read_bytes()
             result.append({"variant": variant, "path": str(path), "hash": info.hash, "version": info.mcumgr_version,
                            "size": info.size, "modified": path.stat().st_mtime,
                            "git_commit": build_commit(path.parent.parent),
-                           "in_library": s.db.image(info.hash) is not None})
+                           "in_library": s.db.image(info.hash) is not None,
+                           **s.signing.check(info.hash, lambda: data)})
         return result
 
     @app.post("/api/build-outputs/{variant}/import")
@@ -378,9 +439,15 @@ def create_app(services, background_tasks=True):
 
     @app.post("/api/updates")
     async def start_update(body: dict):
+        image_hash = str(body.get("image_hash", ""))
+        if s.db.image(image_hash) is not None and not body.get("allow_unverified"):
+            check = await asyncio.to_thread(_signature, image_hash, None)
+            if check["signer"] in signing.REFUSED:
+                raise _bad_request(f"{check['detail']}. Start it anyway only for the simulator, or a board "
+                                   "with a development bootloader.")
         try:
-            job = s.updates.start(str(body.get("image_hash", "")), list(body.get("targets", [])),
-                                  bool(body.get("stop_on_failure", True)), bool(body.get("staged", False)), s.console)
+            job = s.updates.start(image_hash, list(body.get("targets", [])), bool(body.get("stop_on_failure", True)),
+                                  bool(body.get("staged", False)), s.console, bool(body.get("ignore_battery", False)))
         except UpdateError as exc:
             raise _bad_request(exc)
         return job.as_dict()
@@ -425,6 +492,17 @@ def create_app(services, background_tasks=True):
             return await s.network.refresh()
         except NetworkError as exc:
             raise _bad_request(exc)
+
+    @app.get("/api/network/history")
+    async def network_history():
+        return s.network.history()
+
+    @app.get("/api/network/history/{snapshot_id}")
+    async def network_snapshot(snapshot_id: int):
+        topology = await asyncio.to_thread(s.network.snapshot, snapshot_id)
+        if topology is None:
+            raise HTTPException(404, "Unknown reading")
+        return topology
 
     @app.post("/api/network/channel-scan")
     async def channel_scan():
@@ -582,6 +660,41 @@ def create_app(services, background_tasks=True):
         s.events.publish("devices")
         return result
 
+    @app.get("/api/readings.csv")
+    async def readings_csv(device_id: str = "", days: int = 365):
+        since = time.time() - max(1, min(days, 3650)) * 86400
+        rows = await asyncio.to_thread(s.db.all_readings, since, device_id or None)
+        prefix = f"{device_id}-" if device_id else ""
+        name = f"hacoap-readings-{prefix}{time.strftime('%Y%m%d')}.csv"
+        return Response(backup.readings_csv(rows), media_type="text/csv",
+                        headers={"Content-Disposition": f'attachment; filename="{name}"'})
+
+    @app.get("/api/report")
+    async def problem_report():
+        jobs = [job.as_dict() for job in s.updates.jobs.values()]
+        data = await asyncio.to_thread(report.create_report, s, jobs)
+        name = f"hacoap-manager-report-{time.strftime('%Y%m%d-%H%M')}.zip"
+        return Response(data, media_type="application/zip",
+                        headers={"Content-Disposition": f'attachment; filename="{name}"'})
+
+    # ------------------------------------------------------------ alerts and app updates
+
+    @app.get("/api/alerts")
+    async def alerts():
+        return s.alerts.state()
+
+    @app.post("/api/alerts/{alert_id}/dismiss")
+    async def dismiss_alert(alert_id: int):
+        if not s.alerts.dismiss(alert_id):
+            raise HTTPException(404, "No such open alert")
+        return s.alerts.state()
+
+    @app.get("/api/app-update")
+    async def app_update(force: bool = False):
+        if not force and not s.settings.check_app_updates:
+            return {"current": __version__, "checking": False}
+        return await asyncio.to_thread(s.app_update.check, force)
+
     # ------------------------------------------------------------ live events
 
     @app.websocket("/api/events")
@@ -610,15 +723,35 @@ def create_app(services, background_tasks=True):
 
 
 async def _auto_refresh(services):
-    """Refreshes every device's status now and then while the app runs."""
+    """Refreshes every device's status, and reads the network (with a border router set), soon
+    after the start and then now and then while the app runs."""
+    await asyncio.sleep(5)
     while True:
         minutes = services.settings.auto_refresh_minutes
-        await asyncio.sleep(max(minutes, 1) * 60)
         if minutes > 0 and services.updates.running_job() is None:
             try:
                 await services.inventory.refresh_all()
+                services.alerts.scan()
             except Exception:  # noqa: BLE001 - try again next time
                 log.exception("automatic refresh")
+            if services.settings.border_router_url:
+                try:
+                    await services.network.refresh()
+                except NetworkError as exc:
+                    log.info("automatic network reading: %s", exc)
+                except Exception:  # noqa: BLE001
+                    log.exception("automatic network reading")
+        await asyncio.sleep(max(minutes, 1) * 60)
+
+
+async def _auto_alerts(services):
+    """Checks for alerts every minute (a device going quiet raises one without any event)."""
+    while True:
+        await asyncio.sleep(60)
+        try:
+            services.alerts.scan()
+        except Exception:  # noqa: BLE001
+            log.exception("alerts")
 
 
 async def _auto_backup(services):
