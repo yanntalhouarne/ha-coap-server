@@ -131,6 +131,8 @@ def test_builds_tab(page):
     assert "Production" in dom and "Sensor sampling period" in dom
     assert "Set up this computer" in dom
     assert "Create my signing key" in dom and "Set my PSKd" in dom   # the fix buttons
+    assert "SWD flashing tools" in dom and "J-Link software" in dom   # the optional checks
+    assert "Flash a board over SWD" in dom and "Needs " in dom       # nothing to flash yet
 
 
 def test_settings_tab(page):

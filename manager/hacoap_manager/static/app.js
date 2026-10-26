@@ -958,6 +958,7 @@ async function loadBuildsTab() {
   renderChecks(checks);
   renderBuildHistory(history);
   loadSetupState().catch(() => {});
+  loadSwd().catch(() => {});
   const running = history.find((b) => b.result === 'running');
   if (running) showBuildLog(running.id);
 }
@@ -1070,7 +1071,8 @@ document.getElementById('profile-delete').addEventListener('click', async () => 
   loadBuildsTab();
 });
 
-const fixLabels = { install: 'Install the build tools', keygen: 'Create my signing key', pskd: 'Set my PSKd…' };
+const fixLabels = { install: 'Install the build tools', keygen: 'Create my signing key', pskd: 'Set my PSKd…',
+  device: 'Install the SWD flashing tools' };
 
 function renderChecks(checks) {
   const toolchain = checks.find((c) => c.name === 'nRF Connect toolchain');
@@ -1085,9 +1087,11 @@ function renderChecks(checks) {
         onclick: (e) => runFix(c.fix, e.target) }, fixLabels[c.fix]),
       blocked ? h('span', { class: 'small text-body-secondary ms-2' }, 'after the build tools') : null);
     }
-    return h('li', { class: 'mb-1' },
-      h('span', { class: c.ok ? 'text-success' : (c.required ? 'text-danger' : 'text-warning') }, c.ok ? '✓ ' : (c.required ? '✗ ' : '! ')),
-      h('b', {}, c.name), ': ', c.detail, fix);
+    // Optional checks (only for flashing new boards) stay quiet when missing.
+    const mark = c.ok ? ['text-success', '✓ '] : c.required ? ['text-danger', '✗ '] : c.optional ? ['text-body-secondary', '○ '] : ['text-warning', '! '];
+    return h('li', { class: `mb-1${c.optional && !c.ok ? ' text-body-secondary' : ''}` },
+      h('span', { class: mark[0] }, mark[1]), h('b', {}, c.name), ': ', c.detail,
+      c.link ? [' ', h('a', { href: c.link, target: '_blank', rel: 'noopener' }, 'SEGGER\'s download page')] : null, fix);
   }));
 }
 
@@ -1613,6 +1617,8 @@ async function runFix(fix, button) {
   if (fix === 'keygen' && !confirm('Create your private signing key?\n\nBack it up afterwards (application/keys/): ' +
     'boards flashed with it only accept updates signed with it. Losing it means reflashing every board over SWD.')) return;
   if (fix === 'install' && !confirm('Install the nRF Connect toolchain and fetch the SDK? About 1 GB, 5 to 15 minutes.')) return;
+  if (fix === 'device' && !confirm('Install nrfutil\'s "device" command, to flash boards over SWD? A small download, ' +
+    'into nrfutil\'s own folder. It also needs SEGGER\'s J-Link software, which you install yourself.')) return;
   await api('POST', `/api/setup/${fix}`).catch(() => {});
 }
 
@@ -1629,6 +1635,7 @@ function onSetup(setup) {
   if (setup && setup.state !== 'running') {
     notify(`${setup.name[0].toUpperCase()}${setup.name.slice(1)}: ${setup.message}`, setup.state === 'done' ? 'success' : 'warning');
     api('GET', '/api/build-checks').then(renderChecks, () => {});
+    loadSwd().catch(() => {});
   }
 }
 
@@ -1653,6 +1660,87 @@ async function loadSetupState() {
 }
 
 document.getElementById('setup-cancel').addEventListener('click', () => api('POST', '/api/setup/cancel').catch(() => {}));
+
+// ------------------------------------------------------------------ flashing a board over SWD
+
+const swd = { state: null, probesFound: false };
+// A build's merged.hex holds MCUboot made with the same key that signed its application: the
+// key the board will then accept updates from.
+const swdSigners = {
+  yours: ['text-success', '✓ Its bootloader takes your key: the board will accept updates signed with it.'],
+  development: ['text-danger', '⚠ Its bootloader takes MCUboot\'s public development key: anyone could then update the board. Only for testing.'],
+  other: ['text-danger', '⚠ Its bootloader takes a key that isn\'t yours: the board would refuse your updates.'],
+  unsigned: ['text-danger', '⚠ Its application isn\'t signed: the board won\'t boot it.'],
+  unknown: ['text-body-secondary', '? This computer has no copy of your signing key, so it can\'t tell which key the bootloader takes.'],
+};
+
+async function loadSwd() {
+  const st = swd.state = await api('GET', '/api/swd', undefined, { quiet: true });
+  const missing = [];
+  if (!st.tools) missing.push('the SWD flashing tools');
+  if (!st.jlink) missing.push('SEGGER\'s J-Link software');
+  if (!st.builds.length) missing.push('a build (Build with this profile)');
+  const ready = st.tools && st.builds.length > 0;
+  document.getElementById('swd-missing').classList.toggle('d-none', !missing.length);
+  document.getElementById('swd-missing').textContent = missing.length
+    ? `Needs ${missing.join(', ')}: see Set up this computer above.` : '';
+  document.getElementById('swd-form').classList.toggle('d-none', !ready);
+  const select = document.getElementById('swd-build');
+  const keep = select.value;
+  select.replaceChildren(...st.builds.map((b) => h('option', { value: b.variant }, `${b.variant} · built ${ago(b.modified)}`)));
+  if (st.builds.some((b) => b.variant === keep)) select.value = keep;
+  renderSwdSigner();
+  if (ready && !swd.probesFound) findProbes().catch(() => {});
+}
+
+function renderSwdSigner() {
+  const build = swd.state && swd.state.builds.find((b) => b.variant === document.getElementById('swd-build').value);
+  const [cls, text] = build ? swdSigners[build.signer] || swdSigners.unknown : ['', ''];
+  const line = document.getElementById('swd-signer');
+  line.className = `form-text mb-2 ${cls}`;
+  line.textContent = text;
+}
+
+async function findProbes() {
+  const select = document.getElementById('swd-probe');
+  select.replaceChildren(h('option', { value: '' }, 'looking…'));
+  let probes;
+  try {
+    probes = await api('GET', '/api/swd/probes', undefined, { quiet: true });
+  } catch (error) {
+    select.replaceChildren(h('option', { value: '' }, 'couldn\'t list them'));
+    notify(error.message, 'warning');
+    return;
+  }
+  swd.probesFound = true;
+  select.replaceChildren(...(probes.length
+    ? probes.map((p) => h('option', { value: p.serial }, `J-Link ${p.serial}${p.devkit ? ' (development kit)' : ''}`))
+    : [h('option', { value: '' }, 'none found: plug it in, then Find')]));
+}
+
+document.getElementById('swd-build').addEventListener('change', renderSwdSigner);
+document.getElementById('swd-probes-find').addEventListener('click', (event) => busy(event.target, findProbes));
+document.getElementById('swd-flash').addEventListener('click', async (event) => {
+  const variant = document.getElementById('swd-build').value;
+  const serial = document.getElementById('swd-probe').value;
+  const erase = document.querySelector('input[name="swd-erase"]:checked').value;
+  if (!serial) return notify('Choose a J-Link: plug it in, then click Find', 'warning');
+  const build = swd.state.builds.find((b) => b.variant === variant);
+  let allow = false;
+  if (build && REFUSED_SIGNERS.includes(build.signer)) {
+    if (!confirm(`${swdSigners[build.signer][1].slice(2)}\n\nFlash it anyway?`)) return;
+    allow = true;
+  }
+  const question = erase === 'all'
+    ? `Erase the board on J-Link ${serial} completely, then flash the ${variant} build?\n\n` +
+      'It loses its Thread network, and has to join again (with your PSKd).'
+    : `Flash the ${variant} build to the board on J-Link ${serial}?\n\nIt keeps its Thread network.`;
+  if (!confirm(question)) return;
+  await busy(event.target, async () => {
+    await api('POST', '/api/swd/flash', { variant, serial, erase, allow_development_key: allow });
+    document.getElementById('setup-log').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  });
+});
 
 // ------------------------------------------------------------------ console
 

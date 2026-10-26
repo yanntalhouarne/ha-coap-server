@@ -1,6 +1,8 @@
 """Setting up a PC to build the firmware, from the app: install the build tools (the
-repository's scripts/setup), create the signing key (scripts/keygen), and set the PSKd
-(application/local.conf). The scripts run exactly as from a terminal, with a live log.
+repository's scripts/setup), create the signing key (scripts/keygen), set the PSKd
+(application/local.conf), and install nrfutil's 'device' command for SWD flashing. The scripts
+run exactly as from a terminal, with a live log. Flashing a board over SWD runs here too, so
+only one of these, or a build, runs at a time.
 """
 
 import asyncio
@@ -12,6 +14,7 @@ import sys
 import threading
 import time
 
+from . import builds, swd
 from .builds import kill_tree, run_streaming
 
 PSKD_ALPHABET = "0123456789ABCDEFGHJKLMNPRSTUVWXY"  # Thread's: A-Z and 0-9 without I, O, Q, Z
@@ -19,6 +22,7 @@ PSKD_LINE = re.compile(r"^\s*CONFIG_OPENTHREAD_JOINER_PSKD\s*=.*$", re.MULTILINE
 TASKS = {
     "install": {"name": "build tools installation", "script": "setup"},
     "keygen": {"name": "signing key creation", "script": "keygen"},
+    "device": {"name": "SWD flashing tools installation", "nrfutil": ["install", "device"]},
 }
 
 
@@ -42,10 +46,11 @@ def script_command(repository, script):
 
 
 class SetupRunner:
-    def __init__(self, repository, events, command=script_command):
+    def __init__(self, repository, events, command=script_command, nrfutil=None):
         self.repository = repository
         self.events = events
         self._command = command
+        self._nrfutil = nrfutil or (lambda: builds.find_nrfutil())
         self.current = None   # {"task", "name", "state", "started", "finished", "message"}
         self.log = collections.deque(maxlen=5000)
         self._process = None
@@ -71,14 +76,42 @@ class SetupRunner:
         if task == "keygen" and (self.repository / "application" / "keys" / "mcuboot-signing-key.pem").exists():
             raise SetupError("A signing key already exists. Replacing it would lock out the boards that use it, "
                              "so the app never does; delete it yourself if you really mean to.")
+        if "script" in TASKS[task]:
+            command = self._command(self.repository, TASKS[task]["script"])
+        else:
+            command = [self._nrfutil_path(), *TASKS[task]["nrfutil"]]
+        return self._begin(task, TASKS[task]["name"], [command])
+
+    def flash(self, hexfile, serial, erase, label):
+        """Flashes 'hexfile' over SWD to the board on J-Link 'serial' (see swd.flash_commands)."""
+        if self.running():
+            raise SetupError(f"The {self.current['name']} is still running")
+        if self.other_busy():
+            raise SetupError(f"Wait for the {self.other_busy()} to finish")
+        try:
+            commands = swd.flash_commands(self._nrfutil_path(), hexfile, serial, erase)
+        except swd.SwdError as exc:
+            raise SetupError(str(exc))
+        return self._begin("flash", f"SWD flash of {label}", commands)
+
+    def nrfutil(self):
+        """Where nrfutil is, or None."""
+        return self._nrfutil()
+
+    def _nrfutil_path(self):
+        nrfutil = self._nrfutil()
+        if nrfutil is None:
+            raise SetupError("nrfutil isn't installed: install the build tools first")
+        return nrfutil
+
+    def _begin(self, task, name, commands):
         loop = asyncio.get_running_loop()
         self.log.clear()
         self._cancelled = False
         self._done = loop.create_future()
-        self.current = {"task": task, "name": TASKS[task]["name"], "state": "running", "started": time.time(),
+        self.current = {"task": task, "name": name, "state": "running", "started": time.time(),
                         "finished": None, "message": ""}
-        command = self._command(self.repository, TASKS[task]["script"])
-        threading.Thread(target=self._run, args=(loop, command), daemon=True).start()
+        threading.Thread(target=self._run, args=(loop, commands), daemon=True).start()
         self._publish()
         return self.current
 
@@ -103,13 +136,21 @@ class SetupRunner:
         self.log.append(line)
         self.events.publish("setup-log", line=line)
 
-    def _run(self, loop, command):
-        try:
-            code = run_streaming(command, self.repository, dict(os.environ), lambda p: setattr(self, "_process", p),
-                                 lambda line: loop.call_soon_threadsafe(self._line, line))
-        except OSError as exc:
-            loop.call_soon_threadsafe(self._line, f"Cannot start it: {exc}")
-            code = -1
+    def _run(self, loop, commands):
+        """Runs the commands one after the other, stopping at the first that fails."""
+        code = 0
+        for command in commands:
+            if self._cancelled:
+                break
+            loop.call_soon_threadsafe(self._line, "$ " + " ".join(command))
+            try:
+                code = run_streaming(command, self.repository, dict(os.environ), lambda p: setattr(self, "_process", p),
+                                     lambda line: loop.call_soon_threadsafe(self._line, line))
+            except OSError as exc:
+                loop.call_soon_threadsafe(self._line, f"Cannot start it: {exc}")
+                code = -1
+            if code != 0:
+                break
         loop.call_soon_threadsafe(self._finish, code)
 
     def _finish(self, code):

@@ -16,7 +16,8 @@ First version: the plan's phases 0, 1, 2, 5 and 6. Tested against a simulated de
 - **What's new:** the commits between two images built here. **Release:** mark the image the fleet should run.
 - **Floor plan:** place the mesh on a picture of your home. **Channel scan:** radio noise on every Thread channel.
 - **Console:** a board's serial output, live.
-- **Set up this computer:** buttons on the Builds tab install the toolchain and SDK, create the signing key and set the PSKd.
+- **Set up this computer:** buttons on the Builds tab install the toolchain and SDK, create the signing key and set the PSKd, and (optional) install the SWD flashing tools.
+- **Flash a board over SWD** with a J-Link: a build's MCUboot and application, keeping the board's network or erasing everything. Not yet tried with a real J-Link.
 - **Signature check:** each image shows who signed it (your key, MCUboot's development key, another key, unsigned), and an update with an image your boards would refuse needs a confirmation.
 - **Battery check:** over the air, devices under 20 % battery are skipped unless included on purpose.
 - **Plants:** a photo per device, a watering target per plant (30 % by default), and a "needs water" list with a button to run the pump.

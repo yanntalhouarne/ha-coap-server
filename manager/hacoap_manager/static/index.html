@@ -378,7 +378,45 @@
             </div>
             <pre class="build-log d-none" id="setup-log"></pre>
             <div class="form-text">Everything a new computer needs to build: the nRF Connect toolchain and SDK
-              (scripts/setup, about 1 GB, 5 to 15 minutes), your signing key, and your PSKd.</div>
+              (scripts/setup, about 1 GB, 5 to 15 minutes), your signing key, and your PSKd. The last two lines are
+              only for flashing new boards over SWD.</div>
+          </div>
+        </div>
+        <div class="card mb-4">
+          <div class="card-header">Flash a board over SWD</div>
+          <div class="card-body">
+            <p class="form-text mt-0">For a new board, or one that no longer boots: writes MCUboot and the application
+              with a J-Link (on the Tag-Connect pads). After that, update it over USB or the air.</p>
+            <p class="small text-body-secondary mb-0 d-none" id="swd-missing"></p>
+            <div class="d-none" id="swd-form">
+              <div class="row g-2 mb-1">
+                <div class="col-sm-6">
+                  <label class="form-label small mb-1" for="swd-build">Build</label>
+                  <select class="form-select form-select-sm" id="swd-build"></select>
+                </div>
+                <div class="col-sm-6">
+                  <label class="form-label small mb-1" for="swd-probe">J-Link</label>
+                  <div class="d-flex gap-2">
+                    <select class="form-select form-select-sm" id="swd-probe"></select>
+                    <button class="btn btn-sm btn-outline-secondary" id="swd-probes-find" type="button">Find</button>
+                  </div>
+                </div>
+              </div>
+              <div class="form-text mb-2" id="swd-signer"></div>
+              <div class="form-check small">
+                <input class="form-check-input" type="radio" name="swd-erase" id="swd-erase-keep" value="keep" checked>
+                <label class="form-check-label" for="swd-erase-keep"><b>Keep its network:</b> rewrite only the
+                  firmware (like <code>west flash</code>).</label>
+              </div>
+              <div class="form-check small mb-2">
+                <input class="form-check-input" type="radio" name="swd-erase" id="swd-erase-all" value="all">
+                <label class="form-check-label" for="swd-erase-all"><b>Erase everything:</b> a new board, or a full
+                  reset (like <code>west flash --erase</code>). It then has to join the network again. Also unlocks a
+                  board whose debug port is locked.</label>
+              </div>
+              <button class="btn btn-sm btn-primary" id="swd-flash" type="button">Flash</button>
+              <span class="small text-body-secondary ms-2">Progress shows under <b>Set up this computer</b>.</span>
+            </div>
           </div>
         </div>
         <div class="card mb-4">

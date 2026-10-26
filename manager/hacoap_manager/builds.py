@@ -61,7 +61,7 @@ def signing_key(repository):
 
 
 def checks(repository):
-    """What a build needs, as a list of {name, ok, detail, required}."""
+    """What a build needs, as a list of {name, ok, detail, required, optional, fix, link}."""
     if repository is None:
         return [{"name": "Firmware checkout", "ok": False, "required": True,
                  "detail": "Start the app from the ha-coap-server folder (or a folder inside it) to build firmware."}]
@@ -85,6 +85,19 @@ def checks(repository):
     result.append({"name": "Private PSKd", "ok": pskd_ok, "required": False, "fix": "pskd",
                    "detail": "set in application/local.conf" if pskd_ok else
                    "Not set: new boards would join with the public default. See application/local.conf.example."})
+    # Only for flashing new boards over SWD: optional, so a computer that only builds stays green.
+    from . import swd
+    device = swd.nrfutil_device_installed()
+    result.append({"name": "SWD flashing tools", "ok": device, "required": False, "optional": True,
+                   "fix": "device" if nrfutil else None,
+                   "detail": "nrfutil device is installed" if device else
+                   "For new boards only: nrfutil's 'device' command flashes a board over SWD (a J-Link)."
+                   + ("" if nrfutil else " Install the build tools first.")})
+    jlink = swd.find_jlink()
+    result.append({"name": "J-Link software", "ok": jlink is not None, "required": False, "optional": True,
+                   "detail": jlink or "For new boards only: SEGGER's J-Link Software and Documentation Pack, "
+                   "which the SWD flashing tools use. Install it from SEGGER (it asks to accept their licence, "
+                   "and installs a USB driver).", "link": None if jlink else swd.JLINK_DOWNLOAD})
     return result
 
 

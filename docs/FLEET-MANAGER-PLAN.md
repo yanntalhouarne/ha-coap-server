@@ -82,7 +82,7 @@ Each phase ends with a working, tested app. Tests run in CI on Linux, macOS and 
 | **1. Inventory** | Discovery, inventory, live status (version, battery, sensors, online), device pages | Done |
 | **2. Updates** | USB and over-the-air updates through smpclient, an image library, test, verify, confirm, staged rollout, history. Replaces `firmware-updater/` | Done; replaces the web updater once it has updated real boards |
 | **3. Runtime settings** | Firmware settings and the `hacoap` mcumgr group. Settings pages for one device or the fleet | |
-| **4. Commissioning** | Border router integration, a USB provisioning wizard with a PSKd per device, optional first SWD flash, credential reset | |
+| **4. Commissioning** | Border router integration, a USB provisioning wizard with a PSKd per device, optional first SWD flash, credential reset | The SWD flash is built ahead (Builds tab, through `nrfutil device`), not yet tried with a J-Link; the wizard will use it |
 | **5. Builds** | Kconfig editor, profiles, build runner, image library integration, signing-key checks | Done (build-time settings: the `HACOAP_*` options and the poll period) |
 | **6. Polish** | Export/import, backups, docs, release downloads | Done: backups (daily, and before a restore), restore, device list CSV, per-device history, release workflow (`manager-v*` tags) |
 
@@ -107,6 +107,7 @@ Also added (2026-10-25 and 26):
 - **network history** with a slider, and a **signal heatmap** on the floor plan and the mesh
 - a **board's card** on the network map: click a board for its plant photo, battery, soil, humidity and temperature
 - **Ctrl+K search**, actions for **all ticked devices**, a **readings CSV**, a **problem report**, an optional **app update check**, and a **phone layout**
+- **flashing a board over SWD** with a J-Link, and an optional install of the SWD tools (`nrfutil device`; Nordic's replacement for the nRF Command Line Tools)
 - a **simulated fleet** (`simdevice --count N`) with a simulated border router, to try all of it without boards
 
 **What the first hardware test should check** (phases 1–2): Find devices lists every board; status refreshes; Firmware slots answers; an over-the-air update of one board goes through upload, reset, return and confirm; a USB update of one board does too (the USB path has no simulated test). Also note how long an over-the-air upload takes.

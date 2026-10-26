@@ -30,6 +30,8 @@ Build first (step 1). The images are in `application/build/zephyr/`.
 ```
 This writes MCUboot and the application, and keeps the board on your network. Add `--erase` at the end for a new board or a full reset; the board then has to join the network again (README → Joining a Thread network).
 
+The fleet manager (step 6) can do the same from its **Builds** tab (**Flash a board over SWD**), through `nrfutil device` instead of the nRF Command Line Tools. It's untried with a real J-Link, so the command above stays the reference until it has flashed a board.
+
 **Over USB** (board already flashed over SWD with your key; `mcumgr` installed). Replace `COM7` with the board's port:
 ```
 mcumgr conn add serial type="serial" connstring="COM7,baud=115200,mtu=512"
@@ -102,6 +104,7 @@ Added since (2026-10-25 and 26), all described in `manager/README.md`:
 - **watering targets** and a **needs water** list, **alerts** (offline, low battery, needs water, failed update), also as browser notifications
 - **groups** (location and tags), a **release** image, **staged updates**, **what's new** between two images, actions for **all ticked devices**
 - on the Network page: **click a board** for its plant photo and readings, a **floor plan** of your home, a **signal heatmap** (floor plan and mesh), **network history** with a slider, zoom and pan, and a **channel scan**
+- **Flash a board over SWD** with a J-Link (Builds tab), keeping its network or erasing everything, with an optional one-click install of the SWD tools (`nrfutil device`; SEGGER's J-Link software is still installed by hand)
 - a **serial console**, **Set up this computer** buttons (toolchain, signing key, PSKd), **Ctrl+K search**, a **readings CSV**, a **problem report**, an optional **app update check** (off by default), and a **phone layout**
 - a **simulated fleet**: `python -m hacoap_manager.simdevice --count 9 --border-router api` runs 9 devices and a border router on this PC, to try everything without boards
 
@@ -128,6 +131,7 @@ After PR #6's board tests (the fast polling during updates is in that firmware):
    - [ ] **Update** one board on USB (choose its serial port). This path has no simulated test, so it's the most likely to need a fix.
    - [ ] **Network:** set the border router's address (or **Find it**), then **Read the network**. It works without the boards too. Note what the page says it got: "with signal strength" (a 2025+ border router) or "link quality only" (an older one, where boards can't be named on the map). Then click one of your boards on the map: its card should show its readings.
    - [ ] **Run the pump** and **Beep** from a device's page reach the board (within 3 s)
+   - [ ] **Builds → Flash a board over SWD** (needs the J-Link software, then **Install the SWD flashing tools**): **Find** lists your J-Link, and flashing with **Keep its network** brings the board back on the network. Try **Erase everything** only on a board you're ready to rejoin. This path has no real test yet either.
 3. Tell Claude what happened. Once it works, `fleet-manager` can become a pull request, and the web updater can go.
 
 ### Which machine runs it

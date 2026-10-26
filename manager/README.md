@@ -147,7 +147,15 @@ While a device is being updated, it polls its parent every 100 ms instead of eve
   - **Create my signing key:** runs `scripts/keygen`. The app never replaces an existing key. Back the new key up: boards flashed with it only accept images signed with it.
   - **Set my PSKd…:** writes your joiner PSKd into `application/local.conf` (not in git), or generates a random one. Note it down: you need it to commission boards.
 
+  - **Install the SWD flashing tools** (optional, only for new boards): runs `nrfutil install device`, a small download into nrfutil's own folder, no admin rights.
+  - **J-Link software** (optional, only for new boards) has no button: SEGGER's installer asks you to accept their licence and installs a USB driver (admin rights on Windows), so the app links to SEGGER's download page instead. The optional lines show a grey ○ when missing, not a warning.
+
   To use these on a new computer: clone the repository, start the app from inside the clone (from the source as above, or the packaged app), open **Builds**, and click the buttons from top to bottom. If you already have a signing key, copy it into `application/keys/` instead of creating one.
+- **Flash a board over SWD.** For a new board, or one that no longer boots: writes MCUboot and the application (the build's `merged.hex`, the file `west flash` uses) with a J-Link on the Tag-Connect pads, through `nrfutil device`. Choose a build of this computer and the J-Link (**Find** lists those plugged in), then:
+  - **Keep its network:** rewrites only what the firmware covers, so the board keeps its Thread network (like `west flash`).
+  - **Erase everything:** for a new board, or a full reset (like `west flash --erase`). It first recovers the chip, which also unlocks a board whose debug port is locked. The board then has to join the network again, with your PSKd.
+
+  Under the build, a line says which key its bootloader takes: the same key that signed its application. A board flashed with a development-key bootloader accepts updates from anyone who has that public key, so that needs a confirmation. The log shows under **Set up this computer**; only one of these jobs, or a build, runs at a time. Not yet tried with a real J-Link: the commands follow Nordic's `nrfutil device` documentation.
 
 **Console.** Shows what a board prints over a USB serial port, live, with a line to send commands. On the **usb-logging** variant, the logs are on the board's second USB serial port (the first one is mcumgr, for updates). On **uart-console**, use a USB-to-UART adapter on J4. The battery variant prints nothing. A port open in the console can't be used for a USB update at the same time: close it first.
 
@@ -218,7 +226,8 @@ A whole fleet: `python -m hacoap_manager.simdevice --count 9 --border-router api
 | `hacoap_manager/pictures.py` | Plant photos and the floor plan picture: checks and storage |
 | `hacoap_manager/report.py` | The problem report, and the recent log it includes |
 | `hacoap_manager/appupdate.py` | The check for a newer app release on GitHub |
-| `hacoap_manager/setup_tools.py` | The Builds tab's setup buttons (toolchain, signing key, PSKd) |
+| `hacoap_manager/setup_tools.py` | The Builds tab's setup buttons (toolchain, signing key, PSKd, SWD tools), and runs SWD flashes |
+| `hacoap_manager/swd.py` | Flashing a board over SWD: J-Link probes, the builds to flash, the `nrfutil device` commands |
 | `hacoap_manager/console.py` | The serial console |
 | `hacoap_manager/backup.py` | Backups, restore, the device list as CSV |
 | `hacoap_manager/otbr.py`, `network.py` | The border router's REST API (both generations), the Network page's map and change log |
@@ -243,4 +252,4 @@ CI runs the tests and builds the packaged app on Windows, macOS and Linux (job `
 
 The same workflow can be run by hand from the Actions tab: it then only builds the packages, without a release.
 
-**Not covered by the tests yet:** USB serial (there's no simulated serial port), real Thread timing, and a real border router's REST API (the simulated one follows ot-br-posix's published API and source). They need the hardware. Builds are tested with a stand-in for the build script (CI has no nRF toolchain for the app's tests); a real build through the app was checked on Windows.
+**Not covered by the tests yet:** USB serial (there's no simulated serial port), flashing over SWD (nrfutil is replaced by stand-ins), real Thread timing, and a real border router's REST API (the simulated one follows ot-br-posix's published API and source). They need the hardware. Builds are tested with a stand-in for the build script (CI has no nRF toolchain for the app's tests); a real build through the app was checked on Windows.

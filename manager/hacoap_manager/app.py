@@ -19,7 +19,7 @@ from fastapi.staticfiles import StaticFiles
 
 import re
 
-from . import __version__, backup, config, discovery, fleet, kconfig, mcuboot, report, serial_ports, signing
+from . import __version__, backup, config, discovery, fleet, kconfig, mcuboot, report, serial_ports, signing, swd
 from .alerts import AlertService
 from .appupdate import UpdateCheck
 from .builds import VARIANTS, BuildError, BuildRunner
@@ -607,6 +607,52 @@ def create_app(services, background_tasks=True):
     async def setup_start(task: str):
         try:
             return s.setup.start(task)
+        except SetupError as exc:
+            raise _bad_request(exc)
+
+    # ------------------------------------------------------------ flashing a board over SWD
+
+    def _flashable():
+        """The builds that can be flashed, with who signed them: the same key as their bootloader."""
+        result = []
+        for build in swd.hex_files(s.repository):
+            signer = "unknown"
+            if build["app"] is not None:
+                try:
+                    signer = s.signing.signer(build["app"].read_bytes())
+                except (OSError, mcuboot.ImageError):
+                    pass
+            result.append({"variant": build["variant"], "path": str(build["path"]), "modified": build["modified"],
+                           "signer": signer})
+        return result
+
+    @app.get("/api/swd")
+    async def swd_state():
+        return {"builds": await asyncio.to_thread(_flashable), "tools": swd.nrfutil_device_installed(),
+                "jlink": swd.find_jlink() is not None}
+
+    @app.get("/api/swd/probes")
+    async def swd_probes():
+        nrfutil = s.setup.nrfutil()
+        if nrfutil is None or not swd.nrfutil_device_installed():
+            raise _bad_request("Install the SWD flashing tools first (Set up this computer)")
+        try:
+            return await asyncio.to_thread(swd.probes, nrfutil)
+        except swd.SwdError as exc:
+            raise _bad_request(exc)
+
+    @app.post("/api/swd/flash")
+    async def swd_flash(body: dict):
+        variant = str(body.get("variant", ""))
+        build = next((b for b in await asyncio.to_thread(_flashable) if b["variant"] == variant), None)
+        if build is None:
+            raise _bad_request(f"No {variant} build to flash: build it first")
+        if build["signer"] in signing.REFUSED and not body.get("allow_development_key"):
+            raise _bad_request("This build's bootloader isn't made with your signing key: a board flashed with it "
+                               "would accept updates signed with that key instead of yours")
+        try:
+            return s.setup.flash(Path(build["path"]), str(body.get("serial", "")), str(body.get("erase", "keep")),
+                                 f"the {variant} build")
         except SetupError as exc:
             raise _bad_request(exc)
 
