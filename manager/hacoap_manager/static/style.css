@@ -277,6 +277,24 @@ fieldset legend::before { content: "// "; color: var(--t-accent-text); }
   background: transparent; color: var(--t-text-muted); font-size: .85rem; }
 .plant-photo-empty:hover { color: var(--t-text); border-color: var(--t-brand); }
 
+/* A board clicked on the network map: its plant and readings above the network details */
+.net-board-photo { display: block; width: 100%; aspect-ratio: 4 / 3; object-fit: cover; border-radius: .4rem;
+  border: 1px solid var(--t-border-subtle); margin-bottom: .5rem; }
+.net-board-photo.empty { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: .3rem;
+  aspect-ratio: 3 / 1; background: var(--t-surface-2); color: var(--t-brand); text-decoration: none; }
+.net-board-photo.empty svg { width: 2rem; height: 2rem; }
+.net-board-photo.empty span { color: var(--t-text-muted); font-size: .75rem; }
+.net-board-photo.empty:hover span { color: var(--t-text); }
+.net-board-name { font-weight: 700; font-size: 1rem; }
+.net-board-plant { color: var(--t-green); }
+.net-stats { display: grid; grid-template-columns: 1fr 1fr; gap: .4rem; }
+.net-stat { border: 1px solid var(--t-border-subtle); border-radius: .4rem; padding: .3rem .5rem; }
+.net-stat-label { color: var(--t-text-muted); font-size: .7rem; text-transform: uppercase; letter-spacing: .04em; }
+.net-stat-value { font-size: 1.05rem; font-weight: 600; }
+.net-stat-note { color: var(--t-text-muted); font-size: .72rem; }
+.net-section { color: var(--t-text-muted); font-size: .7rem; text-transform: uppercase; letter-spacing: .04em;
+  border-top: 1px solid var(--t-border-subtle); margin: .8rem 0 .3rem; padding-top: .5rem; }
+
 /* ---------------------------------------------------------------- alerts, status bar links */
 
 .alerts-list li { display: flex; align-items: center; gap: .6rem; padding: .3rem 0; border-bottom: 1px solid var(--t-border-subtle); }

@@ -8,7 +8,7 @@ First version: the plan's phases 0, 1, 2, 5 and 6. Tested against a simulated de
 - **Updates** over the air or USB: upload (resumes after lost packets), trial boot, check that the device came back running the new image, confirm. One device at a time, stopping at the first failure. History of every result.
 - **Images:** a library of firmware images, from files or from the builds on this computer.
 - **Builds:** build profiles (variant and settings, from the firmware's Kconfig), checks for the toolchain and signing key, builds with a live log.
-- **Network:** a map of the Thread mesh from the border router's REST API: routers, children, your boards by name, link strength as line colour and length, and a log of parent changes.
+- **Network:** a map of the Thread mesh from the border router's REST API: routers, children, your boards by name, link strength as line colour and length, and a log of parent changes. Click a board for its plant photo and readings.
 - **Dashboard:** devices online, behind the release, never read, low batteries and weak links. Firmware per image, with one click to update the devices behind the release.
 - **Device pages:** readings with a battery forecast, firmware compared with the release, pump and buzzer controls, and charts of readings and link strength over up to 90 days.
 - **Groups:** location and tags per device, with a filter.

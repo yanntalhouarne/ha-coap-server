@@ -771,14 +771,16 @@ function enableZoom(canvas, drawing, box, key, { maxIn = 12, maxOut = 2 } = {}) 
 }
 
 function makeDraggable(group, n) {
-  let moved = false;
+  let moved = false, start = null;
   group.addEventListener('pointerdown', (event) => {
     group.setPointerCapture(event.pointerId);
     n.dragged = true;
     moved = false;
+    start = { x: event.clientX, y: event.clientY };
   });
   group.addEventListener('pointermove', (event) => {
     if (!n.dragged) return;
+    if (!moved && Math.hypot(event.clientX - start.x, event.clientY - start.y) < 4) return;  // a click, so far
     const point = group.ownerSVGElement.createSVGPoint();
     point.x = event.clientX; point.y = event.clientY;
     const p = point.matrixTransform(group.ownerSVGElement.getScreenCTM().inverse());
@@ -792,7 +794,7 @@ function makeDraggable(group, n) {
   });
   group.addEventListener('pointerup', () => {
     n.dragged = false;
-    if (!moved) showNodeDetails(n.node);
+    if (!moved) showNodeDetails(n.node, true);
   });
 }
 
@@ -801,19 +803,22 @@ function detailsTable(rows) {
     .map(([k, v]) => h('tr', {}, h('th', { class: 'fw-normal text-body-secondary' }, k), h('td', { class: 'text-break' }, v)))));
 }
 
-function showNodeDetails(node) {
+function showNodeDetails(node, reveal = false) {
   net.selected = node.id;
-  for (const n of net.layout.nodes) n.group.classList.toggle('selected', n.node.id === node.id);
+  net.selectedNode = node;
+  if (net.layout) for (const n of net.layout.nodes) n.group.classList.toggle('selected', n.node.id === node.id);
   const topology = shownTopology();
   const nodes = new Map(topology.nodes.map((n) => [n.id, n]));
   const links = topology.links.filter((l) => l.a === node.id || l.b === node.id).map((l) => {
     const other = nodes.get(l.a === node.id ? l.b : l.a);
     return h('li', {}, `${other ? nodeLabel(other) : '?'}: ${linkStrength(l).text}`);
   });
-  document.getElementById('network-details').replaceChildren(
-    h('h6', {}, nodeLabel(node)),
+  const device = node.device_id && state.devices.get(node.device_id);
+  document.getElementById('network-details').replaceChildren(...[
+    device ? boardCard(device) : h('h6', {}, nodeLabel(node)),
+    device ? h('div', { class: 'net-section' }, 'On the network') : null,
     detailsTable([
-      ['Board', node.device_id ? `${node.name} (${node.device_id})` : ''],
+      ['Board', node.device_id && !device ? `${node.name} (${node.device_id})` : ''],
       ['Role', node.border_router ? `border router, ${node.role}` : node.role],
       ['Type', node.kind],
       ['RLOC16', node.rloc16_hex],
@@ -823,10 +828,59 @@ function showNodeDetails(node) {
       ['Host name', node.hostname],
       ['IPv6', node.ipv6.join(', ')],
     ]),
-    links.length ? h('div', { class: 'mt-2' }, h('b', {}, 'Links'), h('ul', { class: 'mb-0 ps-3' }, links)) : null);
+    links.length ? h('div', { class: 'mt-2' }, h('b', {}, 'Links'), h('ul', { class: 'mb-0 ps-3' }, links)) : null,
+  ].filter(Boolean));  // replaceChildren would write out a null
+  // On a narrow screen the details sit under the map: bring them up after a click.
+  const card = document.getElementById('network-details');
+  if (reveal && card.getBoundingClientRect().top > window.innerHeight - 80) card.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+// One of your boards in the details: its plant, its last readings, and the way to its page.
+function boardCard(device) {
+  const photo = device.photo
+    ? h('img', { class: 'net-board-photo', src: photoUrl(device), alt: device.plant ? `The ${device.plant}` : `The plant of ${deviceName(device)}` })
+    : h('a', { class: 'net-board-photo empty', href: `#device/${encodeURIComponent(device.device_id)}`, title: 'Add a photo on its page' },
+      svg('svg', { viewBox: '0 0 512 512' }, svg('use', { href: '#hacoap-glyph' })), h('span', {}, 'no photo yet'));
+  const has = (v) => v !== null && v !== undefined;
+  const forecast = h('div', { class: 'net-stat-note' });
+  const water = device.needs_water ? h('span', { class: 'badge water-badge' }, 'needs water')
+    : device.water_target ? `water under ${device.water_target} %` : '';
+  const stat = (label, value, note) => h('div', { class: 'net-stat' },
+    h('div', { class: 'net-stat-label' }, label), h('div', { class: 'net-stat-value' }, value), note);
+  const card = h('div', { class: 'net-board' }, photo,
+    h('div', { class: 'net-board-name' }, deviceName(device)),
+    device.plant && device.plant.toLowerCase() !== deviceName(device).toLowerCase()
+      ? h('div', { class: 'net-board-plant' }, device.plant) : null,
+    h('div', { class: 'text-body-secondary mb-2' }, h('span', { class: `online-dot ${device.online ? 'on' : 'off'}` }),
+      device.online ? 'online' : 'offline', device.last_seen ? ` · read ${ago(device.last_seen)}` : ''),
+    h('div', { class: 'net-stats' },
+      stat('Battery', pct(device.battery), forecast),
+      stat('Soil', pct(device.soil_moisture), h('div', { class: 'net-stat-note' }, water)),
+      stat('Air humidity', pct(device.air_humidity)),
+      stat('Temperature', has(device.temperature) ? `${device.temperature} °C` : '–')),
+    device.last_error ? h('div', { class: 'small text-danger mt-2' }, device.last_error) : null,
+    h('div', { class: 'd-flex flex-wrap gap-2 mt-2' },
+      h('a', { class: 'btn btn-sm btn-primary', href: `#device/${encodeURIComponent(device.device_id)}` }, 'Open its page'),
+      device.needs_water ? h('button', { class: 'btn btn-sm btn-outline-primary', type: 'button',
+        onclick: (e) => busy(e.target, () => api('POST', devicePath(device, '/pump'), { on: true })) }, 'Run the pump') : null,
+      h('button', { class: 'btn btn-sm btn-outline-secondary', type: 'button', onclick: () => pingDevice(device) }, 'Beep')));
+  if (has(device.battery)) batteryForecast(device).then((f) => { forecast.textContent = daysText(f); }, () => {});
+  return card;
+}
+
+// The battery forecast comes with a device's details; kept a few minutes, so clicking around
+// the map doesn't ask again each time.
+const forecasts = new Map();
+async function batteryForecast(device) {
+  const known = forecasts.get(device.device_id);
+  if (known && Date.now() - known.at < 5 * 60 * 1000) return known.forecast;
+  const details = await api('GET', `${devicePath(device, '/details')}?days=1`, undefined, { quiet: true });
+  forecasts.set(device.device_id, { at: Date.now(), forecast: details.health.battery_forecast });
+  return details.health.battery_forecast;
 }
 
 function showLinkDetails(spring) {
+  net.selectedNode = null;
   document.getElementById('network-details').replaceChildren(
     h('h6', {}, `${nodeLabel(spring.a.node)} ↔ ${nodeLabel(spring.b.node)}`),
     detailsTable([
@@ -1465,12 +1519,16 @@ function drawFloorplanNodes(stage, img) {
     const shape = nodeShape(node, 1.1);
     const group = svg('g', { class: `node${p.placed ? '' : ' unplaced'}`, transform: `translate(${p.x},${p.y})` },
       shape.el, svg('text', { x: shape.r + 6, y: 4 }, nodeLabel(node)), svg('title', {}, `${nodeLabel(node)}: drag it to where it is`));
+    let start = null;
     group.addEventListener('pointerdown', (event) => {
       group.setPointerCapture(event.pointerId);
       group.dataset.drag = '1';
+      start = { x: event.clientX, y: event.clientY, moved: false };
     });
     group.addEventListener('pointermove', (event) => {
       if (!group.dataset.drag) return;
+      if (!start.moved && Math.hypot(event.clientX - start.x, event.clientY - start.y) < 4) return;  // a click, so far
+      start.moved = true;
       const point = drawing.createSVGPoint();
       point.x = event.clientX; point.y = event.clientY;
       const q = point.matrixTransform(drawing.getScreenCTM().inverse());
@@ -1480,6 +1538,7 @@ function drawFloorplanNodes(stage, img) {
     group.addEventListener('pointerup', async () => {
       if (!group.dataset.drag) return;
       delete group.dataset.drag;
+      if (!start.moved) return showNodeDetails(node, true);
       const inTray = p.x < trayWidth;
       const body = inTray ? { x: null, y: null } : { x: p.x / W, y: p.y / H };
       await api('PUT', `/api/network/positions/${encodeURIComponent(nodeKey(node))}`, body).catch(() => {});
@@ -1757,6 +1816,7 @@ function connectEvents(delay = 1000) {
         renderDeviceStatus(event.device);
         renderDevicePhoto(event.device);
       }
+      if (net.selectedNode && net.selectedNode.device_id === event.device.device_id) showNodeDetails(net.selectedNode);
     } else if (event.type === 'devices') {
       loadDevices().catch(() => {});
     } else if (event.type === 'network') {
