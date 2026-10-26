@@ -669,8 +669,9 @@ function renderNetwork() {
     makeDraggable(group, n);
     return group;
   });
-  const drawing = svg('svg', { viewBox: box.join(' '), preserveAspectRatio: 'xMidYMid meet' }, ...lines, ...groups);
+  const drawing = svg('svg', { viewBox: (net.zoom || box).join(' '), preserveAspectRatio: 'xMidYMid meet' }, ...lines, ...groups);
   canvas.append(drawing);
+  enableZoom(canvas, drawing, box);
 
   const counts = { routers: 0, children: 0, sleepy: 0, boards: 0 };
   for (const n of topology.nodes) {
@@ -681,6 +682,52 @@ function renderNetwork() {
   document.getElementById('network-summary').textContent =
     `${counts.routers} router(s), ${counts.children} child(ren) (${counts.sleepy} sleepy), ${counts.boards} of your boards. ` +
     `Read ${ago(topology.fetched)} (${topology.source === 'api' ? 'with signal strength' : 'link quality only'}).`;
+}
+
+// The scroll wheel (or a trackpad pinch) zooms around the pointer, dragging the background
+// pans, and a double click or "fit" shows the whole map again. The zoom survives a re-read.
+function enableZoom(canvas, drawing, box) {
+  const view = () => { const v = drawing.viewBox.baseVal; return [v.x, v.y, v.width, v.height]; };
+  const show = (v) => { net.zoom = v; drawing.setAttribute('viewBox', (v || box).join(' ')); };
+  const toMap = (clientX, clientY) => {
+    const p = drawing.createSVGPoint();
+    p.x = clientX; p.y = clientY;
+    return p.matrixTransform(drawing.getScreenCTM().inverse());
+  };
+  const zoomBy = (factor, at) => {
+    const [x, y, w, height] = view();
+    const scale = Math.max(box[2] / 12, Math.min(box[2] * 2, w * factor)) / w;  // 12× in to 2× out
+    show([at.x - (at.x - x) * scale, at.y - (at.y - y) * scale, w * scale, height * scale]);
+  };
+  const center = () => { const [x, y, w, height] = view(); return { x: x + w / 2, y: y + height / 2 }; };
+
+  drawing.addEventListener('wheel', (event) => {
+    event.preventDefault();
+    zoomBy(Math.exp(Math.max(-100, Math.min(100, event.deltaY)) * 0.002), toMap(event.clientX, event.clientY));
+  }, { passive: false });
+  let pan = null;
+  drawing.addEventListener('pointerdown', (event) => {
+    if (event.target !== drawing) return;  // nodes drag themselves, lines are clicked
+    pan = { id: event.pointerId, start: toMap(event.clientX, event.clientY) };
+    drawing.setPointerCapture(event.pointerId);
+    drawing.classList.add('panning');
+  });
+  drawing.addEventListener('pointermove', (event) => {
+    if (!pan || event.pointerId !== pan.id) return;
+    const p = toMap(event.clientX, event.clientY);
+    const [x, y, w, height] = view();
+    show([x - (p.x - pan.start.x), y - (p.y - pan.start.y), w, height]);  // keeps the grabbed point under the pointer
+  });
+  const endPan = () => { pan = null; drawing.classList.remove('panning'); };
+  drawing.addEventListener('pointerup', endPan);
+  drawing.addEventListener('pointercancel', endPan);
+  drawing.addEventListener('dblclick', (event) => { if (event.target === drawing) show(null); });
+
+  canvas.querySelector('.zoom-controls')?.remove();
+  canvas.append(h('div', { class: 'zoom-controls' },
+    h('button', { class: 'btn btn-sm btn-outline-secondary', title: 'Zoom in', onclick: () => zoomBy(1 / 1.4, center()) }, '+'),
+    h('button', { class: 'btn btn-sm btn-outline-secondary', title: 'Zoom out', onclick: () => zoomBy(1.4, center()) }, '−'),
+    h('button', { class: 'btn btn-sm btn-outline-secondary', title: 'Show the whole map', onclick: () => show(null) }, 'fit')));
 }
 
 function makeDraggable(group, n) {
@@ -760,7 +807,8 @@ function renderNetworkLegend() {
     'your board (ringed in its kind\'s colour)',
     h('div', { class: 'mt-1' }, 'Solid lines: router to router. Dashed: child to its parent. Green, amber, red: strong, ',
       'fair, weak. Shorter lines are stronger links: it shows radio closeness, not distance (walls and antennas count). ',
-      'Your boards never link to each other: each one talks only to its parent. Drag nodes to tidy up.'));
+      'Your boards never link to each other: each one talks only to its parent. Drag nodes to tidy up. ',
+      'Scroll to zoom, drag the background to move around, double-click it to see the whole map.'));
 }
 
 async function loadNetwork() {

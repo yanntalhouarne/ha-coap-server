@@ -94,7 +94,7 @@ Tick devices to update them.
 - **What your border router reports depends on its version.**
   - **2025 or later** (`/api/devices`): signal margin and RSSI for every link, and children's addresses, so boards get named.
   - **Older** (`/diagnostics`): link quality 0–3 between routers only, and no addresses for children, so boards show as "SED 0x5c01". The page says which one it got.
-- **Interacting:** drag nodes to tidy the map, and click a node or a line for details.
+- **Interacting:** drag nodes to tidy the map, and click a node or a line for details. Scroll (or pinch) to zoom around the pointer, drag the background to move around, and double-click it or click **fit** to see the whole map again.
 - **Changes** logs boards that changed parent between two readings, or disappeared.
 - **Floor plan:** switch the view to **floor plan**, choose a picture of your home (PNG, JPEG or WebP, up to 10 MB), and drag each node to where it really is. The links are drawn between them, coloured by strength, so a weak link shows where a router would help. Drag a node back to the strip on the left to unplace it.
 - **Channels:** **Scan** has the border router measure the radio noise on every Thread channel (11 to 26) and shows the quietest ones. Wi-Fi shares these frequencies. Changing the channel is done on the border router, and moves the whole network. The scan needs the 2025+ REST API.

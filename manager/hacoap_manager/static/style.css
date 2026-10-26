@@ -183,7 +183,11 @@ fieldset legend::before { content: "// "; color: var(--t-accent-text); }
   background-image: radial-gradient(color-mix(in srgb, var(--t-text-muted) 22%, transparent) 1px, transparent 1px);
   background-size: 22px 22px; }
 .network-canvas svg { width: 100%; height: 36rem; display: block; touch-action: none; user-select: none; }
+.network-canvas svg { cursor: grab; }
+.network-canvas svg.panning { cursor: grabbing; }
 .network-canvas .node { cursor: grab; }
+.zoom-controls { position: absolute; top: .5rem; right: .5rem; display: flex; gap: .25rem; }
+.zoom-controls .btn { min-width: 2rem; background: var(--t-surface); }
 .network-canvas .node text { font-size: 11px; font-family: var(--mono); fill: var(--t-text-secondary);
   paint-order: stroke; stroke: var(--t-bg-deep); stroke-width: 4px; }
 .network-canvas line { cursor: pointer; }
