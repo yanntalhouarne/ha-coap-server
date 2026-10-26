@@ -150,6 +150,8 @@ class SimulatedBorderRouter:
 
     def get(self, path):
         br = next(r for r in self.net["routers"] if r.get("br"))
+        if path == "/node/dataset/active":
+            return 200, ({"Channel": 15} if self.mode == "legacy" else {"channel": 15})
         if path == "/node":
             if self.mode == "legacy":
                 return 200, {"NetworkName": "SimThread", "State": "leader", "Rloc16": br["rloc16"], "ExtAddress": br["ext"]}
@@ -177,6 +179,16 @@ class SimulatedBorderRouter:
         for item in body.get("data", []):
             task_id = str(uuid.uuid4())
             task = {"id": task_id, "type": item["type"], "attributes": {**item["attributes"], "status": "completed"}}
+            if item["type"] == "getEnergyScanTask":
+                scan_id = str(uuid.uuid4())
+                # Quiet channels, except Wi-Fi-like noise around 17-20 (Wi-Fi channel 6) and 24
+                noise = {17: -62, 18: -55, 19: -58, 20: -66, 24: -70}
+                report = [{"channel": c, "maxRssi": [noise.get(c, -94) + d for d in (0, -3, 2)]}
+                          for c in item["attributes"].get("channelMask", range(11, 27))]
+                self.diagnostics[scan_id] = {"id": scan_id, "type": "energyScanReport",
+                                             "attributes": {"origin": item["attributes"].get("destination"),
+                                                            "report": report}}
+                task["relationships"] = {"result": {"data": {"type": "diagnostics", "id": scan_id}}}
             if item["type"] == "getNetworkDiagnosticTask":
                 diag_id = str(uuid.uuid4())
                 self.diagnostics[diag_id] = {"id": diag_id, "type": "threadNetworkDiagnostic",

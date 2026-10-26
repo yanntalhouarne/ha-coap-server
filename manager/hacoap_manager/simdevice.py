@@ -17,7 +17,9 @@ finds it.
 import argparse
 import asyncio
 import hashlib
+import math
 import struct
+import time
 from dataclasses import dataclass, field
 
 import cbor2
@@ -55,18 +57,34 @@ class SimulatedDevice:
     fail_boot: bool = False          # a tested image crashes: MCUboot reverts it
     drop_smp_every: int = 0          # drop every Nth SMP request (0: never)
     drop_coap_first: int = 0         # drop the first N CoAP requests
+    dynamic: bool = False            # readings change over time (battery drains), for trying the app
+    battery_drain_per_hour: float = 0.5
+    pump_running: bool = False
+    pump_duration: int = 1
     pings: int = 0
     resets: int = 0
     smp_requests: int = 0
     _upload: bytearray = None
     _upload_size: int = 0
     _rebooting_until: float = 0.0
+    _started: float = field(default_factory=time.time)
 
     @classmethod
     def with_image(cls, image, **kwargs):
         device = cls(**kwargs)
         device.slots[0] = Slot(image=image, confirmed=True, permanent=True)
         return device
+
+    def readings(self):
+        """The 'data' payload: fixed, or (dynamic) a slowly draining battery and drifting readings."""
+        if not self.dynamic:
+            return self.data
+        hours = (time.time() - self._started) / 3600
+        battery = max(3, round(87 - hours * self.battery_drain_per_hour))
+        soil = round(45 + 20 * math.sin(hours / 6))
+        humidity = round(55 + 10 * math.sin(hours / 9 + 1))
+        temperature = round(18 + 6 * math.sin(hours / 4))
+        return bytes([soil, battery, humidity, temperature & 0xFF])
 
     @property
     def fw_version(self):
@@ -218,12 +236,30 @@ class SimulatedDevice:
             text = f"{self.fw_version},{self.hw_version},{self.device_id}"
             return reply(coap.CONTENT, text.encode() + b"\0")
         if message.path == "data" and message.code == coap.GET:
-            return reply(coap.CONTENT, self.data)
+            return reply(coap.CONTENT, self.readings())
+        if message.path == "pump":
+            if message.code == coap.PUT and message.type == coap.TYPE_CON and message.payload in (b"0", b"1"):
+                self.pump_running = message.payload == b"1"
+                if self.pump_running:
+                    asyncio.get_running_loop().call_later(self.pump_duration, self._pump_off)
+            elif message.code != coap.GET:
+                return None  # the firmware ignores a NON PUT
+            return reply(coap.CONTENT, bytes([1 if self.pump_running else 0]))
+        if message.path == "pumpdc":
+            if message.code == coap.PUT and message.payload[:1].isdigit():
+                seconds = int(message.payload[:1])
+                if 1 <= seconds <= 9:
+                    self.pump_duration = seconds
+            return reply(coap.CONTENT, bytes([self.pump_duration]))
         if message.path == "ping" and message.code == coap.PUT:
             if message.payload == b"1":
                 self.pings += 1
             return reply(coap.CHANGED)
         return reply(0x84)  # 4.04 Not Found
+
+
+    def _pump_off(self):
+        self.pump_running = False
 
 
 class _SmpProtocol(asyncio.DatagramProtocol):
@@ -321,7 +357,7 @@ def main():
 
     async def run():
         device = SimulatedDevice.with_image(mcuboot.build_image(b"simulated firmware" * 100, (1, 0, 0, 0)),
-                                            device_id=args.device_id)
+                                            device_id=args.device_id, dynamic=True)
         async with SimulatorServer(device, args.host, args.smp_port, args.coap_port) as server:
             print(f"Simulated device {args.device_id}: mcumgr on {args.host}:{server.smp_port}, "
                   f"CoAP on {args.host}:{server.coap_port}. Ctrl+C to stop.")

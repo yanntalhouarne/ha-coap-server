@@ -18,6 +18,7 @@ import time
 from pathlib import Path
 
 from . import kconfig, mcuboot
+from .images import build_commit
 
 VARIANTS = ("battery", "usb-logging", "uart-console", "debug")
 PUBLIC_PSKD = "J01NU5"
@@ -66,13 +67,13 @@ def checks(repository):
                  "detail": "Start the app from the ha-coap-server folder (or a folder inside it) to build firmware."}]
     result = [{"name": "Firmware checkout", "ok": True, "required": True, "detail": str(repository)}]
     nrfutil = find_nrfutil()
-    result.append({"name": "nRF Connect toolchain", "ok": nrfutil is not None, "required": True,
+    result.append({"name": "nRF Connect toolchain", "ok": nrfutil is not None, "required": True, "fix": "install",
                    "detail": nrfutil or "nrfutil not found: run scripts/setup once (README → Building)."})
     sdk = (repository / "external" / "zephyr").is_dir()
-    result.append({"name": "SDK", "ok": sdk, "required": True,
+    result.append({"name": "SDK", "ok": sdk, "required": True, "fix": "install",
                    "detail": "external/ is there" if sdk else "external/ is missing: run scripts/setup once."})
     key = signing_key(repository)
-    result.append({"name": "Private signing key", "ok": key is not None, "required": False,
+    result.append({"name": "Private signing key", "ok": key is not None, "required": False, "fix": "keygen",
                    "detail": str(key) if key else "None: images would be signed with MCUboot's public "
                    "development key, which boards with your bootloader refuse. Restore "
                    "application/keys/mcuboot-signing-key.pem from your backup, or create one with scripts/keygen."})
@@ -81,10 +82,33 @@ def checks(repository):
         if local_conf.is_file() else ""
     pskd = pskd.strip('"')
     pskd_ok = bool(pskd) and pskd != PUBLIC_PSKD
-    result.append({"name": "Private PSKd", "ok": pskd_ok, "required": False,
+    result.append({"name": "Private PSKd", "ok": pskd_ok, "required": False, "fix": "pskd",
                    "detail": "set in application/local.conf" if pskd_ok else
                    "Not set: new boards would join with the public default. See application/local.conf.example."})
     return result
+
+
+def run_streaming(command, cwd, env, on_start, on_line):
+    """Runs a command, calling on_line(text) for each line it prints. Returns its exit code.
+    Its own process group, so kill_tree() can stop it with everything it started."""
+    process = subprocess.Popen(
+        command, cwd=str(cwd), env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        stdin=subprocess.DEVNULL, encoding="utf-8", errors="replace", start_new_session=(sys.platform != "win32"))
+    on_start(process)
+    for line in process.stdout:
+        on_line(line.rstrip("\r\n"))
+    return process.wait()
+
+
+def kill_tree(process):
+    """Stops a process started by run_streaming(), and its children (toolchain, west, ninja)."""
+    if sys.platform == "win32":
+        subprocess.run(["taskkill", "/F", "/T", "/PID", str(process.pid)], capture_output=True)
+    else:
+        try:
+            os.killpg(process.pid, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
 
 
 class BuildRunner:
@@ -100,6 +124,7 @@ class BuildRunner:
         self._process = None
         self._cancelled = False
         self._done = None
+        self.other_busy = lambda: None   # the setup runner's: "what's running", or None
 
     def schema(self):
         if self.repository is None:
@@ -115,6 +140,8 @@ class BuildRunner:
     def start(self, profile_name, allow_development_key=False):
         if self.running():
             raise BuildError("A build is already running")
+        if self.other_busy():
+            raise BuildError(f"Wait for the {self.other_busy()} to finish")
         failed = [c for c in self.checks() if c["required"] and not c["ok"]]
         if failed:
             raise BuildError(f"{failed[0]['name']}: {failed[0]['detail']}")
@@ -147,14 +174,7 @@ class BuildRunner:
         if not self.running() or self._process is None:
             raise BuildError("No build is running")
         self._cancelled = True
-        process = self._process
-        if sys.platform == "win32":
-            subprocess.run(["taskkill", "/F", "/T", "/PID", str(process.pid)], capture_output=True)
-        else:
-            try:
-                os.killpg(process.pid, signal.SIGTERM)
-            except ProcessLookupError:
-                pass
+        kill_tree(self._process)
 
     async def wait(self):
         if self._done is not None:
@@ -171,13 +191,8 @@ class BuildRunner:
     def _run(self, loop, command, env, profile):
         """In a thread: runs the build, streaming its output to the event loop."""
         try:
-            self._process = subprocess.Popen(
-                command, cwd=str(self.repository), env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                stdin=subprocess.DEVNULL, encoding="utf-8", errors="replace",
-                start_new_session=(sys.platform != "win32"))
-            for line in self._process.stdout:
-                loop.call_soon_threadsafe(self._line, line.rstrip("\r\n"))
-            code = self._process.wait()
+            code = run_streaming(command, self.repository, env, lambda p: setattr(self, "_process", p),
+                                 lambda line: loop.call_soon_threadsafe(self._line, line))
         except OSError as exc:
             loop.call_soon_threadsafe(self._line, f"Cannot start the build: {exc}")
             code = -1
@@ -198,7 +213,8 @@ class BuildRunner:
                 when = time.strftime("%Y-%m-%d %H:%M")
                 key = "" if signing == "private" else ", DEVELOPMENT KEY"
                 image = self.images.add(image_path.read_bytes(), image_path.name,
-                                        f"{profile['name']} ({profile['variant']}{key}), built {when}")
+                                        f"{profile['name']} ({profile['variant']}{key}), built {when}",
+                                        build_commit(build_dir(self.repository, profile["variant"])))
                 fields.update(result="done", message=f"Image v{image['version']} added to the library",
                               image_hash=image["hash"])
             except (OSError, mcuboot.ImageError) as exc:

@@ -19,13 +19,15 @@ from fastapi.staticfiles import StaticFiles
 
 import re
 
-from . import __version__, backup, config, discovery, kconfig, mcuboot, serial_ports
+from . import __version__, backup, config, discovery, fleet, kconfig, mcuboot, serial_ports
 from .builds import VARIANTS, BuildError, BuildRunner
+from .console import ConsoleError, SerialConsole
 from .db import Database
 from .events import EventBus
-from .images import ImageLibrary, build_images, find_repository
+from .images import ImageLibrary, build_commit, build_images, changes, find_repository
 from .inventory import Inventory, InventoryError
 from .network import NetworkError, NetworkService
+from .setup_tools import SetupError, SetupRunner
 from .updates import UpdateError, UpdateManager
 
 log = logging.getLogger(__name__)
@@ -47,6 +49,8 @@ class Services:
     repository: Path
     builds: BuildRunner
     network: NetworkService
+    console: SerialConsole
+    setup: SetupRunner
 
 
 def create_services(data_dir, discover=discovery.discover):
@@ -64,7 +68,11 @@ def create_services(data_dir, discover=discovery.discover):
     if not db.profiles():
         db.save_profile("Production", "battery", {}, "The firmware as configured in the repository")
     network = NetworkService(data_dir, db, settings, events)
-    return Services(data_dir, settings, db, events, inventory, images, updates, repository, builds, network)
+    setup = SetupRunner(repository, events)
+    builds.other_busy = setup.busy                                                 # one script at a time
+    setup.other_busy = lambda: "build" if builds.running() else None
+    return Services(data_dir, settings, db, events, inventory, images, updates, repository, builds, network,
+                    SerialConsole(events), setup)
 
 
 def _host_name(host_header):
@@ -142,7 +150,10 @@ def create_app(services, background_tasks=True):
     async def edit_device(device_id: str, body: dict):
         if s.db.device(device_id) is None:
             raise HTTPException(404, "Unknown device")
-        fields = {k: str(v) for k, v in body.items() if k in ("name", "notes", "address")}
+        fields = {k: str(v).strip() for k, v in body.items() if k in ("name", "notes", "address", "location", "plant")}
+        if "tags" in body:
+            tags = body["tags"] if isinstance(body["tags"], list) else str(body["tags"]).split(",")
+            fields["tags"] = ",".join(sorted({t.strip().lower() for t in tags if t.strip()}))
         device = s.db.upsert_device(device_id, **fields)
         s.events.publish("device", device=s.inventory.describe(device))
         return s.inventory.describe(device)
@@ -180,6 +191,33 @@ def create_app(services, background_tasks=True):
             return await s.inventory.read_slots(device_id, body.get("transport", "udp"), body.get("serial_port", ""))
         except InventoryError as exc:
             raise _bad_request(exc)
+
+    @app.get("/api/devices/{device_id}/details")
+    async def device_details(device_id: str, days: int = 30):
+        device = s.db.device(device_id)
+        if device is None:
+            raise HTTPException(404, "Unknown device")
+        since = time.time() - max(1, min(days, 365)) * 86400
+        return {"device": s.inventory.describe(device),
+                "health": fleet.device_health(s.db, device, s.db.release_image()),
+                "readings": s.db.readings(device_id, since), "links": s.db.link_samples(device_id, since),
+                "updates": s.db.updates(device_id, limit=50), "network_events": s.db.network_events_for(device_id)}
+
+    @app.post("/api/devices/{device_id}/pump")
+    async def pump(device_id: str, body: dict):
+        on = body.get("on")
+        try:
+            return await s.inventory.pump(device_id, on=None if on is None else bool(on), seconds=body.get("seconds"))
+        except InventoryError as exc:
+            raise _bad_request(exc)
+
+    @app.post("/api/slots/read-all")
+    async def read_all_slots():
+        return await s.inventory.read_all_slots()
+
+    @app.get("/api/dashboard")
+    async def dashboard():
+        return fleet.dashboard(s.db, s.inventory, s.network.last())
 
     @app.post("/api/devices/{device_id}/ping")
     async def ping(device_id: str):
@@ -221,6 +259,7 @@ def create_app(services, background_tasks=True):
                 continue
             result.append({"variant": variant, "path": str(path), "hash": info.hash, "version": info.mcumgr_version,
                            "size": info.size, "modified": path.stat().st_mtime,
+                           "git_commit": build_commit(path.parent.parent),
                            "in_library": s.db.image(info.hash) is not None})
         return result
 
@@ -230,7 +269,8 @@ def create_app(services, background_tasks=True):
             if name == variant:
                 try:
                     return s.images.add(path.read_bytes(), path.name,
-                                        f"{variant} build, {time.strftime('%Y-%m-%d %H:%M', time.localtime(path.stat().st_mtime))}")
+                                        f"{variant} build, {time.strftime('%Y-%m-%d %H:%M', time.localtime(path.stat().st_mtime))}",
+                                        build_commit(path.parent.parent))
                 except (OSError, mcuboot.ImageError) as exc:
                     raise _bad_request(exc)
         raise HTTPException(404, "No such build")
@@ -242,6 +282,27 @@ def create_app(services, background_tasks=True):
             raise HTTPException(404, "Unknown image")
         return s.db.add_image(image_hash, image["version"], image["filename"], image["size"],
                               str(body.get("notes", image["notes"])))
+
+    @app.post("/api/release")
+    async def set_release(body: dict):
+        """Marks the image the fleet should run, or none (image_hash null)."""
+        image_hash = body.get("image_hash")
+        if image_hash and s.db.image(image_hash) is None:
+            raise HTTPException(404, "Unknown image")
+        s.db.set_release(image_hash)
+        s.events.publish("devices")
+        return {"release": s.db.release_image()}
+
+    @app.get("/api/images/{image_hash}/changes")
+    async def image_changes(image_hash: str, device_id: str):
+        image, device = s.db.image(image_hash), s.db.device(device_id)
+        if image is None or device is None:
+            raise HTTPException(404, "Unknown image or device")
+        try:
+            result = await asyncio.to_thread(changes, s.repository, device["fw_version"], image["git_commit"])
+        except ValueError as exc:
+            raise _bad_request(exc)
+        return {"from": device["fw_version"], "to": image["git_commit"], **result}
 
     @app.delete("/api/images/{image_hash}")
     async def delete_image(image_hash: str):
@@ -319,7 +380,7 @@ def create_app(services, background_tasks=True):
     async def start_update(body: dict):
         try:
             job = s.updates.start(str(body.get("image_hash", "")), list(body.get("targets", [])),
-                                  bool(body.get("stop_on_failure", True)))
+                                  bool(body.get("stop_on_failure", True)), bool(body.get("staged", False)), s.console)
         except UpdateError as exc:
             raise _bad_request(exc)
         return job.as_dict()
@@ -333,6 +394,13 @@ def create_app(services, background_tasks=True):
         if job_id not in s.updates.jobs:
             raise HTTPException(404, "Unknown job")
         return s.updates.jobs[job_id].as_dict()
+
+    @app.post("/api/updates/{job_id}/continue")
+    async def continue_update(job_id: str):
+        try:
+            return s.updates.resume(job_id).as_dict()
+        except UpdateError as exc:
+            raise _bad_request(exc)
 
     @app.post("/api/updates/{job_id}/cancel")
     async def cancel(job_id: str):
@@ -358,6 +426,42 @@ def create_app(services, background_tasks=True):
         except NetworkError as exc:
             raise _bad_request(exc)
 
+    @app.post("/api/network/channel-scan")
+    async def channel_scan():
+        try:
+            return await s.network.channel_scan()
+        except NetworkError as exc:
+            raise _bad_request(exc)
+
+    @app.get("/api/network/floorplan")
+    async def floorplan():
+        info = s.network.floorplan_info()
+        if info is None:
+            raise HTTPException(404, "No floor plan")
+        return FileResponse(s.network.floorplan_file, media_type=info["content_type"],
+                            headers={"Cache-Control": "no-cache"})
+
+    @app.post("/api/network/floorplan")
+    async def set_floorplan(request: Request, name: str = ""):
+        try:
+            return s.network.set_floorplan(await request.body(), name)
+        except NetworkError as exc:
+            raise _bad_request(exc)
+
+    @app.delete("/api/network/floorplan")
+    async def remove_floorplan():
+        s.network.remove_floorplan()
+        return {"removed": True}
+
+    @app.put("/api/network/positions/{node_key}")
+    async def set_position(node_key: str, body: dict):
+        try:
+            x, y = body.get("x"), body.get("y")
+            s.network.set_position(node_key, None if x is None else float(x), None if y is None else float(y))
+        except (NetworkError, TypeError, ValueError) as exc:
+            raise _bad_request(exc)
+        return {"node_key": node_key, "x": x, "y": y}
+
     @app.post("/api/network/find-border-router")
     async def find_border_router():
         if not discovery.discovery_available():
@@ -367,6 +471,66 @@ def create_app(services, background_tasks=True):
             s.settings.border_router_url = urls[0]
             config.save_settings(s.data_dir, s.settings)
         return {"found": urls, "border_router_url": s.settings.border_router_url}
+
+    # ------------------------------------------------------------ serial console
+
+    @app.get("/api/console")
+    async def console_state():
+        return s.console.state()
+
+    @app.post("/api/console/open")
+    async def console_open(body: dict):
+        job = s.updates.running_job()
+        port = str(body.get("port", ""))
+        if job and any(t.transport == "serial" and t.address == port for t in job.targets):
+            raise _bad_request(f"An update is using {port}")
+        try:
+            s.console.open(asyncio.get_running_loop(), port, int(body.get("baudrate", 115200)))
+        except (ConsoleError, ValueError, ImportError) as exc:
+            raise _bad_request(exc)
+        return s.console.state()
+
+    @app.post("/api/console/close")
+    async def console_close():
+        s.console.close()
+        return s.console.state()
+
+    @app.post("/api/console/send")
+    async def console_send(body: dict):
+        try:
+            s.console.send(str(body.get("text", "")))
+        except ConsoleError as exc:
+            raise _bad_request(exc)
+        return {"sent": True}
+
+    # ------------------------------------------------------------ setting up this PC to build
+
+    @app.get("/api/setup")
+    async def setup_state():
+        return {**s.setup.state(), "checks": s.builds.checks()}
+
+    @app.post("/api/setup/pskd")
+    async def setup_pskd(body: dict = None):
+        try:
+            pskd = s.setup.set_pskd((body or {}).get("pskd") or None)
+        except SetupError as exc:
+            raise _bad_request(exc)
+        return {"pskd": pskd, "checks": s.builds.checks()}
+
+    @app.post("/api/setup/cancel")
+    async def setup_cancel():
+        try:
+            s.setup.cancel()
+        except SetupError as exc:
+            raise _bad_request(exc)
+        return {"cancelling": True}
+
+    @app.post("/api/setup/{task}")
+    async def setup_start(task: str):
+        try:
+            return s.setup.start(task)
+        except SetupError as exc:
+            raise _bad_request(exc)
 
     # ------------------------------------------------------------ backups and export
 

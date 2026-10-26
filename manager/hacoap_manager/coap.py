@@ -222,6 +222,34 @@ async def get_data(host, **kwargs):
     return parse_data(await _get(host, "data", **kwargs))
 
 
+async def set_pump(host, on, **kwargs):
+    """Starts ('1') or stops ('0') the pump. Returns whether it's running."""
+    code, payload = await request(host, "pump", PUT, b"1" if on else b"0", **kwargs)
+    if code != CONTENT or not payload:
+        raise CoapError(f"'pump' answered {code_name(code)}")
+    return payload[0] == 1
+
+
+async def get_pump(host, **kwargs):
+    payload = await _get(host, "pump", **kwargs)
+    return bool(payload) and payload[0] == 1
+
+
+async def set_pump_duration(host, seconds, **kwargs):
+    """Sets the pump run time (1 to 9 s). Returns the run time the device now uses."""
+    if not 0 <= seconds <= 9:
+        raise ValueError("the run time is one digit, 1 to 9 s")
+    code, payload = await request(host, "pumpdc", PUT, str(seconds).encode(), **kwargs)
+    if code != CONTENT or not payload:
+        raise CoapError(f"'pumpdc' answered {code_name(code)}")
+    return payload[0]
+
+
+async def get_pump_duration(host, **kwargs):
+    payload = await _get(host, "pumpdc", **kwargs)
+    return payload[0] if payload else None
+
+
 async def ping(host, beep=True, **kwargs):
     code, _ = await request(host, "ping", PUT, b"1" if beep else b"0", **kwargs)
     if code != CHANGED:

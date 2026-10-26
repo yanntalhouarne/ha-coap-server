@@ -3,12 +3,15 @@ the inventory named, and a log of boards changing parent."""
 
 import asyncio
 import json
+import time
 from pathlib import Path
 
 from .otbr import BorderRouter, BorderRouterError
 
 MESHCOP_SERVICE = "_meshcop._udp.local."  # every Thread border router advertises it
 REST_PORT = 8081
+FLOORPLAN_MAX = 10 * 1024 * 1024
+FLOORPLAN_TYPES = {b"\x89PNG": "image/png", b"\xff\xd8\xff": "image/jpeg", b"RIFF": "image/webp"}
 
 
 class NetworkError(Exception):
@@ -17,7 +20,11 @@ class NetworkError(Exception):
 
 class NetworkService:
     def __init__(self, data_dir, db, settings, events):
-        self.cache = Path(data_dir) / "network.json"
+        self.data_dir = Path(data_dir)
+        self.cache = self.data_dir / "network.json"
+        self.scan_cache = self.data_dir / "channel-scan.json"
+        self.floorplan_file = self.data_dir / "floorplan.img"
+        self.floorplan_meta = self.data_dir / "floorplan.json"
         self.db = db
         self.settings = settings
         self.events = events
@@ -32,21 +39,75 @@ class NetworkService:
 
     def state(self):
         return {"topology": self.last(), "events": self.db.network_events(),
-                "border_router_url": self.settings.border_router_url}
+                "border_router_url": self.settings.border_router_url, "channel_scan": self._read(self.scan_cache),
+                "floorplan": self.floorplan_info(), "positions": self.db.floorplan_positions()}
 
-    async def refresh(self):
+    @staticmethod
+    def _read(path):
+        try:
+            return json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None
+
+    def _border_router(self):
         url = self.settings.border_router_url.strip()
         if not url:
             raise NetworkError("Set the border router's address first (for example http://192.168.1.20:8081)")
+        return BorderRouter(url)
+
+    async def channel_scan(self):
+        """Measures the radio noise on every Thread channel, from the border router."""
+        border_router = self._border_router()
+        try:
+            channels = await asyncio.to_thread(border_router.energy_scan)
+            current = await asyncio.to_thread(border_router.channel)
+        except BorderRouterError as exc:
+            raise NetworkError(str(exc)) from exc
+        scan = {"time": time.time(), "channels": channels, "current_channel": current}
+        self.scan_cache.write_text(json.dumps(scan), encoding="utf-8")
+        self.events.publish("network")
+        return scan
+
+    # ------------------------------------------------------------ floor plan
+
+    def floorplan_info(self):
+        meta = self._read(self.floorplan_meta)
+        return meta if meta and self.floorplan_file.exists() else None
+
+    def set_floorplan(self, data, name=""):
+        if len(data) > FLOORPLAN_MAX:
+            raise NetworkError("The picture is larger than 10 MB")
+        content_type = next((t for magic, t in FLOORPLAN_TYPES.items() if data.startswith(magic)), None)
+        if content_type is None or (content_type == "image/webp" and data[8:12] != b"WEBP"):
+            raise NetworkError("Use a PNG, JPEG or WebP picture")
+        self.floorplan_file.write_bytes(data)
+        self.floorplan_meta.write_text(json.dumps({"content_type": content_type, "name": name, "time": time.time()}),
+                                       encoding="utf-8")
+        self.events.publish("network")
+        return self.floorplan_info()
+
+    def remove_floorplan(self):
+        self.floorplan_file.unlink(missing_ok=True)
+        self.floorplan_meta.unlink(missing_ok=True)
+        self.events.publish("network")
+
+    def set_position(self, node_key, x, y):
+        if x is not None and not (0 <= x <= 1 and 0 <= y <= 1):
+            raise NetworkError("Positions are fractions of the picture, from 0 to 1")
+        self.db.set_floorplan_position(node_key, x, y)
+
+    async def refresh(self):
+        border_router = self._border_router()
         if self._lock.locked():
             raise NetworkError("Already reading the network")
         async with self._lock:
             try:
-                topology = (await asyncio.to_thread(BorderRouter(url).topology)).as_dict()
+                topology = (await asyncio.to_thread(border_router.topology)).as_dict()
             except BorderRouterError as exc:
                 raise NetworkError(str(exc)) from exc
             self._name_boards(topology)
             self._log_changes(self.last(), topology)
+            self._record_links(topology)
             self.cache.write_text(json.dumps(topology), encoding="utf-8")
         self.events.publish("network")
         return self.state()
@@ -61,6 +122,18 @@ class NetworkService:
                     node["device_id"] = device["device_id"]
                     node["name"] = device["name"] or device["device_id"]
                     break
+
+    def _record_links(self, topology):
+        """Each board's link to its parent, for the link history."""
+        nodes = {n["id"]: n for n in topology["nodes"]}
+        for node in topology["nodes"]:
+            if not node.get("device_id") or not node.get("parent"):
+                continue
+            parent = nodes.get(node["parent"], {})
+            link = next((l for l in topology["links"] if {l["a"], l["b"]} == {node["id"], node["parent"]}), {})
+            self.db.add_link_sample(node["device_id"], parent.get("rloc16_hex", ""), link.get("link_margin"),
+                                    link.get("average_rssi"), link.get("link_quality_in"),
+                                    when=topology.get("fetched"))
 
     def _log_changes(self, before, after):
         if not before:

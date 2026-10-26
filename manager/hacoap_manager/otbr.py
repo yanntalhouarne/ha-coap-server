@@ -138,17 +138,52 @@ class BorderRouter:
     def node_info(self):
         return self._request("GET", "/node")
 
+    def channel(self):
+        """The network's radio channel (11-26), from the active dataset, or None."""
+        try:
+            dataset = self._request("GET", "/node/dataset/active") or {}
+        except BorderRouterError:
+            return None
+        value = _get(dataset, "channel")
+        return int(value) if value is not None else None
+
+    def energy_scan(self, channels=range(11, 27), count=3, period=32, duration=50):
+        """Asks the border router to measure the radio noise on each channel (2025+ API only).
+        Returns [{channel, max_rssi, average_rssi}], with RSSI in dBm: higher is noisier."""
+        if self._request("GET", "/api/devices", accept=JSON_API) is None:
+            raise BorderRouterError("A channel scan needs a border router with the 2025+ REST API (/api/actions)")
+        node = self.node_info() or {}
+        task = {"type": "getEnergyScanTask",
+                "attributes": {"destination": (_get(node, "extAddress") or "").lower(), "channelMask": list(channels),
+                               "count": count, "period": period, "scanDuration": duration, "timeout": 60}}
+        status, result_id = next(iter(self._wait_tasks(self._post_tasks([task])).values()))
+        if status != "completed" or not result_id:
+            raise BorderRouterError(f"The channel scan didn't complete ({status})")
+        report = ((self._request("GET", f"/api/diagnostics/{result_id}", accept=JSON_API) or {})
+                  .get("data", {}).get("attributes", {}).get("report")) or []
+        scan = []
+        for entry in report:
+            values = entry.get("maxRssi") or []
+            if values:
+                scan.append({"channel": entry.get("channel"), "max_rssi": max(values),
+                             "average_rssi": round(sum(values) / len(values), 1)})
+        return sorted(scan, key=lambda c: c["channel"])
+
     # ------------------------------------------------------------ topology
 
     def topology(self):
         """Reads the network. Raises BorderRouterError if the border router can't tell."""
         devices = self._request("GET", "/api/devices", accept=JSON_API)
         if devices is not None:
-            return self._topology_api()
-        diagnostics = self._request("GET", "/diagnostics")
-        if diagnostics is not None:
-            return self._topology_legacy(diagnostics)
-        raise BorderRouterError("The border router's REST API has neither /api/devices nor /diagnostics")
+            topology = self._topology_api()
+        else:
+            diagnostics = self._request("GET", "/diagnostics")
+            if diagnostics is None:
+                raise BorderRouterError("The border router's REST API has neither /api/devices nor /diagnostics")
+            topology = self._topology_legacy(diagnostics)
+        if topology.border_router is not None:
+            topology.border_router["channel"] = self.channel()
+        return topology
 
     # older API: GET /diagnostics -------------------------------------------------
 

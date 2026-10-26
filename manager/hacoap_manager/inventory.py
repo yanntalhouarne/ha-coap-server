@@ -86,6 +86,7 @@ class Inventory:
         if info.device_id != device_id:
             return self._changed(self.db.upsert_device(
                 device_id, last_error=f"{device['address']} is now device {info.device_id}"))
+        self.db.add_reading(device_id, data.battery, data.soil_moisture, data.air_humidity, data.temperature)
         return self._changed(self.db.upsert_device(
             device_id, fw_version=info.fw_version, hw_version=info.hw_version, soil_moisture=data.soil_moisture,
             battery=data.battery, air_humidity=data.air_humidity, temperature=data.temperature,
@@ -123,6 +124,43 @@ class Inventory:
             fields["serial_port"] = serial_port
         self._changed(self.db.upsert_device(device_id, **fields))
         return [s.as_dict() for s in slots]
+
+    async def read_all_slots(self):
+        """Reads every device's running image over the air, one after the other (to know which
+        ones are outdated). Returns {device_id: error or ""}."""
+        results = {}
+        for device in self.db.devices():
+            if not device["address"]:
+                continue
+            try:
+                await self.read_slots(device["device_id"])
+                results[device["device_id"]] = ""
+            except InventoryError as exc:
+                results[device["device_id"]] = str(exc)
+        return results
+
+    def _address(self, device_id):
+        device = self._device(device_id)
+        if not device["address"]:
+            raise InventoryError(f"{device_id} has no network address")
+        return device["address"]
+
+    async def pump(self, device_id, on=None, seconds=None):
+        """Sets the run time and/or starts or stops the pump. Returns the pump's state."""
+        address = self._address(device_id)
+        options = self._coap_options()
+        try:
+            if seconds is not None:
+                await coap.set_pump_duration(address, int(seconds), **options)
+            running = await coap.set_pump(address, on, **options) if on is not None \
+                else await coap.get_pump(address, **options)
+            duration = await coap.get_pump_duration(address, **options)
+        except ValueError as exc:
+            raise InventoryError(str(exc)) from exc
+        except (coap.CoapError, TimeoutError, OSError) as exc:
+            raise InventoryError(f"No answer: {exc}") from exc
+        self._changed(self.db.upsert_device(device_id, last_seen=time.time()))
+        return {"running": running, "duration": duration}
 
     async def ping(self, device_id):
         device = self._device(device_id)

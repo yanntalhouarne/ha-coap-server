@@ -9,15 +9,16 @@ Each device goes through:
   5. confirm the new image, so it stays
 
 An update job stops at the first failure unless asked to go on, so a bad image reaches
-one device, not the whole fleet. Cancelling skips the devices not started yet; the one in
-progress finishes, so it's never left half-way.
+one device, not the whole fleet. A staged job also pauses after the first device, until
+asked to continue. Cancelling skips the devices not started yet; the one in progress
+finishes, so it's never left half-way.
 """
 
 import asyncio
 import logging
 import time
 import uuid
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, fields
 
 from .mcumgr import DeviceLink, McumgrError
 
@@ -49,13 +50,15 @@ class UpdateJob:
     image_version: str
     targets: list
     stop_on_failure: bool = True
-    state: str = "running"   # running, done, failed, cancelled
+    staged: bool = False     # pause after the first device
+    state: str = "running"   # running, paused, done, failed, cancelled
     created: float = field(default_factory=time.time)
     cancel_requested: bool = False
+    resume: asyncio.Event = field(default_factory=asyncio.Event)
 
     def as_dict(self):
-        data = asdict(self)
-        data.pop("cancel_requested")
+        data = {f.name: getattr(self, f.name) for f in fields(self) if f.name not in ("cancel_requested", "resume")}
+        data["targets"] = [asdict(t) for t in self.targets]
         return data
 
 
@@ -70,9 +73,9 @@ class UpdateManager:
         self._tasks = {}
 
     def running_job(self):
-        return next((j for j in self.jobs.values() if j.state == "running"), None)
+        return next((j for j in self.jobs.values() if j.state in ("running", "paused")), None)
 
-    def start(self, image_hash, targets, stop_on_failure=True):
+    def start(self, image_hash, targets, stop_on_failure=True, staged=False, console=None):
         """Starts an update job. 'targets' are dicts with device_id, and transport ("udp" by
         default) or serial_port."""
         if self.running_job() is not None:
@@ -92,6 +95,8 @@ class UpdateManager:
                 address = item.get("serial_port", "")
                 if not address:
                     raise UpdateError("A USB update needs a serial port")
+                if console is not None and console.port == address:
+                    raise UpdateError(f"The console has {address} open: close it first")
             elif transport == "udp":
                 device = self.db.device(device_id)
                 if device is None or not device["address"]:
@@ -103,7 +108,8 @@ class UpdateManager:
             label = (device["name"] if device and device["name"] else device_id) or f"USB {address}"
             job_targets.append(Target(device_id, transport, address, label=label))
 
-        job = UpdateJob(uuid.uuid4().hex[:12], image_hash, image["version"], job_targets, stop_on_failure)
+        job = UpdateJob(uuid.uuid4().hex[:12], image_hash, image["version"], job_targets, stop_on_failure,
+                        staged=staged and len(job_targets) > 1)
         self.jobs[job.id] = job
         self._tasks[job.id] = asyncio.create_task(self._run(job, data))
         self._publish(job)
@@ -114,7 +120,16 @@ class UpdateManager:
         if job is None:
             raise UpdateError("Unknown job")
         job.cancel_requested = True
+        job.resume.set()
         self._publish(job)
+        return job
+
+    def resume(self, job_id):
+        """Lets a staged job go on with the rest of the devices."""
+        job = self.jobs.get(job_id)
+        if job is None or job.state != "paused":
+            raise UpdateError("This update isn't waiting")
+        job.resume.set()
         return job
 
     async def wait(self, job_id):
@@ -139,6 +154,12 @@ class UpdateManager:
             if target.status in ("cancelled", "skipped"):
                 self._record(job, target)
             self._publish(job)
+            if job.staged and target is job.targets[0] and not failed and not job.cancel_requested:
+                job.state = "paused"  # check the first device, then continue
+                self._publish(job)
+                await job.resume.wait()
+                job.state = "running"
+                self._publish(job)
         job.state = "cancelled" if job.cancel_requested else ("failed" if failed else "done")
         self._publish(job)
 
