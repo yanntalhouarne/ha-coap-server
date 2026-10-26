@@ -74,7 +74,7 @@ const shortHash = (hash) => hash ? hash.slice(0, 8) : '';
 // ------------------------------------------------------------------ tabs
 
 function showTab(name) {
-  for (const link of document.querySelectorAll('#tabs .nav-link')) link.classList.toggle('active', link.dataset.tab === name);
+  for (const link of document.querySelectorAll('#tabs a')) link.classList.toggle('active', link.dataset.tab === name);
   for (const section of document.querySelectorAll('.tab')) section.classList.toggle('d-none', section.id !== `tab-${name}`);
   if (name === 'updates') { renderUpdateForm(); loadHistory(); }
   if (name === 'images') { loadImages(); loadBuilds(); }
@@ -83,7 +83,7 @@ function showTab(name) {
   if (name === 'settings') { loadSettings(); loadBackups(); }
 }
 
-for (const link of document.querySelectorAll('#tabs .nav-link')) {
+for (const link of document.querySelectorAll('#tabs a')) {
   link.addEventListener('click', (event) => { event.preventDefault(); history.replaceState(null, '', `#${link.dataset.tab}`); showTab(link.dataset.tab); });
 }
 
@@ -106,6 +106,7 @@ function renderDevices() {
   document.getElementById('selection-count').textContent = count ? `${count} selected` : '';
   document.getElementById('update-selected').disabled = count === 0;
   document.getElementById('select-all').checked = count > 0 && count === state.devices.size;
+  renderStatusDevices();
 }
 
 async function showDeviceHistory(device) {
@@ -396,12 +397,12 @@ function svg(tag, attrs = {}, ...children) {
 
 const nodeStyles = {
   'border router': { r: 18, color: 'var(--bs-emphasis-color)', label: 'Border router' },
-  router: { r: 15, color: '#0d6efd', label: 'Router' },
-  'FTD child': { r: 11, color: '#6f42c1', label: 'FTD child (can become a router)' },
-  MED: { r: 9, color: '#fd7e14', label: 'MED (end device, always listening)' },
-  SED: { r: 9, color: '#198754', label: 'SED (sleepy end device)' },
+  router: { r: 15, color: 'var(--t-blue)', label: 'Router' },
+  'FTD child': { r: 11, color: 'var(--t-magenta)', label: 'FTD child (can become a router)' },
+  MED: { r: 9, color: 'var(--t-orange)', label: 'MED (end device, always listening)' },
+  SED: { r: 9, color: 'var(--t-cyan)', label: 'SED (sleepy end device)' },
 };
-const qualityColors = { 3: '#198754', 2: '#e0a800', 1: '#dc3545', 0: '#dc3545' };
+const qualityColors = { 3: 'var(--t-green)', 2: 'var(--t-yellow)', 1: 'var(--t-red)', 0: 'var(--t-red)' };
 
 function nodeStyle(node) {
   if (node.border_router) return nodeStyles['border router'];
@@ -504,8 +505,8 @@ function renderNetwork() {
   const box = [Math.min(...xs, -100) - pad, Math.min(...ys, -100) - pad,
     Math.max(...xs, 100) - Math.min(...xs, -100) + 2 * pad, Math.max(...ys, 100) - Math.min(...ys, -100) + 2 * pad];
   const lines = layout.springs.map((s) => {
-    const color = s.quality === null ? '#adb5bd' : qualityColors[s.quality];
-    const line = svg('line', { x1: s.a.x, y1: s.a.y, x2: s.b.x, y2: s.b.y, stroke: color,
+    const color = s.quality === null ? 'var(--t-text-muted)' : qualityColors[s.quality];
+    const line = svg('line', { x1: s.a.x, y1: s.a.y, x2: s.b.x, y2: s.b.y, style: `stroke: ${color}`,
       'stroke-width': s.link.kind === 'mesh' ? 3 : 2, 'stroke-dasharray': s.link.kind === 'child' ? '6 4' : null,
       onclick: () => showLinkDetails(s) }, svg('title', {}, s.text));
     s.line = line;
@@ -515,7 +516,7 @@ function renderNetwork() {
     const style = nodeStyle(n.node);
     const shape = n.node.border_router
       ? svg('rect', { x: -style.r, y: -style.r, width: 2 * style.r, height: 2 * style.r, rx: 4, style: `fill: ${style.color}` })
-      : svg('circle', { r: style.r, style: `fill: ${style.color}`, stroke: n.node.device_id ? '#ffc107' : 'none', 'stroke-width': 3 });
+      : svg('circle', { r: style.r, style: `fill: ${style.color}; stroke: ${n.node.device_id ? 'var(--t-yellow)' : 'none'}`, 'stroke-width': 3 });
     const group = svg('g', { class: `node${net.selected === n.node.id ? ' selected' : ''}`, transform: `translate(${n.x},${n.y})` },
       shape, svg('text', { y: style.r + 14, 'text-anchor': 'middle' }, nodeLabel(n.node)), svg('title', {}, nodeLabel(n.node)));
     n.group = group;
@@ -609,7 +610,7 @@ function renderNetworkLegend() {
   const kinds = ['border router', 'router', 'FTD child', 'MED', 'SED'].map((k) => [nodeStyles[k].color, nodeStyles[k].label]);
   document.getElementById('network-legend').replaceChildren(
     ...kinds.flatMap(([color, label]) => [h('span', { class: 'legend-swatch', style: `background:${color}` }), label]),
-    h('span', { class: 'legend-swatch', style: 'background:var(--bs-body-bg);border:3px solid #ffc107' }), 'your board',
+    h('span', { class: 'legend-swatch', style: 'background:var(--t-bg-deep);border:3px solid var(--t-yellow)' }), 'your board',
     h('div', { class: 'mt-1' }, 'Solid lines: router to router. Dashed: child to its parent. Green, amber, red: strong, ',
       'fair, weak. Shorter lines are stronger links: it shows radio closeness, not distance (walls and antennas count). ',
       'Your boards never link to each other: each one talks only to its parent. Drag nodes to tidy up.'));
@@ -923,8 +924,9 @@ function connectEvents(delay = 1000) {
   const indicator = document.getElementById('connection');
   const socket = new WebSocket(`ws://${location.host}/api/events`);
   socket.addEventListener('open', () => {
-    indicator.className = 'navbar-text small live';
+    indicator.className = 'live';
     indicator.title = 'Connected to the app';
+    document.getElementById('connection-text').textContent = 'live';
     delay = 1000;
     loadDevices().catch(() => {});
     loadJobs().catch(() => {});
@@ -942,10 +944,13 @@ function connectEvents(delay = 1000) {
       onBuildLog(event);
     } else if (event.type === 'build') {
       onBuild(event);
+      state.build = event.build;
+      renderActivity();
     } else if (event.type === 'job') {
       const finished = state.jobs.get(event.job.id)?.state === 'running' && event.job.state !== 'running';
       state.jobs.set(event.job.id, event.job);
       renderJobs();
+      renderActivity();
       if (finished) {
         loadHistory().catch(() => {});
         notify(`Update ${event.job.state}`, event.job.state === 'done' ? 'success' : 'warning');
@@ -953,29 +958,85 @@ function connectEvents(delay = 1000) {
     }
   });
   socket.addEventListener('close', () => {
-    indicator.className = 'navbar-text small down';
+    indicator.className = 'down';
     indicator.title = 'Not connected to the app: is it still running?';
+    document.getElementById('connection-text').textContent = 'offline';
     setTimeout(() => connectEvents(Math.min(delay * 2, 15000)), delay);
   });
 }
 
-// ------------------------------------------------------------------ colour mode
+// ------------------------------------------------------------------ status bar
 
-function showThemeButton() {
-  const dark = document.documentElement.getAttribute('data-bs-theme') !== 'light';
-  document.getElementById('theme-toggle').textContent = dark ? '☀ Light' : '☾ Dark';
+function renderStatusDevices() {
+  const devices = [...state.devices.values()];
+  const online = devices.filter((d) => d.online).length;
+  document.getElementById('status-devices').textContent =
+    devices.length ? `${online}/${devices.length} online` : 'no devices';
 }
 
-document.getElementById('theme-toggle').addEventListener('click', () => {
-  const mode = document.documentElement.getAttribute('data-bs-theme') === 'light' ? 'dark' : 'light';
-  document.documentElement.setAttribute('data-bs-theme', mode);
-  try { localStorage.setItem('hacoap-theme', mode); } catch (error) { /* not remembered */ }
-  showThemeButton();
+function renderActivity() {
+  const job = [...state.jobs.values()].find((j) => j.state === 'running');
+  const element = document.getElementById('status-activity');
+  let text = 'idle';
+  if (job) {
+    const target = job.targets.find((t) => t.status === 'running');
+    const done = job.targets.filter((t) => !['queued', 'running'].includes(t.status)).length;
+    text = `updating ${done + 1}/${job.targets.length}` + (target ? ` · ${target.label} · ${target.step}` : '') +
+      (target && target.step === 'uploading' ? ` ${Math.round(target.progress * 100)}%` : '');
+  } else if (state.build && state.build.result === 'running') {
+    text = `building ${state.build.profile}`;
+  }
+  element.textContent = text;
+  element.classList.toggle('busy', text !== 'idle');
+}
+
+function renderClock() {
+  document.getElementById('status-clock').textContent =
+    new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+
+// ------------------------------------------------------------------ themes and keys
+
+function setTheme(id) {
+  const theme = window.hacoapApplyTheme(id);
+  try { localStorage.setItem('hacoap-theme', theme.id); } catch (error) { /* not remembered */ }
+  document.getElementById('theme-button').textContent = theme.name.toLowerCase();
+  document.getElementById('status-theme').textContent = theme.name.toLowerCase();
+  for (const item of document.querySelectorAll('#theme-menu .dropdown-item')) {
+    item.classList.toggle('active', item.dataset.themeId === theme.id);
+  }
+  if (net.state && net.state.topology) renderNetwork();
+}
+
+function cycleTheme(step) {
+  const themes = window.HACOAP_THEMES;
+  const current = themes.findIndex((t) => t.id === document.documentElement.getAttribute('data-theme'));
+  setTheme(themes[(current + step + themes.length) % themes.length].id);
+}
+
+document.getElementById('theme-menu').replaceChildren(...window.HACOAP_THEMES.map((theme) => h('li', {},
+  h('a', { class: 'dropdown-item', href: '#', 'data-theme-id': theme.id, onclick: (e) => { e.preventDefault(); setTheme(theme.id); } },
+    h('span', { class: 'swatch', 'data-theme': theme.id, style: 'background: var(--t-brand); box-shadow: 0.7rem 0 0 var(--t-bg), 0.7rem 0 0 1px var(--t-border-strong)' }),
+    h('span', { class: 'ms-3' }, theme.name)))));
+
+document.addEventListener('keydown', (event) => {
+  const target = event.target;
+  if (event.ctrlKey || event.metaKey || event.altKey) return;
+  if (target.closest('input, textarea, select, [contenteditable]')) return;
+  const tabs = ['devices', 'network', 'updates', 'images', 'builds', 'settings'];
+  if (event.key >= '1' && event.key <= String(tabs.length)) {
+    const name = tabs[Number(event.key) - 1];
+    history.replaceState(null, '', `#${name}`);
+    showTab(name);
+  } else if (event.key === 't' || event.key === 'T') {
+    cycleTheme(event.shiftKey ? -1 : 1);
+  }
 });
 
 // ------------------------------------------------------------------ start
 
-showThemeButton();
-
+setTheme(document.documentElement.getAttribute('data-theme'));
+renderClock();
+setInterval(renderClock, 30000);
 showTab((location.hash || '#devices').slice(1));
 connectEvents();

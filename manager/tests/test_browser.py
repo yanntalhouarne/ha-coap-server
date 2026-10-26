@@ -112,4 +112,6 @@ def test_settings_tab(page):
 
 
 def test_dark_by_default(page):
-    assert 'data-bs-theme="dark"' in page("devices")
+    dom = page("devices")
+    assert 'data-theme="tokyo-night"' in dom and 'data-bs-theme="dark"' in dom
+    assert "1/1 online" in dom  # the status bar

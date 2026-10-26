@@ -1,32 +1,45 @@
 <!doctype html>
-<html lang="en" data-bs-theme="dark">
+<html lang="en" data-theme="tokyo-night" data-bs-theme="dark">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>HA-CoAP Fleet Manager</title>
   <link rel="stylesheet" href="/static/vendor/bootstrap.min.css">
+  <link rel="stylesheet" href="/static/themes.css">
   <link rel="stylesheet" href="/static/style.css">
   <link rel="icon" href="/static/icon.svg" type="image/svg+xml">
   <script src="/static/theme.js"></script>
 </head>
 <body>
-<nav class="navbar navbar-expand bg-body-tertiary border-bottom mb-3">
-  <div class="container-fluid">
-    <span class="navbar-brand">HA-CoAP Fleet Manager</span>
-    <ul class="navbar-nav me-auto" id="tabs">
-      <li class="nav-item"><a class="nav-link active" href="#devices" data-tab="devices">Devices</a></li>
-      <li class="nav-item"><a class="nav-link" href="#network" data-tab="network">Network</a></li>
-      <li class="nav-item"><a class="nav-link" href="#updates" data-tab="updates">Updates</a></li>
-      <li class="nav-item"><a class="nav-link" href="#images" data-tab="images">Images</a></li>
-      <li class="nav-item"><a class="nav-link" href="#builds" data-tab="builds">Builds</a></li>
-      <li class="nav-item"><a class="nav-link" href="#settings" data-tab="settings">Settings</a></li>
-    </ul>
-    <button class="btn btn-sm btn-outline-secondary me-3" type="button" id="theme-toggle" title="Switch between dark and light"></button>
-    <span class="navbar-text small" id="connection" title="Live updates from the app">●</span>
+<header class="topbar">
+  <span class="brand">ha-coap<span>::fleet</span></span>
+  <ul class="tabs" id="tabs">
+    <li><a class="active" href="#devices" data-tab="devices"><kbd>1</kbd>devices</a></li>
+    <li><a href="#network" data-tab="network"><kbd>2</kbd>network</a></li>
+    <li><a href="#updates" data-tab="updates"><kbd>3</kbd>updates</a></li>
+    <li><a href="#images" data-tab="images"><kbd>4</kbd>images</a></li>
+    <li><a href="#builds" data-tab="builds"><kbd>5</kbd>builds</a></li>
+    <li><a href="#settings" data-tab="settings"><kbd>6</kbd>settings</a></li>
+  </ul>
+  <div class="dropdown ms-auto">
+    <button class="btn btn-sm btn-outline-secondary dropdown-toggle" type="button" data-bs-toggle="dropdown"
+            id="theme-button" title="Colour theme (T cycles)">theme</button>
+    <ul class="dropdown-menu dropdown-menu-end" id="theme-menu"></ul>
   </div>
-</nav>
+</header>
 
-<main class="container-fluid">
+<footer class="statusbar">
+  <span class="seg-brand">HA-COAP</span>
+  <span><span id="connection" title="Live updates from the app">●</span><span id="connection-text">connecting</span></span>
+  <span id="status-devices">– devices</span>
+  <span id="status-activity">idle</span>
+  <span class="spacer"></span>
+  <span class="d-none d-md-flex"><kbd>1</kbd>–<kbd>6</kbd> tabs <kbd>T</kbd> theme</span>
+  <span id="status-theme"></span>
+  <span id="status-clock"></span>
+</footer>
+
+<main class="container-fluid pt-3">
   <div id="alerts"></div>
 
   <!-- Devices -->
