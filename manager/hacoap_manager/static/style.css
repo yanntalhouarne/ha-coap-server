@@ -307,7 +307,7 @@ fieldset legend::before { content: "// "; color: var(--t-accent-text); }
 /* ---------------------------------------------------------------- network history, heatmap */
 
 .history-slider { width: 12rem; }
-.floorplan-stage .heatmap { pointer-events: none; }
+.floorplan-stage .heatmap, .network-canvas .heatmap { pointer-events: none; }
 
 /* ---------------------------------------------------------------- search (Ctrl+K) */
 

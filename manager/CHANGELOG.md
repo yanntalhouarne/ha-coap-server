@@ -21,7 +21,7 @@ First version: the plan's phases 0, 1, 2, 5 and 6. Tested against a simulated de
 - **Battery check:** over the air, devices under 20 % battery are skipped unless included on purpose.
 - **Plants:** a photo per device, a watering target per plant (30 % by default), and a "needs water" list with a button to run the pump.
 - **Alerts:** a device that stops answering, a low battery, a plant that needs water, a failed update. On the dashboard, in the status bar, and as browser notifications if wanted.
-- **Network history:** every reading is kept, with a slider to look back. The app also reads the network at each automatic refresh. **Signal heatmap** on the floor plan.
+- **Network history:** every reading is kept, with a slider to look back. The app also reads the network at each automatic refresh. **Signal heatmap** on the floor plan and the mesh.
 - **Ctrl+K search** for tabs, devices and actions. **With selected:** actions for all the ticked devices.
 - **Exports:** readings as CSV, and a problem report (no keys, PSKd blanked out).
 - **App update check:** optional, asks GitHub once a day.

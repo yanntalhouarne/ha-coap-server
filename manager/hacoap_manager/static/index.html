@@ -196,18 +196,19 @@
         <input class="form-control form-control-sm w-auto" type="file" id="floorplan-file" accept="image/png,image/jpeg,image/webp">
         <button class="btn btn-sm btn-outline-secondary" id="floorplan-upload" type="button">Use this picture</button>
         <button class="btn btn-sm btn-outline-danger" id="floorplan-remove" type="button">Remove the picture</button>
-        <span class="form-check form-switch mb-0 ms-2">
-          <input class="form-check-input" type="checkbox" id="heatmap-toggle">
-          <label class="form-check-label small" for="heatmap-toggle">signal heatmap</label>
-        </span>
+      </span>
+      <span class="form-check form-switch mb-0 ms-2">
+        <input class="form-check-input" type="checkbox" id="heatmap-toggle">
+        <label class="form-check-label small" for="heatmap-toggle">signal heatmap</label>
       </span>
     </div>
+    <p class="small text-body-secondary mb-2 d-none" id="heatmap-note">Heatmap: the signal estimated from each node's
+      strongest link (green strong, amber fair, red weak), fading out away from the nodes. On the floor plan it maps
+      your home: place more nodes for a better estimate. On the mesh, distance is radio closeness, not space, so it
+      shows the weak parts of the mesh. A guide to dead zones, not a measurement.</p>
     <div class="row g-3">
       <div class="col-xl-9">
         <div class="floorplan border rounded d-none" id="floorplan">
-          <p class="small text-body-secondary px-3 pt-2 mb-0 d-none" id="heatmap-note">Heatmap: the signal estimated
-            from the placed nodes' links (green strong, amber fair, red weak), fading out away from them. Place more
-            nodes for a better estimate. It's a guide to dead zones, not a measurement.</p>
           <p class="text-body-secondary p-3 mb-0" id="floorplan-empty">No floor plan yet. Choose a picture of your
             home (PNG, JPEG or WebP), then drag each node to where it is. The links follow.</p>
         </div>

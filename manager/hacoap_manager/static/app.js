@@ -669,6 +669,7 @@ function renderNetwork() {
   const pad = 60;
   const box = [Math.min(...xs, -100) - pad, Math.min(...ys, -100) - pad,
     Math.max(...xs, 100) - Math.min(...xs, -100) + 2 * pad, Math.max(...ys, 100) - Math.min(...ys, -100) + 2 * pad];
+  layout.box = box;
   const lines = layout.springs.map((s) => {
     const color = s.quality === null ? 'var(--t-text-muted)' : qualityColors[s.quality];
     const line = svg('line', { x1: s.a.x, y1: s.a.y, x2: s.b.x, y2: s.b.y, style: `stroke: ${color}`,
@@ -685,7 +686,8 @@ function renderNetwork() {
     makeDraggable(group, n);
     return group;
   });
-  const drawing = svg('svg', { viewBox: (net.zoom.mesh || box).join(' '), preserveAspectRatio: 'xMidYMid meet' }, ...lines, ...groups);
+  const drawing = svg('svg', { viewBox: (net.zoom.mesh || box).join(' '), preserveAspectRatio: 'xMidYMid meet' },
+    net.heatmap ? meshHeatmap() : null, ...lines, ...groups);
   canvas.append(drawing);
   enableZoom(canvas, drawing, box, 'mesh');
 
@@ -795,6 +797,7 @@ function makeDraggable(group, n) {
   group.addEventListener('pointerup', () => {
     n.dragged = false;
     if (!moved) showNodeDetails(n.node, true);
+    else redrawMeshHeatmap();
   });
 }
 
@@ -1440,6 +1443,7 @@ function setNetworkView(view) {
   document.getElementById('network-canvas').classList.toggle('d-none', view !== 'mesh');
   document.getElementById('floorplan').classList.toggle('d-none', view !== 'floorplan');
   document.getElementById('floorplan-tools').classList.toggle('d-none', view !== 'floorplan');
+  renderHeatmapNote();
   if (view === 'floorplan') renderFloorplan();
 }
 
@@ -1455,7 +1459,7 @@ function renderFloorplan() {
   container.querySelectorAll('.floorplan-stage').forEach((e) => e.remove());
   document.getElementById('floorplan-empty').classList.toggle('d-none', !!plan);
   document.getElementById('floorplan-remove').classList.toggle('d-none', !plan);
-  document.getElementById('heatmap-note').classList.toggle('d-none', !(plan && net.heatmap && net.view === 'floorplan'));
+  renderHeatmapNote();
   if (!plan || net.view !== 'floorplan') return;
   const img = new Image();
   img.src = `/api/network/floorplan?t=${plan.time}`;
@@ -1509,7 +1513,7 @@ function drawFloorplanNodes(stage, img) {
   const drawing = svg('svg', { viewBox: (net.zoom.floorplan || box).join(' '), width: W, height: H,
     preserveAspectRatio: 'xMidYMid meet', class: columns > 1 ? 'tray-compact' : null },
     svg('image', { href: img.src, x: 0, y: 0, width: W, height: H, preserveAspectRatio: 'none', class: 'floorplan-picture' }),
-    net.heatmap ? heatmapLayer(topology, points, W, H) : null,
+    net.heatmap ? heatmapLayer(topology, points, [0, 0, W, H]) : null,
     svg('rect', { x: 0, y: 0, width: trayWidth, height: H, class: 'tray' }),
     svg('text', { x: trayWidth / 2, y: H - 28, 'text-anchor': 'middle', class: 'tray-label' }, 'not'),
     svg('text', { x: trayWidth / 2, y: H - 12, 'text-anchor': 'middle', class: 'tray-label' }, 'placed'),
@@ -2215,12 +2219,13 @@ document.getElementById('history-slider').addEventListener('change', async (even
 });
 document.getElementById('history-latest').addEventListener('click', showLatestNetwork);
 
-// ------------------------------------------------------------------ signal heatmap on the floor plan
+// ------------------------------------------------------------------ signal heatmap
 
-// The signal over the floor plan, estimated from the placed nodes: each one counts with the
-// margin of its strongest link, blended by distance (nearer nodes weigh more), and the colour
-// fades out away from every node. A guide to dead zones, not a measurement.
-function heatmapLayer(topology, points, W, H) {
+// The signal over the floor plan or the mesh, estimated from the placed nodes: each one counts
+// with the margin of its strongest link, blended by distance (nearer nodes weigh more), and the
+// colour fades out within 'reach' of every node. A guide to dead zones, not a measurement.
+// area is [x, y, width, height] in map units.
+function heatmapLayer(topology, points, [x0, y0, W, H], reach = Math.max(W, H) * 0.3) {
   const samples = [];
   for (const node of topology.nodes) {
     const p = points.get(node.id);
@@ -2239,10 +2244,9 @@ function heatmapLayer(topology, points, W, H) {
   canvas.height = rows;
   const context = canvas.getContext('2d');
   const pixels = context.createImageData(cols, rows);
-  const reach = Math.max(W, H) * 0.3;
   for (let row = 0; row < rows; row++) {
     for (let col = 0; col < cols; col++) {
-      const x = (col + 0.5) * cell, y = (row + 0.5) * cell;
+      const x = x0 + (col + 0.5) * cell, y = y0 + (row + 0.5) * cell;
       let sum = 0, weights = 0, nearest = Infinity;
       for (const s of samples) {
         const d2 = (s.x - x) ** 2 + (s.y - y) ** 2;
@@ -2256,7 +2260,36 @@ function heatmapLayer(topology, points, W, H) {
     }
   }
   context.putImageData(pixels, 0, 0);
-  return svg('image', { href: canvas.toDataURL(), x: 0, y: 0, width: W, height: H, preserveAspectRatio: 'none', class: 'heatmap' });
+  return svg('image', { href: canvas.toDataURL(), x: x0, y: y0, width: cols * cell, height: rows * cell, preserveAspectRatio: 'none', class: 'heatmap' });
+}
+
+// On the mesh, distance is radio closeness rather than space: the heatmap shows which parts of
+// the mesh are weak. It reaches about one link length around each node.
+const MESH_HEAT_REACH = 160;
+
+function meshHeatmap() {
+  const { nodes, box } = net.layout;
+  const points = new Map(nodes.map((n) => [n.node.id, { x: n.x, y: n.y, placed: true }]));
+  const xs = nodes.map((n) => n.x), ys = nodes.map((n) => n.y);
+  const r = MESH_HEAT_REACH;
+  const area = [Math.min(...xs, box[0]) - r, Math.min(...ys, box[1]) - r,
+    Math.max(...xs, box[0] + box[2]) - Math.min(...xs, box[0]) + 2 * r, Math.max(...ys, box[1] + box[3]) - Math.min(...ys, box[1]) + 2 * r];
+  return heatmapLayer(shownTopology(), points, area, r);
+}
+
+// After a node is dragged on the mesh, the heatmap follows.
+function redrawMeshHeatmap() {
+  const drawing = document.querySelector('#network-canvas svg');
+  const old = drawing && drawing.querySelector('.heatmap');
+  if (!drawing || !net.heatmap) return;
+  const layer = meshHeatmap();
+  if (old) old.remove();
+  if (layer) drawing.prepend(layer);
+}
+
+function renderHeatmapNote() {
+  const shown = net.heatmap && (net.view === 'mesh' ? !!shownTopology() : !!(net.state && net.state.floorplan));
+  document.getElementById('heatmap-note').classList.toggle('d-none', !shown);
 }
 
 // Red (5 dB and under) to amber (15 dB) to green (25 dB and over), as for the links' colours.
@@ -2272,7 +2305,9 @@ document.getElementById('heatmap-toggle').checked = net.heatmap;
 document.getElementById('heatmap-toggle').addEventListener('change', (event) => {
   net.heatmap = event.target.checked;
   try { localStorage.setItem('hacoap-heatmap', net.heatmap ? '1' : '0'); } catch (error) { /* not remembered */ }
+  renderNetwork();
   renderFloorplan();
+  renderHeatmapNote();
 });
 
 // ------------------------------------------------------------------ search (Ctrl+K)
