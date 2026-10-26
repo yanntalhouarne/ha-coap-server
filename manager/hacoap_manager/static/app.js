@@ -1,7 +1,10 @@
 // HA-CoAP Fleet Manager: the page. Plain JavaScript, no build step.
 // Text from devices and from the user is only ever inserted as text (textContent), never as HTML.
 
-const state = { devices: new Map(), selected: new Set(), images: [], jobs: new Map(), status: null };
+const state = {
+  devices: new Map(), selected: new Set(), images: [], jobs: new Map(), status: null,
+  release: null, filter: { text: '', tag: null }, pendingImage: null, setup: null, console: null,
+};
 
 // ------------------------------------------------------------------ helpers
 
@@ -73,24 +76,41 @@ const shortHash = (hash) => hash ? hash.slice(0, 8) : '';
 
 // ------------------------------------------------------------------ tabs
 
-function showTab(name) {
-  for (const link of document.querySelectorAll('#tabs a')) link.classList.toggle('active', link.dataset.tab === name);
-  for (const section of document.querySelectorAll('.tab')) section.classList.toggle('d-none', section.id !== `tab-${name}`);
-  if (name === 'updates') { renderUpdateForm(); loadHistory(); }
+const TABS = ['dashboard', 'devices', 'network', 'updates', 'images', 'builds', 'console', 'settings'];
+
+// A route is a tab name, or "device/<id>" for one device's page.
+function showTab(route) {
+  const [name, ...rest] = route.split('/');
+  const known = name === 'device' || TABS.includes(name);
+  const tab = known ? name : 'dashboard';
+  for (const link of document.querySelectorAll('#tabs a')) {
+    link.classList.toggle('active', link.dataset.tab === (tab === 'device' ? 'devices' : tab));
+  }
+  for (const section of document.querySelectorAll('.tab')) section.classList.toggle('d-none', section.id !== `tab-${tab}`);
+  if (tab === 'dashboard') loadDashboard().catch(() => {});
+  if (tab === 'device') loadDevicePage(decodeURIComponent(rest.join('/'))).catch(() => {});
+  if (tab === 'console') loadConsole().catch(() => {});
+  if (tab === 'updates') { renderUpdateForm(); loadHistory(); }
   if (name === 'images') { loadImages(); loadBuilds(); }
   if (name === 'builds') loadBuildsTab();
-  if (name === 'network') loadNetwork();
+  if (tab === 'network') {
+    loadNetwork().then(() => setNetworkView(rest[0] === 'floorplan' ? 'floorplan' : net.view || 'mesh'), () => {});
+  }
   if (name === 'settings') { loadSettings(); loadBackups(); }
 }
 
 for (const link of document.querySelectorAll('#tabs a')) {
   link.addEventListener('click', (event) => { event.preventDefault(); history.replaceState(null, '', `#${link.dataset.tab}`); showTab(link.dataset.tab); });
 }
+window.addEventListener('hashchange', () => showTab(location.hash.slice(1) || 'dashboard'));
+const currentRoute = () => location.hash.slice(1) || 'dashboard';
 
 // ------------------------------------------------------------------ devices
 
 async function loadDevices() {
-  const devices = await api('GET', '/api/devices');
+  const [devices, images] = await Promise.all([api('GET', '/api/devices'), api('GET', '/api/images')]);
+  state.images = images;
+  state.release = images.find((i) => i.release) || null;
   state.devices = new Map(devices.map((d) => [d.device_id, d]));
   for (const id of [...state.selected]) if (!state.devices.has(id)) state.selected.delete(id);
   renderDevices();
@@ -98,15 +118,44 @@ async function loadDevices() {
 
 function deviceName(device) { return device.name || device.device_id; }
 
+const deviceTags = (device) => (device.tags || '').split(',').filter(Boolean);
+
+function visibleDevices() {
+  const text = state.filter.text.toLowerCase();
+  return [...state.devices.values()].filter((d) => {
+    if (state.filter.tag && !deviceTags(d).includes(state.filter.tag)) return false;
+    if (!text) return true;
+    return [d.name, d.device_id, d.address, d.plant, d.location, d.notes, d.tags].some((v) => (v || '').toLowerCase().includes(text));
+  });
+}
+
+function imageStatus(device) {
+  if (!state.release) return null;
+  if (!device.image_hash) return 'unknown';
+  return device.image_hash === state.release.hash ? 'current' : 'outdated';
+}
+const imageStatusClass = { current: 'success', outdated: 'warning', unknown: 'secondary' };
+
+function renderTagFilter() {
+  const tags = [...new Set([...state.devices.values()].flatMap(deviceTags))].sort();
+  const chip = (label, tag) => h('button', { type: 'button',
+    class: `btn btn-sm ${state.filter.tag === tag ? 'btn-primary' : 'btn-outline-secondary'}`,
+    onclick: () => { state.filter.tag = tag; renderDevices(); } }, label);
+  document.getElementById('tag-filter').replaceChildren(chip('all', null), ...tags.map((t) => chip(t, t)),
+    tags.length ? null : h('span', { class: 'small text-body-secondary' }, 'none yet (add some on a device\'s page)'));
+}
+
 function renderDevices() {
   const body = document.querySelector('#devices-table tbody');
-  body.replaceChildren(...[...state.devices.values()].map(deviceRow));
+  const visible = visibleDevices();
+  body.replaceChildren(...visible.map(deviceRow));
   document.getElementById('devices-empty').classList.toggle('d-none', state.devices.size > 0);
   document.querySelector('.empty-logo').classList.toggle('d-none', state.devices.size > 0);
   const count = state.selected.size;
   document.getElementById('selection-count').textContent = count ? `${count} selected` : '';
   document.getElementById('update-selected').disabled = count === 0;
-  document.getElementById('select-all').checked = count > 0 && count === state.devices.size;
+  document.getElementById('select-all').checked = visible.length > 0 && visible.every((d) => state.selected.has(d.device_id));
+  renderTagFilter();
   renderStatusDevices();
 }
 
@@ -127,15 +176,21 @@ async function showDeviceHistory(device) {
 
 function deviceRow(device) {
   const id = device.device_id;
+  const status = imageStatus(device);
   const firmware = h('td', {},
     h('span', { class: 'mono', title: 'Git commit of the firmware' }, device.fw_version || '–'),
+    status ? h('span', { class: `badge text-bg-${imageStatusClass[status]} ms-2`,
+      title: 'Compared with the release image (Images tab)' }, status) : null,
     device.image_version ? h('div', { class: 'small text-body-secondary', title: `Image ${device.image_hash}` },
       `v${device.image_version} · ${shortHash(device.image_hash)}`) : null);
   const action = (label, handler) => h('li', {}, h('a', { class: 'dropdown-item', href: '#', onclick: (e) => { e.preventDefault(); handler(device); } }, label));
   return h('tr', { 'data-id': id },
     h('td', {}, h('input', { class: 'form-check-input', type: 'checkbox', checked: state.selected.has(id),
       onchange: (e) => { e.target.checked ? state.selected.add(id) : state.selected.delete(id); renderDevices(); } })),
-    h('td', {}, deviceName(device), device.notes ? h('div', { class: 'small text-body-secondary' }, device.notes) : null),
+    h('td', {}, h('a', { href: `#device/${encodeURIComponent(id)}`, class: 'device-link' }, deviceName(device)),
+      (device.plant || device.location) ? h('div', { class: 'small text-body-secondary' },
+        [device.plant, device.location].filter(Boolean).join(' · ')) : null,
+      deviceTags(device).length ? h('div', {}, deviceTags(device).map((t) => h('span', { class: 'tag' }, t))) : null),
     h('td', { class: 'mono' }, id),
     h('td', { class: 'mono small' }, device.address || '–'),
     firmware,
@@ -149,6 +204,7 @@ function deviceRow(device) {
     h('td', {}, h('div', { class: 'dropdown' },
       h('button', { class: 'btn btn-sm btn-outline-secondary dropdown-toggle', 'data-bs-toggle': 'dropdown' }, 'Actions'),
       h('ul', { class: 'dropdown-menu dropdown-menu-end' },
+        action('Open', (d) => { location.hash = `#device/${encodeURIComponent(d.device_id)}`; }),
         action('Refresh', refreshDevice),
         action('Firmware slots', showSlots),
         action('Update history', showDeviceHistory),
@@ -209,9 +265,24 @@ async function showSlots(device) {
 }
 
 document.getElementById('select-all').addEventListener('change', (event) => {
-  state.selected = event.target.checked ? new Set(state.devices.keys()) : new Set();
+  for (const device of visibleDevices()) {
+    if (event.target.checked) state.selected.add(device.device_id); else state.selected.delete(device.device_id);
+  }
   renderDevices();
 });
+
+document.getElementById('device-search').addEventListener('input', (event) => {
+  state.filter.text = event.target.value.trim();
+  renderDevices();
+});
+
+document.getElementById('read-all-slots').addEventListener('click', (event) => busy(event.target, async () => {
+  const result = await api('POST', '/api/slots/read-all');
+  const failed = Object.entries(result).filter(([, error]) => error);
+  notify(failed.length ? `${failed.length} device(s) didn't answer: ${failed.map(([id]) => id).join(', ')}`
+    : `Read ${Object.keys(result).length} device(s)`, failed.length ? 'warning' : 'success');
+  await loadDevices();
+}));
 
 document.getElementById('discover').addEventListener('click', (event) => busy(event.target, async () => {
   const result = await api('POST', '/api/discover');
@@ -250,9 +321,9 @@ async function renderUpdateForm() {
   const select = document.getElementById('update-image');
   const previous = select.value;
   select.replaceChildren(...(state.images.length ? state.images.map((image) =>
-    h('option', { value: image.hash }, `v${image.version} · ${shortHash(image.hash)} · ${image.notes || image.filename}`))
+    h('option', { value: image.hash }, `${image.release ? '★ ' : ''}v${image.version} · ${shortHash(image.hash)} · ${image.notes || image.filename}`))
     : [h('option', { value: '' }, 'No images in the library')]));
-  if (previous) select.value = previous;
+  if (state.pendingImage) { select.value = state.pendingImage; state.pendingImage = null; } else if (previous) select.value = previous;
   const names = [...state.selected].map((id) => deviceName(state.devices.get(id) || { device_id: id }));
   document.getElementById('update-selection').textContent = names.length ? names.join(', ') : 'no devices selected';
   if (!document.getElementById('serial-port').options.length) loadPorts();
@@ -284,6 +355,7 @@ document.getElementById('update-form').addEventListener('submit', (event) => {
   busy(event.submitter, async () => {
     const job = await api('POST', '/api/updates', {
       image_hash: imageHash, targets, stop_on_failure: document.getElementById('stop-on-failure').checked,
+      staged: document.getElementById('staged').checked,
     });
     state.jobs.set(job.id, job);
     renderJobs();
@@ -292,8 +364,57 @@ document.getElementById('update-form').addEventListener('submit', (event) => {
 
 const statusClass = {
   queued: 'secondary', running: 'primary', updated: 'success', 'already-current': 'success',
-  failed: 'danger', skipped: 'warning', cancelled: 'warning', done: 'success',
+  failed: 'danger', skipped: 'warning', cancelled: 'warning', done: 'success', paused: 'warning',
 };
+
+// Opens the Updates tab with an image and devices chosen.
+function prepareUpdate(imageHash, deviceIds, staged) {
+  state.selected = new Set(deviceIds);
+  state.pendingImage = imageHash;
+  document.getElementById('transport-udp').checked = true;
+  document.getElementById('staged').checked = !!staged;
+  location.hash = '#updates';
+}
+
+document.getElementById('whats-new').addEventListener('click', async () => {
+  const imageHash = document.getElementById('update-image').value;
+  const image = state.images.find((i) => i.hash === imageHash);
+  const devices = [...state.selected].map((id) => state.devices.get(id)).filter(Boolean);
+  const body = document.getElementById('slots-body');
+  document.getElementById('slots-title').textContent = "What's new";
+  bootstrap.Modal.getOrCreateInstance(document.getElementById('slots-modal')).show();
+  if (!image || !devices.length) {
+    body.replaceChildren(h('p', {}, 'Choose an image, and devices on the Devices tab.'));
+    return;
+  }
+  if (!image.git_commit) {
+    body.replaceChildren(h('p', {}, 'This image has no git commit recorded (it was added as a file), so the changes are unknown.'));
+    return;
+  }
+  const byCommit = new Map();
+  for (const device of devices) {
+    const key = device.fw_version || '?';
+    if (!byCommit.has(key)) byCommit.set(key, []);
+    byCommit.get(key).push(device);
+  }
+  body.replaceChildren(h('p', {}, 'Loading…'));
+  const sections = [];
+  for (const [commit, group] of byCommit) {
+    const title = `${group.map(deviceName).join(', ')}: ${commit} → ${image.git_commit}`;
+    try {
+      const result = await api('GET', `/api/images/${image.hash}/changes?device_id=${encodeURIComponent(group[0].device_id)}`, undefined, { quiet: true });
+      const list = (entries, sign) => entries.map((c) => h('li', {}, h('span', { class: 'mono text-body-secondary' }, `${sign} ${c.commit} `),
+        h('span', { class: 'small text-body-secondary' }, `${c.date} `), c.subject));
+      sections.push(h('h6', {}, title), result.added.length || result.removed.length
+        ? h('ul', { class: 'list-unstyled small' }, list(result.added, '+'), list(result.removed, '−'))
+        : h('p', { class: 'small' }, 'Same firmware: nothing changes.'),
+      result.removed.length ? h('p', { class: 'small text-warning' }, 'Lines with − are removed: this goes back to an older firmware.') : null);
+    } catch (error) {
+      sections.push(h('h6', {}, title), h('p', { class: 'small text-body-secondary' }, error.message));
+    }
+  }
+  body.replaceChildren(...sections);
+});
 
 function renderJobs() {
   const container = document.getElementById('jobs');
@@ -304,7 +425,10 @@ function renderJobs() {
       h('span', {}, `Image v${job.image_version} · ${shortHash(job.image_hash)}`),
       h('span', { class: `badge text-bg-${statusClass[job.state] || 'secondary'}` }, job.state),
       h('span', { class: 'small text-body-secondary' }, when(job.created)),
-      job.state === 'running' ? h('button', { class: 'btn btn-sm btn-outline-danger ms-auto',
+      job.state === 'paused' ? h('span', { class: 'ms-auto small text-warning' }, 'Check the first device, then:') : null,
+      job.state === 'paused' ? h('button', { class: 'btn btn-sm btn-success',
+        onclick: () => api('POST', `/api/updates/${job.id}/continue`).catch(() => {}) }, 'Continue with the rest') : null,
+      ['running', 'paused'].includes(job.state) ? h('button', { class: `btn btn-sm btn-outline-danger${job.state === 'running' ? ' ms-auto' : ''}`,
         onclick: () => api('POST', `/api/updates/${job.id}/cancel`).catch(() => {}) }, 'Cancel the rest') : null),
     h('table', { class: 'table table-sm mb-0' }, h('tbody', {}, job.targets.map((t) => h('tr', {},
       h('td', {}, t.label), h('td', {}, t.transport === 'serial' ? 'USB' : 'air'),
@@ -337,10 +461,15 @@ async function loadHistory() {
 async function loadImages() {
   state.images = await api('GET', '/api/images');
   document.querySelector('#images-table tbody').replaceChildren(...state.images.map((image) => h('tr', {},
-    h('td', {}, `v${image.version}`), h('td', { class: 'mono small', title: image.hash }, shortHash(image.hash)),
+    h('td', {}, `v${image.version}`, image.release ? h('span', { class: 'badge text-bg-primary ms-2' }, '★ release') : null),
+    h('td', { class: 'mono small', title: image.hash }, shortHash(image.hash)),
+    h('td', { class: 'mono small' }, image.git_commit || '–'),
     h('td', {}, `${Math.round(image.size / 1024)} KB`), h('td', { class: 'small' }, when(image.added)),
     h('td', { class: 'small' }, image.notes || image.filename),
-    h('td', {}, h('button', { class: 'btn btn-sm btn-outline-danger', onclick: async () => {
+    h('td', { class: 'text-nowrap' }, h('button', { class: 'btn btn-sm btn-outline-primary me-1', onclick: async () => {
+      await api('POST', '/api/release', { image_hash: image.release ? null : image.hash }).catch(() => {});
+      loadImages();
+    } }, image.release ? 'Unset release' : 'Make release'), h('button', { class: 'btn btn-sm btn-outline-danger', onclick: async () => {
       if (!confirm('Delete this image from the library?')) return;
       await api('DELETE', `/api/images/${image.hash}`).catch(() => {});
       loadImages();
@@ -622,6 +751,8 @@ async function loadNetwork() {
   document.getElementById('border-router-url').value = net.state.border_router_url || '';
   renderNetwork();
   renderNetworkLegend();
+  renderFloorplan();
+  renderChannelScan(net.state.channel_scan);
   document.getElementById('network-events').replaceChildren(...(net.state.events.length
     ? net.state.events.map((e) => h('li', { class: 'mb-1' }, h('span', { class: 'text-body-secondary' }, `${when(e.time)} `), e.message))
     : [h('li', { class: 'text-body-secondary' }, 'No changes seen yet. Boards changing parent show here.')]));
@@ -663,6 +794,7 @@ async function loadBuildsTab() {
   showProfile(select.value);
   renderChecks(checks);
   renderBuildHistory(history);
+  loadSetupState().catch(() => {});
   const running = history.find((b) => b.result === 'running');
   if (running) showBuildLog(running.id);
 }
@@ -775,10 +907,25 @@ document.getElementById('profile-delete').addEventListener('click', async () => 
   loadBuildsTab();
 });
 
+const fixLabels = { install: 'Install the build tools', keygen: 'Create my signing key', pskd: 'Set my PSKd…' };
+
 function renderChecks(checks) {
-  document.getElementById('build-checks').replaceChildren(...checks.map((c) => h('li', { class: 'mb-1' },
-    h('span', { class: c.ok ? 'text-success' : (c.required ? 'text-danger' : 'text-warning') }, c.ok ? '✓ ' : (c.required ? '✗ ' : '! ')),
-    h('b', {}, c.name), ': ', c.detail)));
+  const toolchain = checks.find((c) => c.name === 'nRF Connect toolchain');
+  const shown = new Set();
+  document.getElementById('build-checks').replaceChildren(...checks.map((c) => {
+    let fix = null;
+    if (!c.ok && c.fix && !shown.has(c.fix)) {
+      shown.add(c.fix);
+      const blocked = c.fix === 'keygen' && toolchain && !toolchain.ok;
+      fix = h('div', { class: 'mt-1 mb-2' }, h('button', { class: 'btn btn-sm btn-primary', disabled: blocked || (state.setup && state.setup.state === 'running'),
+        title: blocked ? 'Install the build tools first: the key is made with them' : null,
+        onclick: (e) => runFix(c.fix, e.target) }, fixLabels[c.fix]),
+      blocked ? h('span', { class: 'small text-body-secondary ms-2' }, 'after the build tools') : null);
+    }
+    return h('li', { class: 'mb-1' },
+      h('span', { class: c.ok ? 'text-success' : (c.required ? 'text-danger' : 'text-warning') }, c.ok ? '✓ ' : (c.required ? '✗ ' : '! ')),
+      h('b', {}, c.name), ': ', c.detail, fix);
+  }));
 }
 
 const buildBadge = { running: 'primary', done: 'success', failed: 'danger', cancelled: 'warning' };
@@ -849,6 +996,509 @@ function onBuild(event) {
     api('GET', '/api/firmware-builds').then(renderBuildHistory, () => {});
   }
 }
+
+// ------------------------------------------------------------------ dashboard
+
+const daysText = (forecast) => {
+  if (!forecast) return 'no trend yet';
+  const days = forecast.days_left;
+  return days >= 60 ? `≈ ${Math.round(days / 30)} months left` : `≈ ${Math.round(days)} days left`;
+};
+
+function linkText(link) {
+  if (link.link_margin !== null && link.link_margin !== undefined) {
+    return `${link.link_margin} dB margin${link.average_rssi !== null && link.average_rssi !== undefined ? `, ${link.average_rssi} dBm` : ''}`;
+  }
+  return link.link_quality !== null && link.link_quality !== undefined ? `link quality ${link.link_quality} of 3` : 'no signal information';
+}
+
+const deviceLink = (entry) => h('a', { href: `#device/${encodeURIComponent(entry.device_id)}` }, entry.name || entry.device_id);
+
+function tile(label, value, kind, hint) {
+  return h('div', { class: `tile tile-${kind}`, title: hint || null },
+    h('div', { class: 'tile-value' }, value), h('div', { class: 'tile-label' }, label));
+}
+
+async function loadDashboard() {
+  const d = await api('GET', '/api/dashboard');
+  const c = d.counts;
+  document.getElementById('dash-tiles').replaceChildren(
+    tile('online', `${c.online}/${c.devices}`, c.devices && c.online < c.devices ? 'warn' : 'ok'),
+    tile('behind the release', d.release ? c.outdated : '–', c.outdated ? 'warn' : 'ok',
+      d.release ? 'Devices not running the release image' : 'No release image yet: mark one on the Images tab'),
+    tile('firmware unknown', c.unknown, c.unknown ? 'muted' : 'ok', 'Devices whose running image was never read'),
+    tile('low battery', c.low_battery, c.low_battery ? 'bad' : 'ok', 'Under 20 %, or less than a month left at the current rate'),
+    tile('weak links', d.weak_links.length, d.weak_links.length ? 'warn' : 'ok',
+      d.network_read ? `From the network read ${ago(d.network_read)}` : 'Read the network on the Network tab'));
+
+  // Firmware: the release, and what runs where
+  const maxCount = Math.max(1, ...d.firmware.map((g) => g.count));
+  const firmware = [];
+  if (d.release) {
+    firmware.push(h('p', {}, 'Release: ', h('b', {}, `v${d.release.version}`), ` · ${shortHash(d.release.hash)} · ${d.release.notes || d.release.filename}`));
+  } else {
+    firmware.push(h('p', { class: 'text-body-secondary' }, 'No release image: on the Images tab, mark the image your fleet should run as the release.'));
+  }
+  const actions = h('div', { class: 'd-flex flex-wrap gap-2 mb-3' });
+  if (d.release && d.outdated.length) {
+    actions.append(h('button', { class: 'btn btn-sm btn-success', onclick: () => prepareUpdate(d.release.hash, d.outdated.map((e) => e.device_id), d.outdated.length > 1) },
+      `Update the ${d.outdated.length} behind…`));
+  }
+  if (d.unknown.length) {
+    actions.append(h('button', { class: 'btn btn-sm btn-outline-secondary', onclick: (e) => busy(e.target, async () => {
+      await api('POST', '/api/slots/read-all');
+      await loadDashboard();
+    }) }, `Read the firmware of ${d.unknown.length} device(s)`));
+  }
+  if (actions.children.length) firmware.push(actions);
+  firmware.push(...d.firmware.map((g) => h('div', { class: 'bar-row' },
+    h('div', { class: 'bar-label' }, g.image_hash ? `v${g.version} · ${shortHash(g.image_hash)}` : 'not read yet',
+      g.release ? h('span', { class: 'badge text-bg-primary ms-2' }, '★ release') : null,
+      g.notes ? h('span', { class: 'small text-body-secondary ms-2' }, g.notes) : null),
+    h('div', { class: 'bar' }, h('div', { class: `bar-fill${g.release ? ' release' : ''}`, style: `width: ${(g.count / maxCount) * 100}%` })),
+    h('div', { class: 'bar-count' }, g.count))));
+  if (!d.firmware.length) firmware.push(h('p', { class: 'text-body-secondary mb-0' }, 'No devices yet.'));
+  document.getElementById('dash-firmware').replaceChildren(...firmware);
+
+  const table = (rows, empty) => rows.length ? h('table', { class: 'table table-sm mb-0' }, h('tbody', {}, rows)) :
+    h('p', { class: 'text-body-secondary mb-0' }, empty);
+  document.getElementById('dash-batteries').replaceChildren(table(d.low_battery.map((e) => h('tr', {},
+    h('td', {}, deviceLink(e)), h('td', { class: 'text-end' }, pct(e.battery)), h('td', { class: 'small' }, daysText(e.battery_forecast)))),
+  'No battery is low. Forecasts appear once a device has a few readings over several hours.'));
+  document.getElementById('dash-offline').replaceChildren(table(d.offline.map((e) => h('tr', {},
+    h('td', {}, deviceLink(e)), h('td', { class: 'small' }, `last seen ${ago(e.last_seen)}`))), 'Every device answered recently.'));
+  document.getElementById('dash-links').replaceChildren(table(d.weak_links.map((l) => h('tr', {},
+    h('td', {}, l.device_id ? deviceLink({ device_id: l.device_id, name: l.from }) : l.from, ' ↔ ', l.to),
+    h('td', { class: 'small' }, linkText(l)))),
+  d.network_read ? 'No weak links in the last network read.' : 'Read the network (Network tab) to see the links.'));
+  document.getElementById('dash-updates').replaceChildren(table(d.recent_updates.map((u) => {
+    const device = state.devices.get(u.device_id);
+    return h('tr', {}, h('td', { class: 'small' }, ago(u.finished)), h('td', {}, device ? deviceName(device) : u.device_id),
+      h('td', {}, `v${u.image_version}`), h('td', {}, h('span', { class: `badge text-bg-${statusClass[u.result] || 'secondary'}` }, u.result)));
+  }), 'No updates yet.'));
+}
+
+// ------------------------------------------------------------------ charts
+
+// A small line chart in SVG: points [{t, v}], drawn in the theme's colours.
+function lineChart(title, points, { unit = '', min = null, max = null, color = 'var(--t-brand)', step = false } = {}) {
+  const data = points.filter((p) => p.v !== null && p.v !== undefined);
+  const head = h('div', { class: 'chart-head' }, h('span', {}, title),
+    data.length ? h('b', {}, `${data[data.length - 1].v}${unit}`) : null);
+  if (data.length < 2) {
+    return h('div', { class: 'chart' }, head, h('div', { class: 'chart-empty' },
+      'Not enough readings yet. One is stored at each refresh (every 15 minutes while the app runs).'));
+  }
+  const W = 600, H = 110, padX = 34, padY = 10;
+  const t0 = data[0].t, t1 = data[data.length - 1].t;
+  const lo = min ?? Math.min(...data.map((p) => p.v)), hi = max ?? Math.max(...data.map((p) => p.v));
+  const span = hi - lo || 1;
+  const x = (t) => padX + ((t - t0) / ((t1 - t0) || 1)) * (W - padX - 4);
+  const y = (v) => H - padY - ((v - lo) / span) * (H - 2 * padY);
+  let path = '';
+  data.forEach((p, i) => {
+    if (i === 0) path += `M${x(p.t)},${y(p.v)}`;
+    else if (step) path += `H${x(p.t)}V${y(p.v)}`;
+    else path += `L${x(p.t)},${y(p.v)}`;
+  });
+  const area = `${path}L${x(t1)},${H - padY}L${x(t0)},${H - padY}Z`;
+  const date = (t) => new Date(t * 1000).toLocaleDateString([], { month: 'short', day: 'numeric' });
+  // The drawing stretches to its box; the labels stay as text beside it, so they don't stretch.
+  return h('div', { class: 'chart' }, head,
+    h('div', { class: 'chart-body' },
+      h('div', { class: 'chart-y' }, h('span', {}, `${hi}${unit}`), h('span', {}, `${lo}${unit}`)),
+      svg('svg', { viewBox: `${padX} 0 ${W - padX} ${H}`, preserveAspectRatio: 'none' },
+        svg('line', { x1: padX, y1: y(hi), x2: W, y2: y(hi), class: 'grid' }),
+        svg('line', { x1: padX, y1: y(lo), x2: W, y2: y(lo), class: 'grid' }),
+        svg('path', { d: area, style: `fill: ${color}; opacity: .12` }),
+        svg('path', { d: path, style: `stroke: ${color}; fill: none`, 'stroke-width': 2, 'vector-effect': 'non-scaling-stroke' }))),
+    h('div', { class: 'chart-x' }, h('span', {}, date(t0)), h('span', {}, date(t1))));
+}
+
+// ------------------------------------------------------------------ one device
+
+const devicePage = { id: null, details: null };
+
+async function loadDevicePage(id) {
+  devicePage.id = id;
+  const days = document.getElementById('device-days').value;
+  let details;
+  try {
+    details = await api('GET', `/api/devices/${encodeURIComponent(id)}/details?days=${days}`, undefined, { quiet: true });
+  } catch (error) {
+    document.getElementById('device-title').textContent = 'Unknown device';
+    return;
+  }
+  devicePage.details = details;
+  renderDeviceStatus(details.device);
+  renderDeviceFirmware(details);
+  renderDeviceControls(details.device);
+  renderDeviceForm(details.device);
+  renderDeviceCharts(details);
+  const updates = details.updates;
+  document.getElementById('device-updates').replaceChildren(updates.length ? h('table', { class: 'table table-sm mb-0' },
+    h('tbody', {}, updates.map((r) => h('tr', {}, h('td', { class: 'small' }, when(r.finished)),
+      h('td', {}, r.transport === 'serial' ? 'USB' : 'air'), h('td', {}, `v${r.image_version} · ${shortHash(r.image_hash)}`),
+      h('td', {}, h('span', { class: `badge text-bg-${statusClass[r.result] || 'secondary'}` }, r.result)),
+      h('td', { class: 'small' }, r.message)))))
+    : h('p', { class: 'text-body-secondary mb-0' }, 'No updates yet.'));
+  const events = details.network_events;
+  document.getElementById('device-events').replaceChildren(events.length ? h('ul', { class: 'list-unstyled small mb-0' },
+    events.map((e) => h('li', {}, h('span', { class: 'text-body-secondary' }, `${when(e.time)} `), e.message)))
+    : h('p', { class: 'text-body-secondary mb-0' }, 'No parent changes seen. Read the network now and then (Network tab) to follow them.'));
+}
+
+function renderDeviceStatus(device) {
+  if (device.device_id !== devicePage.id) return;
+  const forecast = devicePage.details && devicePage.details.health.battery_forecast;
+  document.getElementById('device-title').textContent = deviceName(device);
+  document.getElementById('device-badges').replaceChildren(
+    h('span', { class: `online-dot ${device.online ? 'on' : 'off'}` }), device.online ? 'online' : 'offline',
+    ...deviceTags(device).map((t) => h('span', { class: 'tag ms-2' }, t)));
+  document.getElementById('device-status').replaceChildren(detailsTable([
+    ['Last seen', ago(device.last_seen)],
+    ['Battery', device.battery !== null && device.battery !== undefined ? `${device.battery} % · ${daysText(forecast)}` : ''],
+    ['Soil moisture', pct(device.soil_moisture)],
+    ['Air humidity', pct(device.air_humidity)],
+    ['Temperature', device.temperature !== null && device.temperature !== undefined ? `${device.temperature} °C` : ''],
+    ['Device ID', device.device_id],
+    ['Address', device.address],
+    ['Problem', device.last_error],
+  ]), h('button', { class: 'btn btn-sm btn-outline-secondary mt-2', onclick: (e) => busy(e.target, async () => {
+    await refreshDevice(device);
+    await loadDevicePage(device.device_id);
+  }) }, 'Refresh'));
+}
+
+function renderDeviceFirmware(details) {
+  const device = details.device;
+  const status = details.health.image_status;
+  const rows = detailsTable([
+    ['Firmware', device.fw_version ? `commit ${device.fw_version}` : ''],
+    ['Image', device.image_version ? `v${device.image_version} · ${shortHash(device.image_hash)}` : 'not read yet'],
+    ['Hardware', device.hw_version],
+    ['Compared with the release', { current: 'running it', outdated: 'behind it', unknown: 'not known yet', 'no-release': 'no release image chosen' }[status]],
+  ]);
+  const buttons = h('div', { class: 'd-flex flex-wrap gap-2 mt-2' },
+    h('button', { class: 'btn btn-sm btn-outline-secondary', onclick: () => showSlots(device) }, 'Firmware slots'),
+    status === 'outdated' && state.release ? h('button', { class: 'btn btn-sm btn-success',
+      onclick: () => prepareUpdate(state.release.hash, [device.device_id], false) }, 'Update to the release…') : null);
+  document.getElementById('device-firmware').replaceChildren(rows, buttons);
+}
+
+function renderDeviceControls(device) {
+  const id = encodeURIComponent(device.device_id);
+  const result = h('div', { class: 'small text-body-secondary mt-2' });
+  const show = (state) => { result.textContent = `Pump ${state.running ? 'running' : 'off'} · run time ${state.duration} s`; };
+  const seconds = h('select', { class: 'form-select form-select-sm w-auto' },
+    [1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) => h('option', { value: n }, `${n} s`)));
+  const call = (body) => (e) => busy(e.target, async () => show(await api('POST', `/api/devices/${id}/pump`, body)));
+  document.getElementById('device-controls').replaceChildren(
+    h('div', { class: 'd-flex flex-wrap gap-2 align-items-center' },
+      h('button', { class: 'btn btn-sm btn-primary', onclick: call({ on: true }) }, 'Run the pump'),
+      h('button', { class: 'btn btn-sm btn-outline-danger', onclick: call({ on: false }) }, 'Stop'),
+      h('span', { class: 'small text-body-secondary ms-2' }, 'run time'), seconds,
+      h('button', { class: 'btn btn-sm btn-outline-secondary', onclick: (e) => call({ seconds: Number(seconds.value) })(e) }, 'Set'),
+      h('button', { class: 'btn btn-sm btn-outline-secondary ms-auto', onclick: () => pingDevice(device) }, 'Beep')),
+    result,
+    h('div', { class: 'form-text' }, 'Commands reach a sleeping board at its next poll: up to 3 s.'));
+}
+
+function renderDeviceForm(device) {
+  const field = (name, label, value, attrs = {}) => h('div', { class: attrs.wide ? 'col-12' : 'col-sm-6' },
+    h('label', { class: 'form-label', for: `device-${name}` }, label),
+    h(attrs.textarea ? 'textarea' : 'input', { class: 'form-control form-control-sm', id: `device-${name}`, name,
+      value: attrs.textarea ? null : value, placeholder: attrs.placeholder || null, rows: attrs.textarea ? 2 : null },
+    attrs.textarea ? value : null));
+  const form = document.getElementById('device-form');
+  form.replaceChildren(
+    field('name', 'Name', device.name || ''),
+    field('plant', 'Plant', device.plant || '', { placeholder: 'basil' }),
+    field('location', 'Location', device.location || '', { placeholder: 'kitchen window' }),
+    field('tags', 'Groups', device.tags || '', { placeholder: 'greenhouse, test' }),
+    field('notes', 'Notes', device.notes || '', { wide: true, textarea: true }),
+    h('div', { class: 'col-12 d-flex gap-2' }, h('button', { class: 'btn btn-sm btn-primary', type: 'submit' }, 'Save'),
+      h('button', { class: 'btn btn-sm btn-outline-danger ms-auto', type: 'button', onclick: async () => {
+        await removeDevice(device);
+        location.hash = '#devices';
+      } }, 'Remove from the list')));
+  form.onsubmit = (event) => {
+    event.preventDefault();
+    const values = Object.fromEntries(new FormData(form).entries());
+    api('PATCH', `/api/devices/${encodeURIComponent(device.device_id)}`, values)
+      .then(() => { notify('Saved', 'success', 2000); loadDevicePage(device.device_id); }, () => {});
+  };
+}
+
+function renderDeviceCharts(details) {
+  const r = details.readings.map((x) => ({ t: x.time, ...x }));
+  const pick = (key) => r.map((x) => ({ t: x.t, v: x[key] }));
+  const links = details.links;
+  const margins = links.filter((l) => l.link_margin !== null && l.link_margin !== undefined);
+  const charts = [
+    lineChart('Battery', pick('battery'), { unit: ' %', min: 0, max: 100, color: 'var(--t-green)' }),
+    lineChart('Soil moisture', pick('soil_moisture'), { unit: ' %', min: 0, max: 100, color: 'var(--t-cyan)' }),
+    lineChart('Air humidity', pick('air_humidity'), { unit: ' %', min: 0, max: 100, color: 'var(--t-blue)' }),
+    lineChart('Temperature', pick('temperature'), { unit: ' °C', color: 'var(--t-orange)' }),
+    margins.length
+      ? lineChart('Link to its parent', margins.map((l) => ({ t: l.time, v: l.link_margin })), { unit: ' dB', min: 0, color: 'var(--t-magenta)', step: true })
+      : lineChart('Link quality to its parent', links.map((l) => ({ t: l.time, v: l.link_quality })), { min: 0, max: 3, color: 'var(--t-magenta)', step: true }),
+  ];
+  const parents = [...new Set(links.map((l) => l.parent))];
+  document.getElementById('device-charts').replaceChildren(h('div', { class: 'charts' }, charts),
+    parents.length ? h('div', { class: 'small text-body-secondary mt-2' }, `Parents in this period: ${parents.join(', ')}`) : null);
+}
+
+document.getElementById('device-days').addEventListener('change', () => { if (devicePage.id) loadDevicePage(devicePage.id); });
+
+// ------------------------------------------------------------------ network: floor plan and channels
+
+net.view = 'mesh';
+
+function setNetworkView(view) {
+  net.view = view;
+  document.getElementById('view-mesh').classList.toggle('active', view === 'mesh');
+  document.getElementById('view-floorplan').classList.toggle('active', view === 'floorplan');
+  document.getElementById('network-canvas').classList.toggle('d-none', view !== 'mesh');
+  document.getElementById('floorplan').classList.toggle('d-none', view !== 'floorplan');
+  document.getElementById('floorplan-tools').classList.toggle('d-none', view !== 'floorplan');
+  if (view === 'floorplan') renderFloorplan();
+}
+
+document.getElementById('view-mesh').addEventListener('click', () => setNetworkView('mesh'));
+document.getElementById('view-floorplan').addEventListener('click', () => setNetworkView('floorplan'));
+
+const nodeKey = (node) => node.device_id || node.ext_address || node.id;
+
+function renderFloorplan() {
+  const container = document.getElementById('floorplan');
+  const st = net.state;
+  const plan = st && st.floorplan;
+  container.querySelectorAll('.floorplan-stage').forEach((e) => e.remove());
+  document.getElementById('floorplan-empty').classList.toggle('d-none', !!plan);
+  document.getElementById('floorplan-remove').classList.toggle('d-none', !plan);
+  if (!plan || net.view !== 'floorplan') return;
+  const img = h('img', { src: `/api/network/floorplan?t=${plan.time}`, alt: 'Floor plan', draggable: 'false' });
+  const stage = h('div', { class: 'floorplan-stage' }, img);
+  container.append(stage);
+  img.addEventListener('load', () => drawFloorplanNodes(stage, img));
+}
+
+function drawFloorplanNodes(stage, img) {
+  const topology = net.state.topology;
+  stage.querySelector('svg')?.remove();
+  if (!topology) {
+    stage.append(h('div', { class: 'floorplan-hint' }, 'Read the network first: the nodes come from it.'));
+    return;
+  }
+  const W = 1000, H = Math.round(1000 * img.naturalHeight / img.naturalWidth);
+  const positions = net.state.positions || {};
+  const tray = [];
+  const points = new Map();
+  for (const node of topology.nodes) {
+    const p = positions[nodeKey(node)];
+    if (p) points.set(node.id, { x: p.x * W, y: p.y * H, placed: true });
+    else tray.push(node);
+  }
+  tray.forEach((node, i) => points.set(node.id, { x: 30, y: 30 + i * 42, placed: false }));
+  const lines = topology.links.map((link) => {
+    const a = points.get(link.a), b = points.get(link.b);
+    if (!a || !b || !a.placed || !b.placed) return null;
+    const strength = linkStrength(link);
+    const color = strength.quality === null ? 'var(--t-text-muted)' : qualityColors[strength.quality];
+    return svg('line', { x1: a.x, y1: a.y, x2: b.x, y2: b.y, style: `stroke: ${color}`, 'stroke-width': link.kind === 'mesh' ? 4 : 3,
+      'stroke-dasharray': link.kind === 'child' ? '8 6' : null, 'data-a': link.a, 'data-b': link.b }, svg('title', {}, strength.text));
+  });
+  const drawing = svg('svg', { viewBox: `0 0 ${W} ${H}`, preserveAspectRatio: 'none' },
+    svg('rect', { x: 0, y: 0, width: 70, height: H, class: 'tray' }),
+    svg('text', { x: 35, y: H - 28, 'text-anchor': 'middle', class: 'tray-label' }, 'not'),
+    svg('text', { x: 35, y: H - 12, 'text-anchor': 'middle', class: 'tray-label' }, 'placed'),
+    ...lines.filter(Boolean));
+  for (const node of topology.nodes) {
+    const p = points.get(node.id);
+    const style = nodeStyle(node);
+    const r = style.r * 1.1;
+    const shape = node.border_router
+      ? svg('rect', { x: -r, y: -r, width: 2 * r, height: 2 * r, rx: 4, style: `fill: ${style.color}` })
+      : svg('circle', { r, style: `fill: ${style.color}; stroke: ${node.device_id ? 'var(--t-yellow)' : 'none'}`, 'stroke-width': 3 });
+    const group = svg('g', { class: `node${p.placed ? '' : ' unplaced'}`, transform: `translate(${p.x},${p.y})` },
+      shape, svg('text', { x: r + 6, y: 4 }, nodeLabel(node)), svg('title', {}, `${nodeLabel(node)}: drag it to where it is`));
+    group.addEventListener('pointerdown', (event) => {
+      group.setPointerCapture(event.pointerId);
+      group.dataset.drag = '1';
+    });
+    group.addEventListener('pointermove', (event) => {
+      if (!group.dataset.drag) return;
+      const point = drawing.createSVGPoint();
+      point.x = event.clientX; point.y = event.clientY;
+      const q = point.matrixTransform(drawing.getScreenCTM().inverse());
+      p.x = Math.max(0, Math.min(W, q.x)); p.y = Math.max(0, Math.min(H, q.y));
+      group.setAttribute('transform', `translate(${p.x},${p.y})`);
+    });
+    group.addEventListener('pointerup', async () => {
+      if (!group.dataset.drag) return;
+      delete group.dataset.drag;
+      const inTray = p.x < 70;
+      const body = inTray ? { x: null, y: null } : { x: p.x / W, y: p.y / H };
+      await api('PUT', `/api/network/positions/${encodeURIComponent(nodeKey(node))}`, body).catch(() => {});
+      net.state.positions = net.state.positions || {};
+      if (inTray) delete net.state.positions[nodeKey(node)]; else net.state.positions[nodeKey(node)] = body;
+      drawFloorplanNodes(stage, img);
+    });
+    drawing.append(group);
+  }
+  stage.append(drawing);
+}
+
+document.getElementById('floorplan-upload').addEventListener('click', (event) => busy(event.target, async () => {
+  const file = document.getElementById('floorplan-file').files[0];
+  if (!file) return notify('Choose a picture first', 'warning');
+  await api('POST', `/api/network/floorplan?name=${encodeURIComponent(file.name)}`, file);
+  document.getElementById('floorplan-file').value = '';
+  await loadNetwork();
+}));
+
+document.getElementById('floorplan-remove').addEventListener('click', async () => {
+  if (!confirm('Remove the floor plan picture? The positions are kept.')) return;
+  await api('DELETE', '/api/network/floorplan').catch(() => {});
+  await loadNetwork();
+});
+
+function renderChannelScan(scan) {
+  const container = document.getElementById('channel-scan-result');
+  if (!scan || !scan.channels || !scan.channels.length) return;
+  const W = 320, H = 120, bar = W / scan.channels.length;
+  const height = (rssi) => Math.max(2, Math.min(H - 18, ((rssi + 100) / 60) * (H - 18)));
+  const color = (rssi) => rssi < -85 ? 'var(--t-green)' : rssi < -70 ? 'var(--t-yellow)' : 'var(--t-red)';
+  const bars = scan.channels.map((c, i) => svg('g', {},
+    svg('rect', { x: i * bar + 2, y: H - 14 - height(c.max_rssi), width: bar - 4, height: height(c.max_rssi),
+      style: `fill: ${color(c.max_rssi)}`, class: c.channel === scan.current_channel ? 'current' : null },
+    svg('title', {}, `channel ${c.channel}: up to ${c.max_rssi} dBm, average ${c.average_rssi} dBm`)),
+    svg('text', { x: i * bar + bar / 2, y: H - 2, 'text-anchor': 'middle', class: `axis${c.channel === scan.current_channel ? ' current-label' : ''}` }, c.channel)));
+  const quiet = [...scan.channels].sort((a, b) => a.max_rssi - b.max_rssi).slice(0, 3).map((c) => c.channel);
+  const current = scan.channels.find((c) => c.channel === scan.current_channel);
+  container.replaceChildren(
+    svg('svg', { viewBox: `0 0 ${W} ${H}`, class: 'scan' }, ...bars),
+    h('p', { class: 'mb-1' }, scan.current_channel ? `Your network uses channel ${scan.current_channel}` +
+      (current ? ` (noise up to ${current.max_rssi} dBm).` : '.') : ''),
+    h('p', { class: 'mb-1' }, `Quietest: ${quiet.join(', ')}. Taller bars are noisier; Wi-Fi channels 1, 6 and 11 cover Thread channels 11–14, 16–19 and 21–24.`),
+    h('p', { class: 'text-body-secondary mb-0' }, `Scanned ${ago(scan.time)}. Changing the channel is done on the border router, and moves the whole network.`));
+}
+
+document.getElementById('channel-scan').addEventListener('click', (event) => busy(event.target, async () => {
+  renderChannelScan(await api('POST', '/api/network/channel-scan'));
+}));
+
+// ------------------------------------------------------------------ setting up this computer
+
+async function runFix(fix, button) {
+  if (fix === 'pskd') {
+    const value = prompt('Your joiner PSKd: 6 to 32 characters, A-Z and 0-9, without I, O, Q or Z.\n' +
+      'Leave it empty for a random one. It goes into application/local.conf (not in git).', '');
+    if (value === null) return;
+    await busy(button, async () => {
+      const result = await api('POST', '/api/setup/pskd', { pskd: value.trim() || null });
+      notify(`PSKd set: ${result.pskd}. Keep it somewhere safe; you need it to commission boards.`, 'success', 15000);
+      renderChecks(result.checks);
+    });
+    return;
+  }
+  if (fix === 'keygen' && !confirm('Create your private signing key?\n\nBack it up afterwards (application/keys/): ' +
+    'boards flashed with it only accept updates signed with it. Losing it means reflashing every board over SWD.')) return;
+  if (fix === 'install' && !confirm('Install the nRF Connect toolchain and fetch the SDK? About 1 GB, 5 to 15 minutes.')) return;
+  await api('POST', `/api/setup/${fix}`).catch(() => {});
+}
+
+function onSetup(setup) {
+  state.setup = setup;
+  renderActivity();
+  const status = document.getElementById('setup-status');
+  if (!status) return;
+  const running = setup && setup.state === 'running';
+  document.getElementById('setup-cancel').classList.toggle('d-none', !running);
+  document.getElementById('setup-log').classList.toggle('d-none', !setup);
+  status.replaceChildren(setup ? h('span', { class: `badge text-bg-${buildBadge[setup.state] || 'secondary'} me-1` }, setup.state) : '',
+    setup ? `${setup.name}: ${setup.message || 'running…'}` : '');
+  if (setup && setup.state !== 'running') {
+    notify(`${setup.name[0].toUpperCase()}${setup.name.slice(1)}: ${setup.message}`, setup.state === 'done' ? 'success' : 'warning');
+    api('GET', '/api/build-checks').then(renderChecks, () => {});
+  }
+}
+
+function onSetupLog(line) {
+  const log = document.getElementById('setup-log');
+  log.classList.remove('d-none');
+  const atBottom = log.scrollTop + log.clientHeight >= log.scrollHeight - 20;
+  log.append(line + '\n');
+  if (atBottom) log.scrollTop = log.scrollHeight;
+}
+
+async function loadSetupState() {
+  const setup = await api('GET', '/api/setup');
+  state.setup = setup.current;
+  const log = document.getElementById('setup-log');
+  log.textContent = setup.log.join('\n') + (setup.log.length ? '\n' : '');
+  log.classList.toggle('d-none', !setup.current);
+  const status = document.getElementById('setup-status');
+  status.replaceChildren(setup.current ? h('span', { class: `badge text-bg-${buildBadge[setup.current.state] || 'secondary'} me-1` }, setup.current.state) : '',
+    setup.current ? `${setup.current.name}: ${setup.current.message || 'running…'}` : '');
+  document.getElementById('setup-cancel').classList.toggle('d-none', !(setup.current && setup.current.state === 'running'));
+}
+
+document.getElementById('setup-cancel').addEventListener('click', () => api('POST', '/api/setup/cancel').catch(() => {}));
+
+// ------------------------------------------------------------------ console
+
+const consoleLines = [];
+
+async function loadConsole() {
+  const [ports, current] = await Promise.all([api('GET', '/api/serial-ports'), api('GET', '/api/console')]);
+  const select = document.getElementById('console-port');
+  const previous = current.port || select.value;
+  select.replaceChildren(...(ports.length ? ports.map((p) => h('option', { value: p.port },
+    `${p.port} – ${p.description}${p.board ? ' (board)' : ''}`)) : [h('option', { value: '' }, 'No serial ports')]));
+  if (previous && ports.some((p) => p.port === previous)) select.value = previous;
+  consoleLines.length = 0;
+  consoleLines.push(...current.lines);
+  document.getElementById('console-log').textContent = consoleLines.join('\n');
+  onConsoleState(current);
+}
+
+function onConsoleState(current) {
+  state.console = current;
+  renderActivity();
+  document.getElementById('console-open').classList.toggle('d-none', current.open);
+  document.getElementById('console-close').classList.toggle('d-none', !current.open);
+  document.getElementById('console-port').disabled = current.open;
+}
+
+function onConsoleLine(line) {
+  consoleLines.push(line);
+  if (consoleLines.length > 2000) consoleLines.splice(0, consoleLines.length - 2000);
+  const log = document.getElementById('console-log');
+  const atBottom = log.scrollTop + log.clientHeight >= log.scrollHeight - 20;
+  log.textContent = consoleLines.join('\n');
+  if (atBottom) log.scrollTop = log.scrollHeight;
+}
+
+document.getElementById('console-ports-refresh').addEventListener('click', () => loadConsole().catch(() => {}));
+document.getElementById('console-open').addEventListener('click', (event) => busy(event.target, async () => {
+  const port = document.getElementById('console-port').value;
+  if (!port) return notify('Choose a port', 'warning');
+  onConsoleState(await api('POST', '/api/console/open', { port, baudrate: Number(document.getElementById('console-baud').value) }));
+}));
+document.getElementById('console-close').addEventListener('click', async () => {
+  onConsoleState(await api('POST', '/api/console/close').catch(() => ({ open: false })));
+});
+document.getElementById('console-clear').addEventListener('click', () => {
+  consoleLines.length = 0;
+  document.getElementById('console-log').textContent = '';
+});
+document.getElementById('console-send').addEventListener('submit', (event) => {
+  event.preventDefault();
+  const input = document.getElementById('console-input');
+  api('POST', '/api/console/send', { text: input.value }).then(() => { input.value = ''; }, () => {});
+});
 
 // ------------------------------------------------------------------ settings
 
@@ -931,16 +1581,26 @@ function connectEvents(delay = 1000) {
     delay = 1000;
     loadDevices().catch(() => {});
     loadJobs().catch(() => {});
+    api('GET', '/api/setup').then((setup) => { state.setup = setup.current; renderActivity(); }, () => {});
   });
   socket.addEventListener('message', (message) => {
     const event = JSON.parse(message.data);
     if (event.type === 'device') {
       state.devices.set(event.device.device_id, event.device);
       renderDevices();
+      if (currentRoute() === `device/${encodeURIComponent(event.device.device_id)}`) renderDeviceStatus(event.device);
     } else if (event.type === 'devices') {
       loadDevices().catch(() => {});
     } else if (event.type === 'network') {
       if (!document.getElementById('tab-network').classList.contains('d-none')) loadNetwork().catch(() => {});
+    } else if (event.type === 'setup') {
+      onSetup(event.setup);
+    } else if (event.type === 'setup-log') {
+      onSetupLog(event.line);
+    } else if (event.type === 'console') {
+      onConsoleLine(event.line);
+    } else if (event.type === 'console-state') {
+      onConsoleState(event.state);
     } else if (event.type === 'build-log') {
       onBuildLog(event);
     } else if (event.type === 'build') {
@@ -948,7 +1608,7 @@ function connectEvents(delay = 1000) {
       state.build = event.build;
       renderActivity();
     } else if (event.type === 'job') {
-      const finished = state.jobs.get(event.job.id)?.state === 'running' && event.job.state !== 'running';
+      const finished = ['running', 'paused'].includes(state.jobs.get(event.job.id)?.state) && !['running', 'paused'].includes(event.job.state);
       state.jobs.set(event.job.id, event.job);
       renderJobs();
       renderActivity();
@@ -976,17 +1636,22 @@ function renderStatusDevices() {
 }
 
 function renderActivity() {
-  const job = [...state.jobs.values()].find((j) => j.state === 'running');
+  const job = [...state.jobs.values()].find((j) => ['running', 'paused'].includes(j.state));
   const element = document.getElementById('status-activity');
   let text = 'idle';
-  if (job) {
+  if (job && job.state === 'paused') {
+    text = 'update paused: check the first device';
+  } else if (job) {
     const target = job.targets.find((t) => t.status === 'running');
     const done = job.targets.filter((t) => !['queued', 'running'].includes(t.status)).length;
     text = `updating ${done + 1}/${job.targets.length}` + (target ? ` · ${target.label} · ${target.step}` : '') +
       (target && target.step === 'uploading' ? ` ${Math.round(target.progress * 100)}%` : '');
   } else if (state.build && state.build.result === 'running') {
     text = `building ${state.build.profile}`;
+  } else if (state.setup && state.setup.state === 'running') {
+    text = state.setup.name;
   }
+  if (state.console && state.console.open) text += ` · console ${state.console.port}`;
   element.textContent = text;
   element.classList.toggle('busy', text !== 'idle');
 }
@@ -1024,9 +1689,8 @@ document.addEventListener('keydown', (event) => {
   const target = event.target;
   if (event.ctrlKey || event.metaKey || event.altKey) return;
   if (target.closest('input, textarea, select, [contenteditable]')) return;
-  const tabs = ['devices', 'network', 'updates', 'images', 'builds', 'settings'];
-  if (event.key >= '1' && event.key <= String(tabs.length)) {
-    const name = tabs[Number(event.key) - 1];
+  if (event.key >= '1' && event.key <= String(TABS.length)) {
+    const name = TABS[Number(event.key) - 1];
     history.replaceState(null, '', `#${name}`);
     showTab(name);
   } else if (event.key === 't' || event.key === 'T') {
@@ -1039,5 +1703,5 @@ document.addEventListener('keydown', (event) => {
 setTheme(document.documentElement.getAttribute('data-theme'));
 renderClock();
 setInterval(renderClock, 30000);
-showTab((location.hash || '#devices').slice(1));
+showTab(currentRoute());
 connectEvents();

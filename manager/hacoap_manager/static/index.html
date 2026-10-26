@@ -14,12 +14,14 @@
 <header class="topbar">
   <span class="brand"><span class="logo" aria-hidden="true"></span>ha-coap<span>::fleet</span></span>
   <ul class="tabs" id="tabs">
-    <li><a class="active" href="#devices" data-tab="devices"><kbd>1</kbd>devices</a></li>
-    <li><a href="#network" data-tab="network"><kbd>2</kbd>network</a></li>
-    <li><a href="#updates" data-tab="updates"><kbd>3</kbd>updates</a></li>
-    <li><a href="#images" data-tab="images"><kbd>4</kbd>images</a></li>
-    <li><a href="#builds" data-tab="builds"><kbd>5</kbd>builds</a></li>
-    <li><a href="#settings" data-tab="settings"><kbd>6</kbd>settings</a></li>
+    <li><a class="active" href="#dashboard" data-tab="dashboard"><kbd>1</kbd>dashboard</a></li>
+    <li><a href="#devices" data-tab="devices"><kbd>2</kbd>devices</a></li>
+    <li><a href="#network" data-tab="network"><kbd>3</kbd>network</a></li>
+    <li><a href="#updates" data-tab="updates"><kbd>4</kbd>updates</a></li>
+    <li><a href="#images" data-tab="images"><kbd>5</kbd>images</a></li>
+    <li><a href="#builds" data-tab="builds"><kbd>6</kbd>builds</a></li>
+    <li><a href="#console" data-tab="console"><kbd>7</kbd>console</a></li>
+    <li><a href="#settings" data-tab="settings"><kbd>8</kbd>settings</a></li>
   </ul>
   <div class="dropdown ms-auto">
     <button class="btn btn-sm btn-outline-secondary dropdown-toggle" type="button" data-bs-toggle="dropdown"
@@ -34,7 +36,7 @@
   <span id="status-devices">– devices</span>
   <span id="status-activity">idle</span>
   <span class="spacer"></span>
-  <span class="d-none d-md-flex"><kbd>1</kbd>–<kbd>6</kbd> tabs <kbd>T</kbd> theme</span>
+  <span class="d-none d-md-flex"><kbd>1</kbd>–<kbd>8</kbd> tabs <kbd>T</kbd> theme</span>
   <span id="status-theme"></span>
   <span id="status-clock"></span>
 </footer>
@@ -42,8 +44,68 @@
 <main class="container-fluid pt-3">
   <div id="alerts"></div>
 
+  <!-- Dashboard -->
+  <section id="tab-dashboard" class="tab">
+    <div class="tiles mb-4" id="dash-tiles"></div>
+    <div class="row g-4">
+      <div class="col-xl-6">
+        <div class="card mb-4">
+          <div class="card-header">Firmware</div>
+          <div class="card-body" id="dash-firmware"></div>
+        </div>
+        <div class="card mb-4">
+          <div class="card-header">Batteries</div>
+          <div class="card-body" id="dash-batteries"></div>
+        </div>
+      </div>
+      <div class="col-xl-6">
+        <div class="card mb-4">
+          <div class="card-header">Offline</div>
+          <div class="card-body" id="dash-offline"></div>
+        </div>
+        <div class="card mb-4">
+          <div class="card-header">Weakest links</div>
+          <div class="card-body" id="dash-links"></div>
+        </div>
+        <div class="card">
+          <div class="card-header">Recent updates</div>
+          <div class="card-body" id="dash-updates"></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- One device -->
+  <section id="tab-device" class="tab d-none">
+    <div class="d-flex align-items-center gap-3 mb-3">
+      <a href="#devices" class="btn btn-sm btn-outline-secondary" id="device-back">← devices</a>
+      <h4 class="mb-0" id="device-title"></h4>
+      <span id="device-badges"></span>
+    </div>
+    <div class="row g-4">
+      <div class="col-xl-4">
+        <div class="card mb-4"><div class="card-header">Status</div><div class="card-body" id="device-status"></div></div>
+        <div class="card mb-4"><div class="card-header">Firmware</div><div class="card-body" id="device-firmware"></div></div>
+        <div class="card mb-4"><div class="card-header">Controls</div><div class="card-body" id="device-controls"></div></div>
+        <div class="card"><div class="card-header">About this device</div><div class="card-body">
+          <form id="device-form" class="row g-2"></form></div></div>
+      </div>
+      <div class="col-xl-8">
+        <div class="card mb-4">
+          <div class="card-header d-flex align-items-center gap-2">History
+            <select class="form-select form-select-sm w-auto ms-auto" id="device-days">
+              <option value="1">1 day</option><option value="7">7 days</option>
+              <option value="30" selected>30 days</option><option value="90">90 days</option></select></div>
+          <div class="card-body" id="device-charts"></div>
+        </div>
+        <div class="card mb-4"><div class="card-header">Updates</div><div class="card-body" id="device-updates"></div></div>
+        <div class="card"><div class="card-header">Network changes</div><div class="card-body" id="device-events"></div></div>
+      </div>
+    </div>
+  </section>
+
   <!-- Devices -->
-  <section id="tab-devices" class="tab">
+  <section id="tab-devices" class="tab d-none">
     <div class="d-flex flex-wrap gap-2 mb-3 align-items-center">
       <button class="btn btn-primary" id="discover">Find devices</button>
       <button class="btn btn-outline-secondary" id="refresh-all">Refresh all</button>
@@ -51,10 +113,16 @@
         <input class="form-control" id="add-address" placeholder="Add by IPv6 address" size="28" required>
         <button class="btn btn-outline-secondary" type="submit">Add</button>
       </form>
+      <button class="btn btn-outline-secondary" id="read-all-slots" title="Asks every device which image it runs">Read all firmware</button>
       <div class="ms-auto d-flex gap-2 align-items-center">
         <span class="text-body-secondary small" id="selection-count"></span>
         <button class="btn btn-success" id="update-selected" disabled>Update selected…</button>
       </div>
+    </div>
+    <div class="d-flex flex-wrap gap-2 mb-3 align-items-center">
+      <input class="form-control form-control-sm w-auto" id="device-search" placeholder="filter: name, ID, plant…" size="26">
+      <span class="small text-body-secondary">groups:</span>
+      <span id="tag-filter" class="d-flex flex-wrap gap-1"></span>
     </div>
     <div class="table-responsive">
       <table class="table table-hover align-middle" id="devices-table">
@@ -84,8 +152,23 @@
       <span class="small text-body-secondary ms-auto" id="network-summary"></span>
     </div>
     <div id="network-warnings"></div>
+    <div class="d-flex flex-wrap gap-2 mb-2 align-items-center">
+      <div class="btn-group btn-group-sm" role="group">
+        <button class="btn btn-outline-secondary active" id="view-mesh" type="button">mesh</button>
+        <button class="btn btn-outline-secondary" id="view-floorplan" type="button">floor plan</button>
+      </div>
+      <span id="floorplan-tools" class="d-none d-flex gap-2 align-items-center">
+        <input class="form-control form-control-sm w-auto" type="file" id="floorplan-file" accept="image/png,image/jpeg,image/webp">
+        <button class="btn btn-sm btn-outline-secondary" id="floorplan-upload" type="button">Use this picture</button>
+        <button class="btn btn-sm btn-outline-danger" id="floorplan-remove" type="button">Remove the picture</button>
+      </span>
+    </div>
     <div class="row g-3">
       <div class="col-xl-9">
+        <div class="floorplan border rounded d-none" id="floorplan">
+          <p class="text-body-secondary p-3 mb-0" id="floorplan-empty">No floor plan yet. Choose a picture of your
+            home (PNG, JPEG or WebP), then drag each node to where it is. The links follow.</p>
+        </div>
         <div class="network-canvas border rounded" id="network-canvas">
           <p class="text-body-secondary p-3 mb-0" id="network-empty">No map yet. Set the border router's REST address
             (port 8081) and click <b>Read the network</b>. Reading can take a minute.</p>
@@ -97,9 +180,15 @@
           <div class="card-header">Details</div>
           <div class="card-body small" id="network-details">Click a node or a line.</div>
         </div>
-        <div class="card">
+        <div class="card mb-3">
           <div class="card-header">Changes</div>
           <ul class="list-unstyled small p-2 mb-0" id="network-events"></ul>
+        </div>
+        <div class="card">
+          <div class="card-header d-flex align-items-center">Channels
+            <button class="btn btn-sm btn-outline-secondary ms-auto" id="channel-scan" type="button">Scan</button></div>
+          <div class="card-body small" id="channel-scan-result">Measures the radio noise on every Thread channel,
+            from the border router (2025+ REST API). Wi-Fi on the same frequencies shows up as noise.</div>
         </div>
       </div>
     </div>
@@ -137,7 +226,12 @@
               <input class="form-check-input" type="checkbox" id="stop-on-failure" checked>
               <label class="form-check-label" for="stop-on-failure">Stop at the first failure</label>
             </div>
-            <button class="btn btn-success ms-auto" type="submit" id="start-update">Start update</button>
+            <div class="form-check">
+              <input class="form-check-input" type="checkbox" id="staged">
+              <label class="form-check-label" for="staged">Update one device first, then wait for me</label>
+            </div>
+            <button class="btn btn-outline-secondary ms-auto" type="button" id="whats-new">What's new?</button>
+            <button class="btn btn-success" type="submit" id="start-update">Start update</button>
           </div>
           <div class="col-12 form-text">Each device gets the image, boots it as a test, and keeps it only once it
             comes back running it. If it doesn't, MCUboot puts the previous firmware back. Devices are updated one at a time.</div>
@@ -176,9 +270,11 @@
       </div>
       <div class="col-lg-7">
         <h5>Library</h5>
+        <p class="small text-body-secondary">The <b>release</b> is the image your fleet should run: the dashboard
+          shows which devices are behind it, and can update them.</p>
         <div class="table-responsive">
           <table class="table table-sm align-middle" id="images-table">
-            <thead><tr><th>Version</th><th>Hash</th><th>Size</th><th>Added</th><th>Notes</th><th></th></tr></thead>
+            <thead><tr><th>Version</th><th>Hash</th><th>Commit</th><th>Size</th><th>Added</th><th>Notes</th><th></th></tr></thead>
             <tbody></tbody>
           </table>
         </div>
@@ -224,9 +320,21 @@
       </div>
       <div class="col-xl-5">
         <div class="card mb-4">
+          <div class="card-header">Set up this computer</div>
+          <div class="card-body">
+            <ul class="list-unstyled small mb-2" id="build-checks"></ul>
+            <div class="d-flex align-items-center gap-2 mb-2">
+              <span id="setup-status" class="small"></span>
+              <button class="btn btn-sm btn-outline-danger d-none ms-auto" id="setup-cancel">Cancel</button>
+            </div>
+            <pre class="build-log d-none" id="setup-log"></pre>
+            <div class="form-text">Everything a new computer needs to build: the nRF Connect toolchain and SDK
+              (scripts/setup, about 1 GB, 5 to 15 minutes), your signing key, and your PSKd.</div>
+          </div>
+        </div>
+        <div class="card mb-4">
           <div class="card-header">Build</div>
           <div class="card-body">
-            <ul class="list-unstyled small mb-3" id="build-checks"></ul>
             <div class="d-flex align-items-center gap-2 mb-2">
               <button class="btn btn-success" id="build-start">Build with this profile</button>
               <button class="btn btn-outline-danger d-none" id="build-cancel">Cancel</button>
@@ -246,6 +354,28 @@
         </div>
       </div>
     </div>
+  </section>
+
+  <!-- Console -->
+  <section id="tab-console" class="tab d-none">
+    <div class="d-flex flex-wrap gap-2 mb-3 align-items-center">
+      <select class="form-select w-auto" id="console-port"></select>
+      <select class="form-select w-auto" id="console-baud">
+        <option>115200</option><option>9600</option><option>38400</option><option>57600</option><option>230400</option>
+      </select>
+      <button class="btn btn-outline-secondary" id="console-ports-refresh" type="button">Refresh</button>
+      <button class="btn btn-primary" id="console-open" type="button">Open</button>
+      <button class="btn btn-outline-danger d-none" id="console-close" type="button">Close</button>
+      <button class="btn btn-outline-secondary ms-auto" id="console-clear" type="button">Clear</button>
+    </div>
+    <pre class="console-log" id="console-log"></pre>
+    <form class="d-flex gap-2 mt-2" id="console-send">
+      <input class="form-control" id="console-input" placeholder="send a line" autocomplete="off">
+      <button class="btn btn-outline-secondary" type="submit">Send</button>
+    </form>
+    <p class="form-text mt-2">Shows what a board prints. On the <b>usb-logging</b> variant, the logs are on its
+      <b>second</b> USB serial port (the first one is mcumgr, for updates). On <b>uart-console</b>, use a USB-to-UART
+      adapter on J4. The battery variant prints nothing.</p>
   </section>
 
   <!-- Settings -->

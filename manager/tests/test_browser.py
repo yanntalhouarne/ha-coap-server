@@ -7,12 +7,15 @@ import shutil
 import subprocess
 import sys
 import threading
+import struct
 import time
+import zlib
 from pathlib import Path
 
 import pytest
 import uvicorn
 
+from hacoap_manager import builds
 from hacoap_manager.app import create_app, create_services
 from hacoap_manager.otbr import BorderRouter
 from hacoap_manager.simborder import SimulatedBorderRouter, scenario
@@ -26,6 +29,15 @@ CANDIDATES = [
     r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
     "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
 ]
+
+
+def tiny_png(width=40, height=30):
+    """A plain gray PNG, for the floor plan."""
+    def chunk(kind, data):
+        return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data))
+    rows = b"".join(b"\x00" + b"\x80" * width for _ in range(height))
+    return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 0, 0, 0, 0))
+            + chunk(b"IDAT", zlib.compress(rows)) + chunk(b"IEND", b""))
 
 
 def find_browser():
@@ -49,11 +61,22 @@ def page(tmp_path_factory):
                               last_seen=time.time())
     services.images.add(NEW_IMAGE, "app_update.bin", "browser test image")
     services.db.add_update("job", "1a2b3c4d", "udp", NEW_HASH, "1.1.0", 1.0, 2.0, "updated", "Updated and confirmed")
+    services.db.set_release(NEW_HASH)
+    now = time.time()
+    for hours in range(48, -1, -6):
+        services.db.add_reading("1a2b3c4d", 90 - (48 - hours) / 16, 40, 55, -5, when=now - hours * 3600)
+        services.db.add_link_sample("1a2b3c4d", "0x6800", link_margin=40, when=now - hours * 3600)
+    # A checkout with nothing set up, so the Builds tab offers its setup buttons.
+    empty_checkout = tmp / "checkout"
+    (empty_checkout / "application").mkdir(parents=True)
+    services.builds.checks = lambda: builds.checks(empty_checkout)
     border = SimulatedBorderRouter("api", net=scenario()).start()
     services.settings.border_router_url = border.url
     topology = BorderRouter(border.url, poll_interval=0.01).topology().as_dict()
     services.network._name_boards(topology)
     services.network.cache.write_text(__import__("json").dumps(topology))
+    services.network.set_floorplan(tiny_png(), "home.png")
+    services.network.set_position("1a2b3c4d", 0.5, 0.5)
 
     app = create_app(services, background_tasks=False)
     server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=0, log_level="warning"))
@@ -104,6 +127,8 @@ def test_images_tab(page):
 def test_builds_tab(page):
     dom = page("builds")
     assert "Production" in dom and "Sensor sampling period" in dom
+    assert "Set up this computer" in dom
+    assert "Create my signing key" in dom and "Set my PSKd" in dom   # the fix buttons
 
 
 def test_settings_tab(page):
@@ -115,3 +140,29 @@ def test_dark_by_default(page):
     dom = page("devices")
     assert 'data-theme="tokyo-night"' in dom and 'data-bs-theme="dark"' in dom
     assert "1/1 online" in dom  # the status bar
+
+
+def test_dashboard_tab(page):
+    dom = page("dashboard")
+    assert "behind the release" in dom and "low battery" in dom      # the tiles
+    assert "★ release" in dom or "Release:" in dom
+    assert "basil" in dom                                             # under batteries
+
+
+def test_device_page(page):
+    dom = page("device/1a2b3c4d")
+    assert "Last seen" in dom and "-5 °C" in dom
+    assert "Run the pump" in dom                                      # the controls
+    assert "Soil moisture" in dom and "<svg" in dom                   # the charts
+    assert "Updated and confirmed" in dom                             # its update history
+
+
+def test_floorplan_view(page):
+    dom = page("network/floorplan")
+    assert "/api/network/floorplan" in dom and "tray-label" in dom
+    assert "basil" in dom
+
+
+def test_console_tab(page):
+    dom = page("console")
+    assert 'id="console-port"><option' in dom                         # the ports were listed

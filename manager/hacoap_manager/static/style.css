@@ -191,3 +191,68 @@ fieldset legend::before { content: "// "; color: var(--t-accent-text); }
 .legend-swatch { display: inline-block; width: .7rem; height: .7rem; border-radius: 50%; margin: 0 .3rem 0 .9rem; vertical-align: -1px; }
 
 #theme-menu .swatch { display: inline-block; width: 1.6rem; height: .7rem; border-radius: 1px; margin-right: .6rem; vertical-align: -1px; }
+
+/* ---------------------------------------------------------------- dashboard */
+
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr)); gap: .75rem; }
+.tile { background: var(--t-surface); border: 1px solid var(--t-border-subtle); border-left: 3px solid var(--t-border-strong);
+  padding: .75rem 1rem; }
+.tile-value { font-size: 1.6rem; font-weight: 700; line-height: 1.1; color: var(--t-text); }
+.tile-label { font-size: .75rem; color: var(--t-text-muted); text-transform: lowercase; }
+.tile-ok { border-left-color: var(--t-green); }
+.tile-warn { border-left-color: var(--t-yellow); }
+.tile-warn .tile-value { color: var(--t-yellow); }
+.tile-bad { border-left-color: var(--t-red); }
+.tile-bad .tile-value { color: var(--t-red); }
+.tile-muted { border-left-color: var(--t-text-muted); }
+.bar-row { display: grid; grid-template-columns: minmax(10rem, 1.4fr) 2fr 2.5rem; gap: .75rem; align-items: center; margin-bottom: .4rem; font-size: .8125rem; }
+.bar { background: var(--t-surface-2); height: .55rem; }
+.bar-fill { background: var(--t-text-muted); height: 100%; }
+.bar-fill.release { background: var(--t-brand); }
+.bar-count { text-align: right; color: var(--t-text-secondary); }
+
+/* ---------------------------------------------------------------- devices */
+
+.tag { display: inline-block; font-size: .7rem; padding: 0 .4rem; margin: .15rem .25rem 0 0; border: 1px solid var(--t-border-strong);
+  color: var(--t-text-secondary); border-radius: 2px; }
+.device-link { color: var(--t-text); text-decoration: none; font-weight: 600; }
+.device-link:hover { color: var(--t-accent-text); text-decoration: underline; }
+#device-title { font-size: 1.1rem; font-weight: 700; }
+
+/* ---------------------------------------------------------------- charts */
+
+.charts { display: grid; grid-template-columns: repeat(auto-fit, minmax(18rem, 1fr)); gap: 1rem 1.5rem; }
+.chart-head { display: flex; justify-content: space-between; font-size: .75rem; color: var(--t-text-muted); margin-bottom: .2rem; }
+.chart-head b { color: var(--t-text); font-weight: 600; }
+.chart-body { display: grid; grid-template-columns: auto 1fr; gap: .4rem; }
+.chart-body svg { width: 100%; height: 6rem; display: block; }
+.chart-y { display: flex; flex-direction: column; justify-content: space-between; font-size: .65rem; color: var(--t-text-muted);
+  text-align: right; padding: .3rem 0; min-width: 2.6rem; }
+.chart-x { display: flex; justify-content: space-between; font-size: .65rem; color: var(--t-text-muted); padding-left: 3rem; }
+.chart .grid { stroke: var(--t-border-subtle); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.chart .axis, .scan .axis { font-size: 11px; fill: var(--t-text-muted); font-family: var(--mono); }
+.chart-empty { font-size: .75rem; color: var(--t-text-muted); border: 1px dashed var(--t-border-subtle); padding: 1.25rem .75rem; }
+
+/* ---------------------------------------------------------------- floor plan, channel scan */
+
+.floorplan { position: relative; min-height: 20rem; background: var(--t-bg-deep); border-color: var(--t-border-subtle) !important; }
+.floorplan-stage { position: relative; }
+.floorplan-stage img { width: 100%; display: block; opacity: .85; }
+[data-bs-theme=dark] .floorplan-stage img { filter: brightness(.8) contrast(1.05); }
+.floorplan-stage svg { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: none; user-select: none; }
+.floorplan-stage .node { cursor: grab; }
+.floorplan-stage .node text { font-size: 15px; font-family: var(--mono); fill: var(--t-text); paint-order: stroke;
+  stroke: var(--t-bg-deep); stroke-width: 4px; }
+.floorplan-stage .node.unplaced { opacity: .75; }
+.floorplan-stage .tray { fill: var(--t-bg-deep); opacity: .8; }
+.floorplan-stage .tray-label { font-size: 13px; fill: var(--t-text-muted); font-family: var(--mono); }
+.floorplan-hint { position: absolute; top: 1rem; left: 1rem; background: var(--t-surface); padding: .5rem .75rem; font-size: .8rem; }
+.scan { width: 100%; height: auto; margin-bottom: .5rem; }
+.scan rect.current { stroke: var(--t-text); stroke-width: 2; }
+.scan .current-label { fill: var(--t-text); font-weight: 700; }
+
+/* ---------------------------------------------------------------- console */
+
+.console-log { height: calc(100vh - 17rem); min-height: 16rem; overflow: auto; margin: 0; padding: .75rem 1rem; font-size: .75rem;
+  line-height: 1.5; background: var(--t-bg-deep); color: var(--t-text-secondary); border: 1px solid var(--t-border-subtle);
+  white-space: pre-wrap; word-break: break-all; }

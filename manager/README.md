@@ -6,7 +6,7 @@ One application for Windows, macOS and Linux to look after a fleet of ha-coap de
 
 It runs on your PC when you need it. The app starts a small web server that only this computer can reach (`http://127.0.0.1:8710`), and opens it in your browser. Close the app's window and everything stops.
 
-**Status (2026-10-25):** version 0.1.0, the plan's phases 0–2, 5 and 6 (foundations, inventory, updates, builds, backups and releases). Tested against a simulated device on Windows, macOS and Linux, and a real firmware build on Windows, **not yet with real boards**. Runtime settings and commissioning come later (see [the plan](../docs/FLEET-MANAGER-PLAN.md)). Until it has updated real boards, keep using the scripts or the web updater for anything important.
+**Status (2026-10-25):** version 0.1.0, the plan's phases 0–2, 5 and 6 (foundations, inventory, updates, builds, backups and releases), plus a dashboard, device pages with history charts, groups, staged updates, a floor plan, a channel scan, a serial console and one-click setup of a new computer. Tested against a simulated device on Windows, macOS and Linux, and a real firmware build on Windows, **not yet with real boards**. Runtime settings and commissioning come later (see [the plan](../docs/FLEET-MANAGER-PLAN.md)). Until it has updated real boards, keep using the scripts or the web updater for anything important.
 
 ## Getting it
 
@@ -37,7 +37,20 @@ Options: `--port 8710` (the next free port is used if it's taken), `--data-dir <
 
 ## Using it
 
-The look follows [Omarchy](https://omarchy.org/): a terminal feel, JetBrains Mono, and its colour themes, with the ha-coap logo and Home Assistant's blue as the accent in every theme. Tokyo Night is the default; pick another from the menu at the top right, or press **T** to cycle through them (**Shift+T** goes back). The browser remembers the choice, and `?theme=gruvbox` in the address picks one too. Keys **1** to **6** switch tabs. The status bar at the bottom shows the connection to the app, how many devices are online, and what's running (an update's progress, a build).
+The look follows [Omarchy](https://omarchy.org/): a terminal feel, JetBrains Mono, and its colour themes, with the ha-coap logo and Home Assistant's blue as the accent in every theme. Tokyo Night is the default; pick another from the menu at the top right, or press **T** to cycle through them (**Shift+T** goes back). The browser remembers the choice, and `?theme=gruvbox` in the address picks one too. Keys **1** to **8** switch tabs. The status bar at the bottom shows the connection to the app, how many devices are online, and what's running (an update's progress, a paused update, a build, a setup step, the console).
+
+**Dashboard.** The fleet at a glance:
+- **Tiles:**
+  - devices online
+  - devices behind the release
+  - devices whose firmware was never read
+  - low batteries
+  - weak links
+- **Firmware:** how many devices run each image, with the release marked. **Update the N behind…** starts a staged update of those devices (see Updates), and **Read all firmware** asks every device which image it runs.
+- **Batteries:** the lowest first, with the days left at the current rate. The estimate is a straight line through the last 14 days of readings. It needs at least three readings over six hours, and a battery that is actually going down.
+- **Offline:** devices that stopped answering.
+- **Weakest links:** from the last network read.
+- **Recent updates.**
 
 **Devices.** **Find devices** asks the network for every `ha-coap-*` device (the border router answers for them). You can also add one by its IPv6 address. Each device shows:
 - its firmware (the git commit, from `info`)
@@ -55,7 +68,22 @@ The status refreshes every 15 minutes while the app runs, or with **Refresh all*
 
 Tick devices to update them.
 
-**Images.** The library of firmware images. You can add an `app_update.bin` file, or add a build from this computer: when the app runs from the ha-coap-server folder, it lists `application/build*/zephyr/app_update.bin`. Images are identified by their SHA-256 hash, the same one `mcumgr image list` shows. Use the notes to say what each one is, because the firmware doesn't have version numbers yet (every image is `0.0.0`).
+- **Groups:** give devices a location and tags (on the device's page, under **About this device**, for example `kitchen` and `herbs`). Click a tag above the list to show only those devices, then tick them all to update one group at a time. The filter box searches names, IDs, addresses, plants, locations, tags and notes.
+- **Firmware column:** a badge says whether each device runs the release, an older or other image, or has never been read. **Read all firmware** reads them all.
+
+**A device's page.** Click a device's name. It shows:
+- **Status:** its readings, and the days of battery left.
+- **Firmware:** what it runs, compared with the release.
+- **Controls:**
+  - **Run the pump**, **Stop**, and the pump's run time (1 to 9 s)
+  - **Beep**
+
+  A command reaches a sleeping board at its next poll: up to 3 s.
+- **About this device:** name, plant, location, tags and notes.
+- **History:** charts of battery, soil moisture, air humidity, temperature and the link to its parent, over 1, 7, 30 or 90 days, and which parents it had. Every refresh and every network read adds a point, so the charts fill in while the app runs.
+- **Updates and network changes:** its own entries from both histories.
+
+**Images.** The library of firmware images. You can add an `app_update.bin` file, or add a build from this computer: when the app runs from the ha-coap-server folder, it lists `application/build*/zephyr/app_update.bin`. Images are identified by their SHA-256 hash, the same one `mcumgr image list` shows. Their version comes from `application/VERSION` (bump it before building a release), and an image built here also records its git commit. Mark one image as the **release**: the image your fleet should run. The dashboard and the device list compare every device with it.
 
 **Network.** A map of the Thread network, read from your border router's REST API (ot-br-posix, port 8081). Set its address on the page (for example `http://192.168.1.20:8081`), or click **Find it** (the app looks for border routers on the LAN), then **Read the network**.
 - **What it shows:**
@@ -68,6 +96,8 @@ Tick devices to update them.
   - **Older** (`/diagnostics`): link quality 0–3 between routers only, and no addresses for children, so boards show as "SED 0x5c01". The page says which one it got.
 - **Interacting:** drag nodes to tidy the map, and click a node or a line for details.
 - **Changes** logs boards that changed parent between two readings, or disappeared.
+- **Floor plan:** switch the view to **floor plan**, choose a picture of your home (PNG, JPEG or WebP, up to 10 MB), and drag each node to where it really is. The links are drawn between them, coloured by strength, so a weak link shows where a router would help. Drag a node back to the strip on the left to unplace it.
+- **Channels:** **Scan** has the border router measure the radio noise on every Thread channel (11 to 26) and shows the quietest ones. Wi-Fi shares these frequencies. Changing the channel is done on the border router, and moves the whole network. The scan needs the 2025+ REST API.
 - To try it without a border router: `python -m hacoap_manager.simdevice --border-router api` (or `legacy`), then use `http://127.0.0.1:8081`.
 
 **Updates.** Choose an image and either the devices ticked on the Devices tab (over the air) or one board on a USB serial port. Each device goes through these steps:
@@ -79,6 +109,9 @@ Tick devices to update them.
 
 Devices are updated one at a time. By default the update stops at the first failure, so a bad image reaches one device, not all of them. **Cancel the rest** skips the devices not started yet; the device in progress finishes, so it's never left half-way. Every result goes into the history.
 
+- **Update one device first, then wait for me:** a staged update. The first device is updated, then the update pauses. Check that device (its readings, its page), then click **Continue with the rest**, or cancel.
+- **What's new?** lists the commits between the image the devices run and the chosen one, from the git history of this checkout. It needs both images to have been built here, so their commits are known.
+
 While a device is being updated, it polls its parent every 100 ms instead of every 3 s (firmware on the `claude` branch and later), so uploads aren't slowed by its sleep schedule. Firmware older than that is about three times slower to update.
 
 **Builds.** Builds firmware on this computer, with settings you choose. It needs the app to run from the ha-coap-server folder, which has been set up for building (scripts/setup, see the main README); the packaged app works too if you start it from inside that folder.
@@ -86,6 +119,14 @@ While a device is being updated, it polls its parent every 100 ms instead of eve
 - **Build with this profile** runs the repository's own `scripts/build.ps1` or `scripts/build.sh`, exactly as from a terminal, into the variant's usual build folder (`application/build` for battery). The profile's settings go in through a small `.conf` file (`HACOAP_EXTRA_CONF`, which `application/CMakeLists.txt` merges after `local.conf`; a variant's own overlay still wins on the few options it sets). The log streams live, and the finished image goes into the library, named after its profile.
 - **Checks** first: the toolchain, the SDK, your signing key and your PSKd. Without your private signing key, the app asks before building with the public development key, and marks such images *DEVELOPMENT KEY*: boards flashed with your bootloader refuse them.
 - The PSKd and the signing key never go into profiles: they stay in `application/local.conf` and `application/keys/`.
+- **Set up this computer.** On a fresh clone, each failed check has a button. Each button runs the repository's own script (the same one as from a terminal), and its log streams below:
+  - **Install the build tools:** runs `scripts/setup`, which installs the nRF Connect toolchain and fetches the SDK into `external/` (about 1 GB, 5 to 15 minutes, once).
+  - **Create my signing key:** runs `scripts/keygen`. The app never replaces an existing key. Back the new key up: boards flashed with it only accept images signed with it.
+  - **Set my PSKd…:** writes your joiner PSKd into `application/local.conf` (not in git), or generates a random one. Note it down: you need it to commission boards.
+
+  To use these on a new computer: clone the repository, start the app from inside the clone (from the source as above, or the packaged app), open **Builds**, and click the buttons from top to bottom. If you already have a signing key, copy it into `application/keys/` instead of creating one.
+
+**Console.** Shows what a board prints over a USB serial port, live, with a line to send commands. On the **usb-logging** variant, the logs are on the board's second USB serial port (the first one is mcumgr, for updates). On **uart-console**, use a USB-to-UART adapter on J4. The battery variant prints nothing. A port open in the console can't be used for a USB update at the same time: close it first.
 
 **Settings.** Ports, timeouts, the mcumgr packet size (1280 bytes over the air, which fits Thread without IP fragmentation; 512 over USB), how long a device counts as online, and the automatic refresh.
 
@@ -134,6 +175,9 @@ It also announces itself over mDNS like a real board, so **Find devices** finds 
 | `hacoap_manager/discovery.py` | mDNS/DNS-SD (zeroconf) |
 | `hacoap_manager/mcuboot.py` | Reads an image's version and hash |
 | `hacoap_manager/builds.py`, `kconfig.py` | Build profiles (from `application/Kconfig`), checks, the build runner |
+| `hacoap_manager/fleet.py` | The dashboard: battery forecasts, release status, weak links |
+| `hacoap_manager/setup_tools.py` | The Builds tab's setup buttons (toolchain, signing key, PSKd) |
+| `hacoap_manager/console.py` | The serial console |
 | `hacoap_manager/backup.py` | Backups, restore, the device list as CSV |
 | `hacoap_manager/otbr.py`, `network.py` | The border router's REST API (both generations), the Network page's map and change log |
 | `hacoap_manager/simborder.py` | A simulated border router REST API, with a small made-up network |
