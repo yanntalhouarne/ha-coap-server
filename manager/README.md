@@ -120,7 +120,7 @@ The simulated device answers like a real one: mcumgr over UDP, CoAP, and MCUboot
 ```
 python -m hacoap_manager.simdevice          # mcumgr on 127.0.0.1:1337, CoAP on 127.0.0.1:5683
 ```
-Then, in the app, add a device at address `127.0.0.1`. To try an update, add any `app_update.bin`: the simulator accepts unsigned images too.
+It also announces itself over mDNS like a real board, so **Find devices** finds it (as `ha-coap-1a2b3c4d` at `127.0.0.1`; `--no-mdns` turns that off), or add it by address `127.0.0.1`. Discovery only accepts a loopback address from the simulator, which marks its announcement as simulated. To try an update, add any `app_update.bin`: the simulator accepts unsigned images too. `--border-router api` adds a simulated border router for the Network page.
 
 ## Development
 

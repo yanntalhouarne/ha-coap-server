@@ -7,8 +7,11 @@ when a tested image isn't confirmed before the next reset.
 Run one from the command line:
     python -m hacoap_manager.simdevice [--host 127.0.0.1] [--smp-port 1337] [--coap-port 5683]
                                        [--border-router api|legacy] [--border-router-port 8081]
+                                       [--no-mdns]
 With --border-router, a simulated border router REST API serves a small made-up network in
-which this device is one of the boards (see simborder.py).
+which this device is one of the boards (see simborder.py). Unless --no-mdns, it announces
+itself over mDNS like a real board (through its border router), so the app's Find devices
+finds it.
 """
 
 import argparse
@@ -286,6 +289,24 @@ class SimulatorServer:
         await self.stop()
 
 
+async def announce(device_id, host, coap_port):
+    """Announces the device over mDNS as ha-coap-<id>._ot._udp, like a real board's border
+    router does, with a TXT flag that lets discovery accept a loopback address."""
+    import socket
+
+    from zeroconf import ServiceInfo
+    from zeroconf.asyncio import AsyncZeroconf
+
+    family = socket.AF_INET6 if ":" in host else socket.AF_INET
+    info = ServiceInfo("_ot._udp.local.", f"ha-coap-{device_id}._ot._udp.local.",
+                       addresses=[socket.inet_pton(family, host)], port=coap_port,
+                       properties={"sim": "1"}, server=f"ha-coap-{device_id}.local.")
+    aiozc = AsyncZeroconf()
+    await aiozc.async_register_service(info)
+    print(f"Announced over mDNS as ha-coap-{device_id}._ot._udp.local.")
+    return aiozc
+
+
 def main():
     parser = argparse.ArgumentParser(description="Simulated ha-coap device (mcumgr over UDP and CoAP)")
     parser.add_argument("--host", default="127.0.0.1")
@@ -295,6 +316,7 @@ def main():
     parser.add_argument("--border-router", choices=("api", "legacy"),
                         help="also simulate a border router REST API, as a 2025+ (api) or older (legacy) one")
     parser.add_argument("--border-router-port", type=int, default=8081)
+    parser.add_argument("--no-mdns", action="store_true", help="don't announce the device over mDNS")
     args = parser.parse_args()
 
     async def run():
@@ -303,6 +325,7 @@ def main():
         async with SimulatorServer(device, args.host, args.smp_port, args.coap_port) as server:
             print(f"Simulated device {args.device_id}: mcumgr on {args.host}:{server.smp_port}, "
                   f"CoAP on {args.host}:{server.coap_port}. Ctrl+C to stop.")
+            announcement = None if args.no_mdns else await announce(args.device_id, args.host, server.coap_port)
             border = None
             if args.border_router:
                 from .simborder import SimulatedBorderRouter, scenario
@@ -314,6 +337,8 @@ def main():
             finally:
                 if border is not None:
                     border.stop()
+                if announcement is not None:
+                    await announcement.async_close()
 
     try:
         asyncio.run(run())

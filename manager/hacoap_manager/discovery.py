@@ -27,6 +27,21 @@ def is_usable_ipv6(address):
     return ":" in address and not address.startswith("fe80") and address != "::1"
 
 
+SIMULATOR_FLAG = b"sim"  # TXT entry set only by the simulated device (simdevice.py)
+LOOPBACK = ("127.0.0.1", "::1")
+
+
+def pick_address(addresses, properties=None):
+    """The address to reach a device at: its global or unique-local IPv6 address. A loopback
+    address only for the simulated device, which says so in its TXT record."""
+    usable = [a for a in addresses if is_usable_ipv6(a)]
+    if usable:
+        return usable[0]
+    if (properties or {}).get(SIMULATOR_FLAG) == b"1":
+        return next((a for a in addresses if a in LOOPBACK), None)
+    return None
+
+
 async def discover(timeout=4.0):
     """Browses for devices for 'timeout' seconds. Returns a list of Found."""
     from zeroconf import IPVersion, ServiceStateChange
@@ -52,9 +67,9 @@ async def discover(timeout=4.0):
             info = AsyncServiceInfo(SERVICE_TYPE, name)
             if not await info.async_request(aiozc.zeroconf, 3000):
                 continue
-            addresses = [a for a in info.parsed_addresses(IPVersion.V6Only) if is_usable_ipv6(a)]
-            if addresses:
-                found.append(Found(instance, device_id_from_instance(instance), addresses[0]))
+            address = pick_address(info.parsed_addresses(IPVersion.All), info.properties)
+            if address:
+                found.append(Found(instance, device_id_from_instance(instance), address))
         return found
     finally:
         await aiozc.async_close()
