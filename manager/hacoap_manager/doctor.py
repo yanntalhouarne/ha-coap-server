@@ -77,7 +77,7 @@ class Doctor:
         url = self.settings.border_router_url.strip()
         if not url:
             return step(name, "skip", "No border router address set (Network tab). Only needed for the map.")
-        started = time.monotonic()
+        started = time.perf_counter()
         try:
             node = await asyncio.to_thread(BorderRouter(url, timeout=5).node_info)
         except BorderRouterError as exc:
@@ -85,7 +85,7 @@ class Doctor:
                         "Check the address and port (8081). If `curl http://localhost:8081/node` works on the "
                         "border router itself but not from here, its REST API only listens locally: start otbr-agent "
                         "with --rest-listen-address set to its LAN address (or ::).")
-        took = (time.monotonic() - started) * 1000
+        took = (time.perf_counter() - started) * 1000
         state = (node or {}).get("State") or (node or {}).get("state") or ""
         return step(name, "ok", f"{url} answers in {took:.0f} ms" + (f" (Thread role: {state})" if state else ""))
 
@@ -133,10 +133,10 @@ class Doctor:
                   "address": device["address"], "coap_ms": None, "mcumgr_first_ms": None, "mcumgr_ms": None,
                   "upload_s": None, "error": ""}
         options = {"port": self.settings.coap_port, "ack_timeout": self.settings.coap_timeout_s, "max_retransmit": 1}
-        started = time.monotonic()
+        started = time.perf_counter()
         try:
             await coap.get_info(device["address"], **options)
-            result["coap_ms"] = (time.monotonic() - started) * 1000
+            result["coap_ms"] = (time.perf_counter() - started) * 1000
         except (coap.CoapError, TimeoutError, OSError) as exc:
             result["error"] = f"No CoAP answer: {exc}"
             return result
@@ -144,12 +144,12 @@ class Doctor:
             async with DeviceLink("udp", device["address"], self.settings.link_settings()) as link:
                 # The first answer can wait for a sleepy board's next poll; after it, the board
                 # polls fast while mcumgr is in use, as during an update.
-                started = time.monotonic()
+                started = time.perf_counter()
                 await link.echo()
-                result["mcumgr_first_ms"] = (time.monotonic() - started) * 1000
-                started = time.monotonic()
+                result["mcumgr_first_ms"] = (time.perf_counter() - started) * 1000
+                started = time.perf_counter()
                 await link.echo()
-                result["mcumgr_ms"] = (time.monotonic() - started) * 1000
+                result["mcumgr_ms"] = (time.perf_counter() - started) * 1000
         except McumgrError as exc:
             result["error"] = f"No mcumgr answer: {exc}"
             return result

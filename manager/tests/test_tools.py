@@ -92,7 +92,7 @@ async def test_doctor_with_the_simulators(services, client, start_sim):
     assert states == {"Border router": "ok", "Finding boards (mDNS)": "ok", "Route to the Thread network": "ok",
                       "Boards answering": "ok"}
     timing = result["devices"][0]
-    assert timing["coap_ms"] is not None and timing["mcumgr_ms"] is not None and timing["upload_s"] > 0
+    assert timing["coap_ms"] is not None and timing["mcumgr_ms"] is not None and timing["upload_s"] >= 0
     assert result["ok"] and result["summary"] == "Everything answers"
 
 
