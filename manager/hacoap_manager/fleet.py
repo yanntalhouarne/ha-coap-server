@@ -229,6 +229,33 @@ def weak_links(topology):
     return result
 
 
+def trends(db, inventory, days=7, now=None):
+    """Per day over the last 'days' (oldest first), for the dashboard's tiles: how many boards
+    reported, needed water (soil under their target), had a low battery, and had a weak link."""
+    now = now or time.time()
+    start = now - days * DAY
+    targets = {d["device_id"]: d["water_target"] for d in inventory.devices()}
+    day = lambda t: min(days - 1, int((t - start) // DAY))  # noqa: E731
+    reported = [set() for _ in range(days)]
+    dry = [set() for _ in range(days)]
+    low = [set() for _ in range(days)]
+    weak = [set() for _ in range(days)]
+    for r in db.all_readings(start):
+        i = day(r["time"])
+        reported[i].add(r["device_id"])
+        target = targets.get(r["device_id"])
+        if target and r["soil_moisture"] is not None and r["soil_moisture"] < target:
+            dry[i].add(r["device_id"])
+        if r["battery"] is not None and r["battery"] <= LOW_BATTERY:
+            low[i].add(r["device_id"])
+    for s in db.all_link_samples(start):
+        margin, quality = s["link_margin"], s["link_quality"]
+        if (margin is not None and margin < WEAK_MARGIN_DB) or (margin is None and quality is not None and quality <= 1):
+            weak[day(s["time"])].add(s["device_id"])
+    count = lambda sets: [len(x) for x in sets]  # noqa: E731
+    return {"online": count(reported), "needs_water": count(dry), "low_battery": count(low), "weak_links": count(weak)}
+
+
 def wall(db, inventory, now=None):
     """The wall display: every plant with its photo, soil, target, forecasts and battery; the ones
     that need water first, then the soonest to."""
@@ -299,4 +326,5 @@ def dashboard(db, inventory, topology):
         "weak_links": weak_links(topology)[:10],
         "recent_updates": [{**u, "name": names.get(u["device_id"], u["device_id"])} for u in db.updates(limit=8)],
         "network_read": topology.get("fetched") if topology else None,
+        "trends": trends(db, inventory),
     }

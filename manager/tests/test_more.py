@@ -163,3 +163,16 @@ async def test_demo(services, client):
     assert (await client.get("/api/status")).json()["demo"] is False
     services.demo = True
     assert (await client.post("/api/demo", headers=CHANGE)).status_code == 400   # not from the demo itself
+
+
+# ---------------------------------------------------------------- the dashboard tiles' trends
+
+def test_trends(services):
+    db, now = services.db, time.time()
+    db.upsert_device("abcd0001", name="basil", water_below=30)
+    db.add_reading("abcd0001", 15, 25, 50, 20, when=now - 5.5 * DAY)    # dry and low, 6 days ago
+    db.add_reading("abcd0001", 80, 50, 50, 20, when=now - 0.5 * DAY)    # fine, today
+    db.add_link_sample("abcd0001", "0x5000", link_margin=5, when=now - 0.5 * DAY)
+    t = fleet.trends(db, services.inventory, days=7, now=now)
+    assert t["online"] == [0, 1, 0, 0, 0, 0, 1] and t["needs_water"] == [0, 1, 0, 0, 0, 0, 0]
+    assert t["low_battery"] == [0, 1, 0, 0, 0, 0, 0] and t["weak_links"] == [0, 0, 0, 0, 0, 0, 1]

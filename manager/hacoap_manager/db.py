@@ -364,6 +364,10 @@ class Database:
         return self._query("SELECT time, parent, link_margin, average_rssi, link_quality FROM link_samples "
                            "WHERE device_id = ? AND time >= ? ORDER BY time", (device_id, since))
 
+    def all_link_samples(self, since=0):
+        return self._query("SELECT device_id, time, link_margin, link_quality FROM link_samples WHERE time >= ? ORDER BY time",
+                           (since,))
+
     def network_events_for(self, device_id, limit=50):
         return self._query("SELECT * FROM network_events WHERE device_id = ? ORDER BY id DESC LIMIT ?",
                            (device_id, limit))

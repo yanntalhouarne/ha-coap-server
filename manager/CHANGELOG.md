@@ -41,6 +41,9 @@ First version: the plan's phases 0, 1, 2, 5 and 6. Tested against a simulated de
 - **Weekly summary:** what happened over a week, to print.
 - **Demo:** a second app with simulated boards and two weeks of history, in a throwaway data folder.
 - **Getting started** checklist on the dashboard, and a pulse on the map when a board answers.
+- **A new network map:** the border router in the middle and routers on hop rings (a stable layout that fills the view), boards as their plant photo with a soil gauge, icons for routers, curved links coloured and sized by strength with flowing dashes to the parent, hover to trace a board's way to the border router, a details panel sliding over the map, floating controls and legend, and smooth zoom.
+- **A new floor plan:** a dimmed picture, boards as photo pins, thin curved links (which can be hidden), a list of nodes to drag onto the plan, and a smoother heatmap in 5 dB bands with a scale.
+- **Icons** (Lucide) on the tabs, the status bar and the map; 7-day charts in the dashboard's tiles; tabs that fade in and placeholders while cards load.
 - **Data:** backups (one file; daily automatic ones, and one before every restore), restore, and the device list as CSV.
 - A look after [Omarchy](https://omarchy.org/): a terminal feel, JetBrains Mono, 12 colour themes (Tokyo Night by default, **T** cycles them) with Home Assistant's blue as the accent, the ha-coap logo, keys 1 to 8 for the tabs, and a status bar.
 - Answers only on this computer (127.0.0.1).

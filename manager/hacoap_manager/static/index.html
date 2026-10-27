@@ -11,6 +11,49 @@
   <script src="/static/theme.js"></script>
 </head>
 <body>
+<!-- Icons: Lucide 0.460.0 (ISC licence, static/vendor/lucide/LICENSE), drawn with the text colour -->
+<svg width="0" height="0" style="position: absolute" aria-hidden="true">
+  <symbol id="i-activity" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-2.48a2 2 0 0 0-1.93 1.46l-2.35 8.36a.25.25 0 0 1-.48 0L9.24 2.18a.25.25 0 0 0-.48 0l-2.35 8.36A2 2 0 0 1 4.49 12H2" /></symbol>
+  <symbol id="i-battery-low" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="16" height="10" x="2" y="7" rx="2" ry="2" /> <line x1="22" x2="22" y1="11" y2="13" /> <line x1="6" x2="6" y1="11" y2="13" /></symbol>
+  <symbol id="i-battery-medium" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="16" height="10" x="2" y="7" rx="2" ry="2" /> <line x1="22" x2="22" y1="11" y2="13" /> <line x1="6" x2="6" y1="11" y2="13" /> <line x1="10" x2="10" y1="11" y2="13" /></symbol>
+  <symbol id="i-bell" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9" /> <path d="M10.3 21a1.94 1.94 0 0 0 3.4 0" /></symbol>
+  <symbol id="i-circle-arrow-up" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10" /> <path d="m16 12-4-4-4 4" /> <path d="M12 16V8" /></symbol>
+  <symbol id="i-circle-dot" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10" /> <circle cx="12" cy="12" r="1" /></symbol>
+  <symbol id="i-circle-help" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10" /> <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" /> <path d="M12 17h.01" /></symbol>
+  <symbol id="i-clock" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10" /> <polyline points="12 6 12 12 16 14" /></symbol>
+  <symbol id="i-cpu" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="16" height="16" x="4" y="4" rx="2" /> <rect width="6" height="6" x="9" y="9" rx="1" /> <path d="M15 2v2" /> <path d="M15 20v2" /> <path d="M2 15h2" /> <path d="M2 9h2" /> <path d="M20 15h2" /> <path d="M20 9h2" /> <path d="M9 2v2" /> <path d="M9 20v2" /></symbol>
+  <symbol id="i-droplet" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22a7 7 0 0 0 7-7c0-2-1-3.9-3-5.5s-3.5-4-4-6.5c-.5 2.5-2 4.9-4 6.5C6 11.1 5 13 5 15a7 7 0 0 0 7 7z" /></symbol>
+  <symbol id="i-droplets" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 16.3c2.2 0 4-1.83 4-4.05 0-1.16-.57-2.26-1.71-3.19S7.29 6.75 7 5.3c-.29 1.45-1.14 2.84-2.29 3.76S3 11.1 3 12.25c0 2.22 1.8 4.05 4 4.05z" /> <path d="M12.56 6.6A10.97 10.97 0 0 0 14 3.02c.5 2.5 2 4.9 4 6.5s3 3.5 3 5.5a6.98 6.98 0 0 1-11.91 4.97" /></symbol>
+  <symbol id="i-hammer" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 12-8.373 8.373a1 1 0 1 1-3-3L12 9" /> <path d="m18 15 4-4" /> <path d="m21.5 11.5-1.914-1.914A2 2 0 0 1 19 8.172V7l-2.26-2.26a6 6 0 0 0-4.202-1.756L9 2.96l.92.82A6.18 6.18 0 0 1 12 8.4V10l2 2h1.172a2 2 0 0 1 1.414.586L18.5 14.5" /></symbol>
+  <symbol id="i-info" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10" /> <path d="M12 16v-4" /> <path d="M12 8h.01" /></symbol>
+  <symbol id="i-layers" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 1.66 0l8.58-3.9a1 1 0 0 0 0-1.83Z" /> <path d="m22 17.65-9.17 4.16a2 2 0 0 1-1.66 0L2 17.65" /> <path d="m22 12.65-9.17 4.16a2 2 0 0 1-1.66 0L2 12.65" /></symbol>
+  <symbol id="i-layout-dashboard" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="7" height="9" x="3" y="3" rx="1" /> <rect width="7" height="5" x="14" y="3" rx="1" /> <rect width="7" height="9" x="14" y="12" rx="1" /> <rect width="7" height="5" x="3" y="16" rx="1" /></symbol>
+  <symbol id="i-map" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.106 5.553a2 2 0 0 0 1.788 0l3.659-1.83A1 1 0 0 1 21 4.619v12.764a1 1 0 0 1-.553.894l-4.553 2.277a2 2 0 0 1-1.788 0l-4.212-2.106a2 2 0 0 0-1.788 0l-3.659 1.83A1 1 0 0 1 3 19.381V6.618a1 1 0 0 1 .553-.894l4.553-2.277a2 2 0 0 1 1.788 0z" /> <path d="M15 5.764v15" /> <path d="M9 3.236v15" /></symbol>
+  <symbol id="i-maximize" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3" /> <path d="M21 8V5a2 2 0 0 0-2-2h-3" /> <path d="M3 16v3a2 2 0 0 0 2 2h3" /> <path d="M16 21h3a2 2 0 0 0 2-2v-3" /></symbol>
+  <symbol id="i-minus" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14" /></symbol>
+  <symbol id="i-monitor" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="20" height="14" x="2" y="3" rx="2" /> <line x1="8" x2="16" y1="21" y2="21" /> <line x1="12" x2="12" y1="17" y2="21" /></symbol>
+  <symbol id="i-network" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="16" y="16" width="6" height="6" rx="1" /> <rect x="2" y="16" width="6" height="6" rx="1" /> <rect x="9" y="2" width="6" height="6" rx="1" /> <path d="M5 16v-3a1 1 0 0 1 1-1h12a1 1 0 0 1 1 1v3" /> <path d="M12 12V8" /></symbol>
+  <symbol id="i-package" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 21.73a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73z" /> <path d="M12 22V12" /> <path d="m3.3 7 7.703 4.734a2 2 0 0 0 1.994 0L20.7 7" /> <path d="m7.5 4.27 9 5.15" /></symbol>
+  <symbol id="i-play" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="6 3 20 12 6 21 6 3" /></symbol>
+  <symbol id="i-plug" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22v-5" /> <path d="M9 8V2" /> <path d="M15 8V2" /> <path d="M18 8v5a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V8Z" /></symbol>
+  <symbol id="i-plus" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14" /> <path d="M12 5v14" /></symbol>
+  <symbol id="i-printer" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2" /> <path d="M6 9V3a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v6" /> <rect x="6" y="14" width="12" height="8" rx="1" /></symbol>
+  <symbol id="i-radio-tower" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4.9 16.1C1 12.2 1 5.8 4.9 1.9" /> <path d="M7.8 4.7a6.14 6.14 0 0 0-.8 7.5" /> <circle cx="12" cy="9" r="2" /> <path d="M16.2 4.8c2 2 2.26 5.11.8 7.47" /> <path d="M19.1 1.9a9.96 9.96 0 0 1 0 14.1" /> <path d="M9.5 18h5" /> <path d="m8 22 4-11 4 11" /></symbol>
+  <symbol id="i-router" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="20" height="8" x="2" y="14" rx="2" /> <path d="M6.01 18H6" /> <path d="M10.01 18H10" /> <path d="M15 10v4" /> <path d="M17.84 7.17a4 4 0 0 0-5.66 0" /> <path d="M20.66 4.34a8 8 0 0 0-11.31 0" /></symbol>
+  <symbol id="i-search" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8" /> <path d="m21 21-4.3-4.3" /></symbol>
+  <symbol id="i-settings" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" /> <circle cx="12" cy="12" r="3" /></symbol>
+  <symbol id="i-share-2" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3" /> <circle cx="6" cy="12" r="3" /> <circle cx="18" cy="19" r="3" /> <line x1="8.59" x2="15.42" y1="13.51" y2="17.49" /> <line x1="15.41" x2="8.59" y1="6.51" y2="10.49" /></symbol>
+  <symbol id="i-signal-low" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 20h.01" /> <path d="M7 20v-4" /></symbol>
+  <symbol id="i-spline" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="19" cy="5" r="2" /> <circle cx="5" cy="19" r="2" /> <path d="M5 17A12 12 0 0 1 17 5" /></symbol>
+  <symbol id="i-sprout" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 20h10" /> <path d="M10 20c5.5-2.5.8-6.4 3-10" /> <path d="M9.5 9.4c1.1.8 1.8 2.2 2.3 3.7-2 .4-3.5.4-4.8-.3-1.2-.6-2.3-1.9-3-4.2 2.8-.5 4.4 0 5.5.8z" /> <path d="M14.1 6a7 7 0 0 0-1.1 4c1.9-.1 3.3-.6 4.3-1.4 1-1 1.6-2.3 1.7-4.6-2.7.1-4 1-4.9 2z" /></symbol>
+  <symbol id="i-tag" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.586 2.586A2 2 0 0 0 11.172 2H4a2 2 0 0 0-2 2v7.172a2 2 0 0 0 .586 1.414l8.704 8.704a2.426 2.426 0 0 0 3.42 0l6.58-6.58a2.426 2.426 0 0 0 0-3.42z" /> <circle cx="7.5" cy="7.5" r=".5" fill="currentColor" /></symbol>
+  <symbol id="i-terminal" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5" /> <line x1="12" x2="20" y1="19" y2="19" /></symbol>
+  <symbol id="i-thermometer" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 4v10.54a4 4 0 1 1-4 0V4a2 2 0 0 1 4 0Z" /></symbol>
+  <symbol id="i-triangle-alert" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3" /> <path d="M12 9v4" /> <path d="M12 17h.01" /></symbol>
+  <symbol id="i-upload" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /> <polyline points="17 8 12 3 7 8" /> <line x1="12" x2="12" y1="3" y2="15" /></symbol>
+  <symbol id="i-wifi" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h.01" /> <path d="M2 8.82a15 15 0 0 1 20 0" /> <path d="M5 12.859a10 10 0 0 1 14 0" /> <path d="M8.5 16.429a5 5 0 0 1 7 0" /></symbol>
+  <symbol id="i-x" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18" /> <path d="m6 6 12 12" /></symbol>
+</svg>
 <!-- The ha-coap logo's tree, drawn bolder so it reads at node size (the Network tab's boards) -->
 <svg width="0" height="0" style="position: absolute" aria-hidden="true">
   <symbol id="hacoap-glyph" viewBox="0 0 512 512" fill="currentColor" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
@@ -23,17 +66,17 @@
 <header class="topbar">
   <span class="brand"><span class="logo" aria-hidden="true"></span>ha-coap<span>::fleet</span></span>
   <ul class="tabs" id="tabs">
-    <li><a class="active" href="#dashboard" data-tab="dashboard"><kbd>1</kbd>dashboard</a></li>
-    <li><a href="#devices" data-tab="devices"><kbd>2</kbd>devices</a></li>
-    <li><a href="#network" data-tab="network"><kbd>3</kbd>network</a></li>
-    <li><a href="#updates" data-tab="updates"><kbd>4</kbd>updates</a></li>
-    <li><a href="#images" data-tab="images"><kbd>5</kbd>images</a></li>
-    <li><a href="#builds" data-tab="builds"><kbd>6</kbd>builds</a></li>
-    <li><a href="#console" data-tab="console"><kbd>7</kbd>console</a></li>
-    <li><a href="#settings" data-tab="settings"><kbd>8</kbd>settings</a></li>
+    <li><a class="active" href="#dashboard" data-tab="dashboard"><kbd>1</kbd><svg class="icon" aria-hidden="true"><use href="#i-layout-dashboard"/></svg>dashboard</a></li>
+    <li><a href="#devices" data-tab="devices"><kbd>2</kbd><svg class="icon" aria-hidden="true"><use href="#i-cpu"/></svg>devices</a></li>
+    <li><a href="#network" data-tab="network"><kbd>3</kbd><svg class="icon" aria-hidden="true"><use href="#i-network"/></svg>network</a></li>
+    <li><a href="#updates" data-tab="updates"><kbd>4</kbd><svg class="icon" aria-hidden="true"><use href="#i-upload"/></svg>updates</a></li>
+    <li><a href="#images" data-tab="images"><kbd>5</kbd><svg class="icon" aria-hidden="true"><use href="#i-package"/></svg>images</a></li>
+    <li><a href="#builds" data-tab="builds"><kbd>6</kbd><svg class="icon" aria-hidden="true"><use href="#i-hammer"/></svg>builds</a></li>
+    <li><a href="#console" data-tab="console"><kbd>7</kbd><svg class="icon" aria-hidden="true"><use href="#i-terminal"/></svg>console</a></li>
+    <li><a href="#settings" data-tab="settings"><kbd>8</kbd><svg class="icon" aria-hidden="true"><use href="#i-settings"/></svg>settings</a></li>
   </ul>
   <button class="btn btn-sm btn-outline-secondary ms-auto palette-button" type="button" id="palette-button"
-          title="Search for a tab, a device or an action (Ctrl+K)">search <kbd>Ctrl K</kbd></button>
+          title="Search for a tab, a device or an action (Ctrl+K)"><svg class="icon" aria-hidden="true"><use href="#i-search"/></svg>search <kbd>Ctrl K</kbd></button>
   <div class="dropdown">
     <button class="btn btn-sm btn-outline-secondary dropdown-toggle" type="button" data-bs-toggle="dropdown"
             id="theme-button" title="Colour theme (T cycles)">theme</button>
@@ -44,21 +87,21 @@
 <footer class="statusbar">
   <span class="seg-brand"><span class="logo" aria-hidden="true"></span>HA-COAP</span>
   <span><span id="connection" title="Live updates from the app">●</span><span id="connection-text">connecting</span></span>
-  <span id="status-devices">– devices</span>
-  <span id="status-activity">idle</span>
-  <span id="status-alerts" class="d-none"><a href="#dashboard" id="status-alerts-link"></a></span>
+  <span><svg class="icon" aria-hidden="true"><use href="#i-cpu"/></svg><span id="status-devices">– devices</span></span>
+  <span><svg class="icon" aria-hidden="true"><use href="#i-activity"/></svg><span id="status-activity">idle</span></span>
+  <span id="status-alerts" class="d-none"><svg class="icon" aria-hidden="true"><use href="#i-bell"/></svg><a href="#dashboard" id="status-alerts-link"></a></span>
   <span id="status-app-update" class="d-none"><a id="status-app-update-link" target="_blank" rel="noopener"></a></span>
   <span class="spacer"></span>
   <span class="d-none d-md-flex"><kbd>1</kbd>–<kbd>8</kbd> tabs <kbd>T</kbd> theme <kbd>Ctrl K</kbd> search</span>
   <span id="status-theme"></span>
-  <span id="status-clock"></span>
+  <span><svg class="icon" aria-hidden="true"><use href="#i-clock"/></svg><span id="status-clock"></span></span>
 </footer>
 
 <main class="container-fluid pt-3">
   <div class="demo-banner d-none" id="demo-banner">
     <b>Demo:</b> simulated boards and border router, two weeks of made-up history. Try anything: nothing here is
     kept, and your own fleet isn't touched.
-    <button class="btn btn-sm btn-outline-light ms-2" id="demo-stop" type="button">Stop the demo</button>
+    <button class="btn btn-sm btn-outline-secondary ms-2" id="demo-stop" type="button">Stop the demo</button>
   </div>
   <div id="alerts"></div>
 
@@ -66,8 +109,8 @@
   <section id="tab-dashboard" class="tab">
     <div class="card mb-4 d-none" id="dash-guide"></div>
     <div class="d-flex flex-wrap gap-2 mb-3 justify-content-end">
-      <a class="btn btn-sm btn-outline-secondary" href="#wall" title="Full screen, for a spare monitor">Wall display</a>
-      <a class="btn btn-sm btn-outline-secondary" href="#summary" title="What happened this week, to print">Weekly summary</a>
+      <a class="btn btn-sm btn-outline-secondary" href="#wall" title="Full screen, for a spare monitor"><svg class="icon" aria-hidden="true"><use href="#i-monitor"/></svg> Wall display</a>
+      <a class="btn btn-sm btn-outline-secondary" href="#summary" title="What happened this week, to print"><svg class="icon" aria-hidden="true"><use href="#i-printer"/></svg> Weekly summary</a>
     </div>
     <div class="tiles mb-4" id="dash-tiles"></div>
     <div class="row g-4">
@@ -201,52 +244,60 @@
     </div>
     <div id="network-warnings"></div>
     <div class="d-flex flex-wrap gap-2 mb-2 align-items-center">
-      <div class="btn-group btn-group-sm" role="group">
-        <button class="btn btn-outline-secondary active" id="view-mesh" type="button">mesh</button>
-        <button class="btn btn-outline-secondary" id="view-floorplan" type="button">floor plan</button>
-      </div>
+      <span id="floorplan-tools" class="d-none d-flex flex-wrap gap-2 align-items-center">
+        <input class="form-control form-control-sm w-auto" type="file" id="floorplan-file" accept="image/png,image/jpeg,image/webp">
+        <button class="btn btn-sm btn-outline-secondary" id="floorplan-upload" type="button">Use this picture</button>
+        <button class="btn btn-sm btn-outline-danger" id="floorplan-remove" type="button">Remove the picture</button>
+      </span>
       <span id="network-history" class="d-none d-flex align-items-center gap-2 ms-auto small">
         <label for="history-slider" class="text-body-secondary">history</label>
         <input type="range" class="form-range history-slider" id="history-slider" min="0" max="0" value="0">
         <span id="history-label" class="text-nowrap">latest</span>
         <button class="btn btn-sm btn-outline-secondary d-none" id="history-latest" type="button">back to latest</button>
       </span>
-      <span id="floorplan-tools" class="d-none d-flex gap-2 align-items-center">
-        <input class="form-control form-control-sm w-auto" type="file" id="floorplan-file" accept="image/png,image/jpeg,image/webp">
-        <button class="btn btn-sm btn-outline-secondary" id="floorplan-upload" type="button">Use this picture</button>
-        <button class="btn btn-sm btn-outline-danger" id="floorplan-remove" type="button">Remove the picture</button>
-      </span>
-      <span class="form-check form-switch mb-0 ms-2">
-        <input class="form-check-input" type="checkbox" id="heatmap-toggle">
-        <label class="form-check-label small" for="heatmap-toggle">signal heatmap</label>
-      </span>
     </div>
-    <p class="small text-body-secondary mb-2 d-none" id="heatmap-note">Heatmap: the signal estimated from each node's
-      strongest link (green strong, amber fair, red weak), fading out away from the nodes. On the floor plan it maps
-      your home: place more nodes for a better estimate. On the mesh, distance is radio closeness, not space, so it
-      shows the weak parts of the mesh. A guide to dead zones, not a measurement.</p>
-    <div class="row g-3">
-      <div class="col-xl-9">
-        <div class="floorplan border rounded d-none" id="floorplan">
-          <p class="text-body-secondary p-3 mb-0" id="floorplan-empty">No floor plan yet. Choose a picture of your
-            home (PNG, JPEG or WebP), then drag each node to where it is. The links follow.</p>
+    <div class="map-wrap" id="map-wrap">
+      <div class="map-toolbar" role="toolbar" aria-label="Map">
+        <div class="map-seg" role="group" aria-label="View">
+          <button class="active" id="view-mesh" type="button"><svg class="icon"><use href="#i-share-2"/></svg>mesh</button>
+          <button id="view-floorplan" type="button"><svg class="icon"><use href="#i-map"/></svg>floor plan</button>
         </div>
-        <div class="network-canvas border rounded" id="network-canvas">
-          <p class="text-body-secondary p-3 mb-0" id="network-empty">No map yet. Set the border router's REST address
-            (port 8081) and click <b>Read the network</b>. Reading can take a minute.</p>
-        </div>
-        <div class="small text-body-secondary mt-2" id="network-legend"></div>
+        <label class="map-tool" title="Shades the signal estimated from each node's strongest link">
+          <input type="checkbox" id="heatmap-toggle"><svg class="icon"><use href="#i-layers"/></svg>heatmap</label>
+        <label class="map-tool" title="Names under every node, not only your boards">
+          <input type="checkbox" id="labels-toggle"><svg class="icon"><use href="#i-tag"/></svg>all names</label>
+        <label class="map-tool" title="The links between nodes">
+          <input type="checkbox" id="links-toggle" checked><svg class="icon"><use href="#i-spline"/></svg>links</label>
       </div>
-      <div class="col-xl-3">
-        <div class="card mb-3">
-          <div class="card-header">Details</div>
-          <div class="card-body small" id="network-details">Click a node or a line.</div>
-        </div>
-        <div class="card mb-3">
+      <div class="map-legend" id="network-legend"></div>
+      <div class="heat-scale d-none" id="heat-scale"><span>weak</span><i></i><span>strong</span></div>
+      <aside class="map-drawer" id="map-drawer" aria-label="Details">
+        <div class="map-drawer-head"><span id="map-drawer-title">Details</span>
+          <button type="button" class="btn-close btn-close-white" id="map-drawer-close" aria-label="Close"></button></div>
+        <div class="map-drawer-body small" id="network-details"></div>
+      </aside>
+      <div class="floorplan d-none" id="floorplan">
+        <div class="place-list d-none" id="place-list"></div>
+        <p class="text-body-secondary p-3 mb-0" id="floorplan-empty">No floor plan yet. Choose a picture of your
+          home (PNG, JPEG or WebP) above, then drag each node onto where it is. The links follow.</p>
+      </div>
+      <div class="network-canvas" id="network-canvas">
+        <p class="text-body-secondary p-3 mb-0" id="network-empty">No map yet. Set the border router's REST address
+          (port 8081) and click <b>Read the network</b>. Reading can take a minute.</p>
+      </div>
+    </div>
+    <p class="small text-body-secondary mt-2 mb-0 d-none" id="heatmap-note">Heatmap: the signal estimated from each node's
+      strongest link, fading out away from the nodes. On the floor plan it maps your home: place more nodes for a
+      better estimate. On the mesh, it shows the weak parts of the mesh. A guide to dead zones, not a measurement.</p>
+    <div class="row g-3 mt-1">
+      <div class="col-lg-6">
+        <div class="card h-100">
           <div class="card-header">Changes</div>
           <ul class="list-unstyled small p-2 mb-0" id="network-events"></ul>
         </div>
-        <div class="card">
+      </div>
+      <div class="col-lg-6">
+        <div class="card h-100">
           <div class="card-header d-flex align-items-center">Channels
             <button class="btn btn-sm btn-outline-secondary ms-auto" id="channel-scan" type="button">Scan</button></div>
           <div class="card-body small" id="channel-scan-result">Measures the radio noise on every Thread channel,
@@ -564,7 +615,7 @@
             <p class="small text-body-secondary mb-2">Opens a second fleet manager, in a new tab, with 9 simulated
               boards, a simulated border router and two weeks of made-up history: every page has something to show.
               It uses its own data folder, deleted when it stops, so your fleet isn't touched.</p>
-            <button class="btn btn-outline-primary" id="demo-start" type="button">Start the demo</button>
+            <button class="btn btn-outline-primary" id="demo-start" type="button"><svg class="icon" aria-hidden="true"><use href="#i-play"/></svg> Start the demo</button>
           </div>
         </div>
         <div class="card mt-4">

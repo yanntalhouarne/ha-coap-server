@@ -114,6 +114,7 @@ def test_devices_tab(page):
 def test_network_tab(page):
     dom = page("network")
     assert "<svg" in dom and "Border router" in dom and "basil" in dom
+    assert "hop-ring" in dom and "avatar" in dom and "map-toolbar" in dom      # the redrawn map
     assert "with signal strength" in dom
 
 
@@ -176,7 +177,8 @@ def test_device_page(page):
 
 def test_floorplan_view(page):
     dom = page("network/floorplan")
-    assert "/api/network/floorplan" in dom and "tray-label" in dom
+    assert "/api/network/floorplan" in dom and "plan-dim" in dom
+    assert 'class="pin"' in dom and "place-chip" in dom                # basil on the plan, the others to place
     assert "basil" in dom
 
 
