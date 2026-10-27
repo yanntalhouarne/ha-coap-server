@@ -79,16 +79,20 @@ const photoUrl = (device) => `/api/devices/${encodeURIComponent(device.device_id
 // ------------------------------------------------------------------ tabs
 
 const TABS = ['dashboard', 'devices', 'network', 'updates', 'images', 'builds', 'console', 'settings'];
+const PAGES = ['wall', 'summary'];  // pages without a tab
 
 // A route is a tab name, or "device/<id>" for one device's page.
 function showTab(route) {
   const [name, ...rest] = route.split('/');
-  const known = name === 'device' || TABS.includes(name);
+  const known = name === 'device' || TABS.includes(name) || PAGES.includes(name);
   const tab = known ? name : 'dashboard';
   for (const link of document.querySelectorAll('#tabs a')) {
     link.classList.toggle('active', link.dataset.tab === (tab === 'device' ? 'devices' : tab));
   }
   for (const section of document.querySelectorAll('.tab')) section.classList.toggle('d-none', section.id !== `tab-${tab}`);
+  document.body.classList.toggle('wall-mode', tab === 'wall');
+  if (tab === 'wall') loadWall().catch(() => {}); else stopWall();
+  if (tab === 'summary') loadSummary().catch(() => {});
   if (tab === 'dashboard') loadDashboard().catch(() => {});
   if (tab === 'device') loadDevicePage(decodeURIComponent(rest.join('/'))).catch(() => {});
   if (tab === 'console') loadConsole().catch(() => {});
@@ -680,7 +684,8 @@ function renderNetwork() {
   });
   const groups = layout.nodes.map((n) => {
     const shape = nodeShape(n.node);
-    const group = svg('g', { class: `node${net.selected === n.node.id ? ' selected' : ''}`, transform: `translate(${n.x},${n.y})` },
+    const group = svg('g', { class: `node${net.selected === n.node.id ? ' selected' : ''}`, transform: `translate(${n.x},${n.y})`,
+      'data-device': n.node.device_id || null },
       shape.el, svg('text', { y: shape.r + 14, 'text-anchor': 'middle' }, nodeLabel(n.node)), svg('title', {}, nodeLabel(n.node)));
     n.group = group;
     makeDraggable(group, n);
@@ -846,8 +851,8 @@ function boardCard(device) {
       svg('svg', { viewBox: '0 0 512 512' }, svg('use', { href: '#hacoap-glyph' })), h('span', {}, 'no photo yet'));
   const has = (v) => v !== null && v !== undefined;
   const forecast = h('div', { class: 'net-stat-note' });
-  const water = device.needs_water ? h('span', { class: 'badge water-badge' }, 'needs water')
-    : device.water_target ? `water under ${device.water_target} %` : '';
+  const water = h('div', { class: 'net-stat-note' }, device.needs_water ? h('span', { class: 'badge water-badge' }, 'needs water')
+    : device.water_target ? `water under ${device.water_target} %` : '');
   const stat = (label, value, note) => h('div', { class: 'net-stat' },
     h('div', { class: 'net-stat-label' }, label), h('div', { class: 'net-stat-value' }, value), note);
   const card = h('div', { class: 'net-board' }, photo,
@@ -858,7 +863,7 @@ function boardCard(device) {
       device.online ? 'online' : 'offline', device.last_seen ? ` · read ${ago(device.last_seen)}` : ''),
     h('div', { class: 'net-stats' },
       stat('Battery', pct(device.battery), forecast),
-      stat('Soil', pct(device.soil_moisture), h('div', { class: 'net-stat-note' }, water)),
+      stat('Soil', pct(device.soil_moisture), water),
       stat('Air humidity', pct(device.air_humidity)),
       stat('Temperature', has(device.temperature) ? `${device.temperature} °C` : '–')),
     device.last_error ? h('div', { class: 'small text-danger mt-2' }, device.last_error) : null,
@@ -867,19 +872,33 @@ function boardCard(device) {
       device.needs_water ? h('button', { class: 'btn btn-sm btn-outline-primary', type: 'button',
         onclick: (e) => busy(e.target, () => api('POST', devicePath(device, '/pump'), { on: true })) }, 'Run the pump') : null,
       h('button', { class: 'btn btn-sm btn-outline-secondary', type: 'button', onclick: () => pingDevice(device) }, 'Beep')));
-  if (has(device.battery)) batteryForecast(device).then((f) => { forecast.textContent = daysText(f); }, () => {});
+  deviceHealth(device).then((health) => {
+    if (has(device.battery)) forecast.textContent = daysText(health.battery_forecast);
+    if (!device.needs_water && health.water_forecast) water.textContent = `water ${waterIn(health.water_forecast)}`;
+  }, () => {});
   return card;
 }
 
-// The battery forecast comes with a device's details; kept a few minutes, so clicking around
-// the map doesn't ask again each time.
+// The forecasts come with a device's details; kept a few minutes, so clicking around the map
+// doesn't ask again each time.
 const forecasts = new Map();
-async function batteryForecast(device) {
+async function deviceHealth(device) {
   const known = forecasts.get(device.device_id);
-  if (known && Date.now() - known.at < 5 * 60 * 1000) return known.forecast;
+  if (known && Date.now() - known.at < 5 * 60 * 1000) return known.health;
   const details = await api('GET', `${devicePath(device, '/details')}?days=1`, undefined, { quiet: true });
-  forecasts.set(device.device_id, { at: Date.now(), forecast: details.health.battery_forecast });
-  return details.health.battery_forecast;
+  forecasts.set(device.device_id, { at: Date.now(), health: details.health });
+  return details.health;
+}
+
+// When a plant will need water, from its forecast: "now", "in about 2 days".
+function waterIn(forecast) {
+  if (!forecast) return '';
+  const days = forecast.days;
+  if (days === null || days === undefined) return 'not drying';
+  if (days === 0) return 'now';
+  if (days < 0.5) return 'within hours';
+  if (days < 1.5) return 'in about a day';
+  return `in about ${Math.round(days)} days`;
 }
 
 function showLinkDetails(spring) {
@@ -1230,7 +1249,7 @@ async function loadDashboard() {
 
   const table = (rows, empty) => rows.length ? h('table', { class: 'table table-sm mb-0' }, h('tbody', {}, rows)) :
     h('p', { class: 'text-body-secondary mb-0' }, empty);
-  document.getElementById('dash-water').replaceChildren(table(d.needs_water.map((e) => h('tr', {},
+  document.getElementById('dash-water').replaceChildren(...[table(d.needs_water.map((e) => h('tr', {},
     h('td', { class: 'thumb-cell' }, e.photo ? h('img', { class: 'thumb', src: photoUrl(e), alt: '' }) : null),
     h('td', {}, deviceLink(e), e.plant ? h('div', { class: 'small text-body-secondary' }, e.plant) : null),
     h('td', { class: 'text-end text-warning text-nowrap' }, pct(e.soil_moisture)),
@@ -1239,7 +1258,14 @@ async function loadDashboard() {
       await api('POST', `/api/devices/${encodeURIComponent(e.device_id)}/pump`, { on: true });
       notify(`Watering ${e.name}`, 'success', 3000);
     }) }, 'Run the pump')))),
-  'Every plant has enough water. Set a target per plant on its page, or the default in Settings.'));
+  'Every plant has enough water. Set a target per plant on its page, or the default in Settings.'),
+  d.water_soon.length ? h('div', { class: 'small fw-bold mt-3 mb-1' }, 'Soon') : null,
+  d.water_soon.length ? table(d.water_soon.map((e) => h('tr', {},
+    h('td', { class: 'thumb-cell' }, e.photo ? h('img', { class: 'thumb', src: photoUrl(e), alt: '' }) : null),
+    h('td', {}, deviceLink(e), e.plant ? h('div', { class: 'small text-body-secondary' }, e.plant) : null),
+    h('td', { class: 'text-end text-nowrap' }, pct(e.soil_moisture)),
+    h('td', { class: 'small text-body-secondary text-nowrap' }, `${waterIn(e.water_forecast)} (target ${e.water_target} %)`))), '') : null].filter(Boolean));
+  renderGuide(d).catch(() => {});
   renderAlerts();
   document.getElementById('dash-batteries').replaceChildren(table(d.low_battery.map((e) => h('tr', {},
     h('td', {}, deviceLink(e)), h('td', { class: 'text-end' }, pct(e.battery)), h('td', { class: 'small' }, daysText(e.battery_forecast)))),
@@ -1252,7 +1278,7 @@ async function loadDashboard() {
   d.network_read ? 'No weak links in the last network read.' : 'Read the network (Network tab) to see the links.'));
   document.getElementById('dash-updates').replaceChildren(table(d.recent_updates.map((u) => {
     const device = state.devices.get(u.device_id);
-    return h('tr', {}, h('td', { class: 'small' }, ago(u.finished)), h('td', {}, device ? deviceName(device) : u.device_id),
+    return h('tr', {}, h('td', { class: 'small' }, ago(u.finished)), h('td', {}, device ? deviceName(device) : u.name || u.device_id),
       h('td', {}, `v${u.image_version}`), h('td', {}, h('span', { class: `badge text-bg-${statusClass[u.result] || 'secondary'}` }, u.result)));
   }), 'No updates yet.'));
   loadDrain().catch(() => {});
@@ -1633,7 +1659,8 @@ function drawFloorplanNodes(stage, img) {
   for (const node of topology.nodes) {
     const p = points.get(node.id);
     const shape = nodeShape(node, 1.1);
-    const group = svg('g', { class: `node${p.placed ? '' : ' unplaced'}`, transform: `translate(${p.x},${p.y})` },
+    const group = svg('g', { class: `node${p.placed ? '' : ' unplaced'}`, transform: `translate(${p.x},${p.y})`,
+      'data-device': node.device_id || null },
       shape.el, svg('text', { x: shape.r + 6, y: 4 }, nodeLabel(node)), svg('title', {}, `${nodeLabel(node)}: drag it to where it is`));
     let start = null;
     group.addEventListener('pointerdown', (event) => {
@@ -2014,7 +2041,10 @@ function connectEvents(delay = 1000) {
   socket.addEventListener('message', (message) => {
     const event = JSON.parse(message.data);
     if (event.type === 'device') {
+      const before = state.devices.get(event.device.device_id);
+      if (before && event.device.last_seen && event.device.last_seen !== before.last_seen) pulseBoard(event.device.device_id);
       state.devices.set(event.device.device_id, event.device);
+      if (currentRoute() === 'wall') loadWallSoon();
       renderDevices();
       if (currentRoute() === `device/${encodeURIComponent(event.device.device_id)}`) {
         renderDeviceStatus(event.device);
@@ -2144,6 +2174,8 @@ document.addEventListener('keydown', (event) => {
 
 async function loadStatus() {
   state.status = await api('GET', '/api/status', undefined, { quiet: true });
+  document.getElementById('demo-banner').classList.toggle('d-none', !state.status.demo);
+  document.title = state.status.demo ? 'Demo · HA-CoAP Fleet Manager' : 'HA-CoAP Fleet Manager';
   return state.status;
 }
 
@@ -2245,19 +2277,57 @@ async function shrinkPhoto(file) {
   return new Promise((resolve) => canvas.toBlob((blob) => resolve(blob || file), 'image/jpeg', 0.85));
 }
 
+// The plant card: its photos over time (a slider steps through them, with the soil at each
+// date), whether it needs water, when it will, and what a pump run does.
+const timeline = { device: null, photo: null, taken: [], index: -1 };
+
+async function loadTimeline(device) {
+  timeline.taken = (await api('GET', devicePath(device, '/photos'), undefined, { quiet: true })).map((p) => p.taken);
+  timeline.device = device.device_id;
+  timeline.photo = device.photo;
+  timeline.index = timeline.taken.length - 1;
+}
+
 function renderDevicePhoto(device) {
   if (device.device_id !== devicePage.id) return;
+  if (timeline.device !== device.device_id || timeline.photo !== device.photo) {
+    loadTimeline(device).then(() => renderDevicePhoto(device), () => {});
+    if (timeline.device !== device.device_id) return;
+  }
   const input = h('input', { type: 'file', class: 'd-none', accept: 'image/png,image/jpeg,image/webp' });
   const choose = h('button', { class: 'btn btn-sm btn-outline-secondary', type: 'button', onclick: () => input.click() },
-    device.photo ? 'Change the photo' : 'Add a photo');
+    'Add a photo');
   input.addEventListener('change', () => {
     const file = input.files[0];
-    if (file) busy(choose, async () => api('POST', devicePath(device, '/photo'), await shrinkPhoto(file)));
+    // When it was taken: the file's date (a phone keeps it), sent along; the app checks it.
+    if (file) busy(choose, async () => api('POST', devicePath(device, `/photo?taken=${Math.round(file.lastModified / 1000)}`), await shrinkPhoto(file)));
   });
-  const picture = device.photo
-    ? h('img', { class: 'plant-photo', src: photoUrl(device), alt: device.plant ? `The ${device.plant}` : `The plant of ${deviceName(device)}` })
+  const taken = timeline.taken[timeline.index];
+  const alt = device.plant ? `The ${device.plant}` : `The plant of ${deviceName(device)}`;
+  const picture = taken
+    ? h('img', { class: 'plant-photo', src: `${devicePath(device, `/photos/${taken}`)}`, alt })
     : h('button', { class: 'plant-photo-empty', type: 'button', onclick: () => input.click() },
       'Add a photo of the plant this device looks after');
+
+  // The slider, with the soil at that date and a chart marking it
+  let steps = null;
+  if (timeline.taken.length > 1) {
+    const readings = (devicePage.details && devicePage.details.readings) || [];
+    const near = readings.filter((r) => r.soil_moisture !== null && r.soil_moisture !== undefined)
+      .reduce((best, r) => (!best || Math.abs(r.time - taken) < Math.abs(best.time - taken) ? r : best), null);
+    const slider = h('input', { type: 'range', class: 'form-range', min: 0, max: timeline.taken.length - 1, value: timeline.index,
+      'aria-label': 'Photo date' });
+    slider.addEventListener('input', () => { timeline.index = Number(slider.value); renderDevicePhoto(device); });
+    const soil = readings.map((r) => ({ t: r.time, v: r.soil_moisture }));
+    steps = h('div', { class: 'mt-2' }, slider,
+      h('div', { class: 'small d-flex justify-content-between' },
+        h('span', {}, new Date(taken * 1000).toLocaleDateString([], { year: 'numeric', month: 'short', day: 'numeric' })),
+        h('span', { class: 'text-body-secondary' }, `photo ${timeline.index + 1} of ${timeline.taken.length}` +
+          (near && Math.abs(near.time - taken) < 2 * 86400 ? ` · soil then ${near.soil_moisture} %` : ''))),
+      lineChart('Soil moisture', soil, { unit: ' %', min: 0, max: 100, color: 'var(--t-cyan)',
+        events: [{ t: taken, kind: 'photo', text: 'this photo' }] }));
+  }
+
   const target = device.water_target;
   let water = 'No soil reading yet.';
   if (device.soil_moisture !== null && device.soil_moisture !== undefined) {
@@ -2265,14 +2335,21 @@ function renderDevicePhoto(device) {
       : device.needs_water ? `Soil at ${device.soil_moisture} %: under its target of ${target} %, it needs water.`
         : `Soil at ${device.soil_moisture} %: fine (it needs water under ${target} %).`;
   }
-  document.getElementById('device-photo').replaceChildren(picture,
+  const health = devicePage.details && devicePage.details.device.device_id === device.device_id ? devicePage.details.health : {};
+  const forecast = health.water_forecast;
+  const effect = health.pump_effect;
+  document.getElementById('device-photo').replaceChildren(...[picture, steps,
     device.plant ? h('div', { class: 'fw-bold mt-2' }, device.plant) : null,
     h('div', { class: `small mt-1 ${device.needs_water ? 'text-warning' : 'text-body-secondary'}` }, water),
-    h('div', { class: 'd-flex gap-2 mt-2' }, choose,
-      device.photo ? h('button', { class: 'btn btn-sm btn-outline-danger', type: 'button', onclick: async () => {
-        if (confirm('Remove the photo?')) await api('DELETE', devicePath(device, '/photo')).catch(() => {});
-      } }, 'Remove') : null),
-    input);
+    forecast && !device.needs_water && forecast.days !== null ? h('div', { class: 'small text-body-secondary' },
+      `It dries about ${forecast.per_day.toFixed(1)} % a day: it will need water ${waterIn(forecast)}.`) : null,
+    effect ? h('div', { class: 'small text-body-secondary' }, `A pump run${effect.seconds ? ` of ${effect.seconds} s` : ''} ` +
+      `raises its soil by about ${Math.round(effect.rise)} % (from ${effect.runs} run${effect.runs > 1 ? 's' : ''} started here).`) : null,
+    h('div', { class: 'd-flex flex-wrap gap-2 mt-2' }, choose,
+      taken ? h('button', { class: 'btn btn-sm btn-outline-danger', type: 'button', onclick: async () => {
+        if (confirm('Remove this photo?')) await api('DELETE', devicePath(device, `/photos/${taken}`)).catch(() => {});
+      } }, timeline.taken.length > 1 ? 'Remove this one' : 'Remove') : null),
+    input].filter(Boolean));
 }
 
 // ------------------------------------------------------------------ alerts and notifications
@@ -2529,6 +2606,9 @@ async function runDoctor(device = null) {
     body.replaceChildren(h('p', { class: 'text-danger mb-0' }, error.message));
     return;
   }
+  if (result.ok) {
+    try { localStorage.setItem('hacoap-doctor-ok', '1'); } catch (error) { /* not remembered */ }
+  }
   body.replaceChildren(
     h('p', { class: `fw-bold ${result.ok ? 'text-success' : 'text-danger'}` }, result.summary),
     h('ol', { class: 'list-unstyled doctor-steps' }, result.steps.map((s) => {
@@ -2712,6 +2792,224 @@ document.getElementById('ha-import').addEventListener('click', (event) => busy(e
   loadStorage().catch(() => {});
 }));
 
+// ------------------------------------------------------------------ wall display
+
+// Full screen for a spare monitor: every plant big, the ones that need water first, a page
+// at a time when they don't all fit, turning every 15 seconds.
+const wall = { plants: [], page: 0, timers: [], soon: null };
+const WALL_PAGE = 6;
+
+async function loadWall() {
+  wall.plants = await api('GET', '/api/wall', undefined, { quiet: true });
+  if (!wall.timers.length) {
+    wall.timers.push(setInterval(() => { wall.page += 1; renderWall(); }, 15000));
+    wall.timers.push(setInterval(() => loadWall().catch(() => {}), 60000));
+    wall.timers.push(setInterval(renderWallClock, 1000));
+  }
+  renderWallClock();
+  renderWall();
+}
+
+function loadWallSoon() {  // after device events, at most every few seconds
+  clearTimeout(wall.soon);
+  wall.soon = setTimeout(() => loadWall().catch(() => {}), 3000);
+}
+
+function stopWall() {
+  wall.timers.forEach(clearInterval);
+  wall.timers = [];
+  if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+}
+
+function renderWallClock() {
+  const now = new Date();
+  document.getElementById('wall-clock').textContent =
+    `${now.toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric' })} · ${now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+}
+
+function renderWall() {
+  const plants = wall.plants;
+  const pages = Math.max(1, Math.ceil(plants.length / WALL_PAGE));
+  const page = wall.page % pages;
+  const thirsty = plants.filter((p) => p.needs_water);
+  document.getElementById('wall-banner').replaceChildren(thirsty.length
+    ? h('span', { class: 'wall-alert' }, `💧 ${thirsty.map((p) => p.name).join(', ')} ${thirsty.length > 1 ? 'need' : 'needs'} water`)
+    : h('span', { class: 'wall-ok' }, 'Every plant has enough water'));
+  document.getElementById('wall-grid').replaceChildren(...plants.slice(page * WALL_PAGE, (page + 1) * WALL_PAGE).map((p) => {
+    const soil = p.soil_moisture;
+    const fill = soil === null || soil === undefined ? 0 : Math.max(0, Math.min(100, soil));
+    return h('div', { class: `wall-card${p.needs_water ? ' thirsty' : ''}${p.online ? '' : ' offline'}` },
+      p.photo ? h('img', { class: 'wall-photo', src: photoUrl(p), alt: '' })
+        : h('div', { class: 'wall-photo empty' }, svg('svg', { viewBox: '0 0 512 512' }, svg('use', { href: '#hacoap-glyph' }))),
+      h('div', { class: 'wall-body' },
+        h('div', { class: 'wall-name' }, p.name),
+        h('div', { class: 'wall-plant' }, [p.plant && p.plant.toLowerCase() !== p.name.toLowerCase() ? p.plant : null, p.location].filter(Boolean).join(' · ')),
+        h('div', { class: 'wall-soil' }, h('span', { class: 'wall-value' }, soil === null || soil === undefined ? '–' : `${soil} %`), ' soil'),
+        h('div', { class: 'wall-bar' }, h('div', { class: 'wall-bar-fill', style: `width: ${fill}%` }),
+          p.water_target ? h('div', { class: 'wall-bar-target', style: `left: ${p.water_target}%`, title: `water under ${p.water_target} %` }) : null),
+        h('div', { class: 'wall-note' }, p.needs_water ? 'needs water now'
+          : p.water_forecast && p.water_forecast.days !== null ? `water ${waterIn(p.water_forecast)}` : ''),
+        h('div', { class: 'wall-meta' }, `battery ${pct(p.battery)}`, p.online ? '' : ' · offline')));
+  }));
+  document.getElementById('wall-foot').textContent = pages > 1 ? `page ${page + 1} of ${pages}` : '';
+}
+
+document.getElementById('wall-fullscreen').addEventListener('click', () => {
+  if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+  else document.documentElement.requestFullscreen().catch(() => notify('This browser won\'t go full screen', 'warning'));
+});
+
+// ------------------------------------------------------------------ getting started
+
+// A checklist on the dashboard until it's done (or hidden): each step ticks itself off.
+async function renderGuide(d) {
+  const box = document.getElementById('dash-guide');
+  let hidden = false;
+  let doctorOk = false;
+  try {
+    hidden = localStorage.getItem('hacoap-guide-hidden') === '1';
+    doctorOk = localStorage.getItem('hacoap-doctor-ok') === '1';
+  } catch (error) { /* shown, unticked */ }
+  const status = state.status || await loadStatus().catch(() => null);
+  if (hidden || (status && status.demo)) { box.classList.add('d-none'); return; }
+  const autostart = await api('GET', '/api/autostart', undefined, { quiet: true }).catch(() => ({ enabled: false }));
+  const anyPhoto = [...state.devices.values()].some((dev) => dev.photo);
+  const steps = [
+    [doctorOk, 'Check the connection', 'each step from this computer to the boards', () => runDoctor()],
+    [d.counts.devices > 0, 'Find your boards', 'Devices tab', runOnTab('devices', 'discover')],
+    [!!d.network_read, 'Read the network', 'needs the border router\'s address', runOnTab('network', 'network-refresh')],
+    [!!d.release, 'Mark the release', 'the image your fleet should run (Images tab)', () => { location.hash = '#images'; }],
+    [anyPhoto, 'Add a plant photo', 'on a device\'s page', () => { location.hash = '#devices'; }],
+    [autostart.enabled, 'Start with this computer', 'so history builds up (Settings)', () => { location.hash = '#settings'; }],
+  ];
+  const done = steps.filter(([ok]) => ok).length;
+  if (done === steps.length) { box.classList.add('d-none'); return; }
+  box.classList.remove('d-none');
+  box.replaceChildren(
+    h('div', { class: 'card-header d-flex align-items-center' }, `Getting started · ${done} of ${steps.length}`,
+      h('button', { class: 'btn btn-sm btn-link ms-auto p-0', type: 'button', onclick: () => {
+        try { localStorage.setItem('hacoap-guide-hidden', '1'); } catch (error) { /* shown again next time */ }
+        box.classList.add('d-none');
+      } }, 'Hide this')),
+    h('div', { class: 'card-body' }, h('ol', { class: 'guide mb-0' }, steps.map(([ok, label, hint, run]) =>
+      h('li', { class: ok ? 'done' : '' }, h('span', { class: 'guide-mark' }, ok ? '✓' : '○'),
+        ok ? h('span', {}, label) : h('a', { href: '#', onclick: (e) => { e.preventDefault(); run(); } }, label),
+        h('span', { class: 'small text-body-secondary ms-2' }, hint))))));
+}
+
+// ------------------------------------------------------------------ the demo
+
+document.getElementById('demo-start').addEventListener('click', (event) => busy(event.target, async () => {
+  // Opened first, then pointed at the demo: browsers block a tab opened after a wait
+  const tab = window.open('', '_blank');
+  try {
+    const result = await api('POST', '/api/demo');
+    if (tab) tab.location = result.url; else window.location.href = result.url;
+  } catch (error) {
+    if (tab) tab.close();
+  }
+}));
+document.getElementById('demo-stop').addEventListener('click', async () => {
+  if (!confirm('Stop the demo? Its data is thrown away.')) return;
+  try {
+    await api('POST', '/api/quit');
+  } catch (error) {
+    return;
+  }
+  document.querySelector('main').replaceChildren(h('div', { class: 'p-5 text-center' },
+    h('h4', {}, 'The demo has stopped.'), h('p', { class: 'text-body-secondary' }, 'You can close this tab.')));
+});
+
+// ------------------------------------------------------------------ a board answering, on the map
+
+// A short pulse from the board to its parent each time it answers, so the mesh looks alive.
+const calm = () => window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+function pulseBoard(deviceId) {
+  if (calm() || currentRoute().split('/')[0] !== 'network') return;
+  for (const group of document.querySelectorAll(`#network-canvas g.node[data-device="${CSS.escape(deviceId)}"], #floorplan g.node[data-device="${CSS.escape(deviceId)}"]`)) {
+    group.classList.remove('pulse');
+    void group.getBBox();  // restarts the animation
+    group.classList.add('pulse');
+    setTimeout(() => group.classList.remove('pulse'), 1300);
+  }
+  const n = net.layout && net.layout.nodes.find((x) => x.node.device_id === deviceId);
+  const spring = n && net.layout.springs.find((sp) => (sp.a === n || sp.b === n) && sp.link.kind === 'child');
+  const drawing = document.querySelector('#network-canvas svg');
+  if (!spring || !drawing || !spring.line) return;
+  const to = spring.a === n ? spring.b : spring.a;
+  const dot = svg('circle', { r: 4, class: 'pulse-dot', cx: n.x, cy: n.y });
+  drawing.append(dot);
+  const started = performance.now();
+  const step = (now) => {
+    const k = Math.min(1, (now - started) / 900);
+    const ease = k * (2 - k);
+    dot.setAttribute('cx', n.x + (to.x - n.x) * ease);
+    dot.setAttribute('cy', n.y + (to.y - n.y) * ease);
+    dot.setAttribute('opacity', 1 - k * 0.6);
+    if (k < 1) requestAnimationFrame(step); else dot.remove();
+  };
+  requestAnimationFrame(step);
+}
+
+// ------------------------------------------------------------------ weekly summary
+
+const summaryView = { weeksBack: 0 };
+const dateShort = (t) => new Date(t * 1000).toLocaleDateString([], { month: 'short', day: 'numeric' });
+
+async function loadSummary() {
+  const days = Number(document.getElementById('summary-days').value);
+  const end = Date.now() / 1000 - summaryView.weeksBack * 7 * 86400;
+  renderSummary(await api('GET', `/api/summary?days=${days}&end=${end}`));
+}
+
+function renderSummary(r) {
+  const section = (title, body) => h('section', { class: 'summary-section' }, h('h5', {}, title), body);
+  const list = (rows, empty) => rows.length ? h('ul', { class: 'mb-0' }, rows) : h('p', { class: 'text-body-secondary mb-0' }, empty);
+  const totalWaterings = r.plants.reduce((sum, p) => sum + p.waterings, 0);
+  const numbers = [[r.devices, 'boards'], [`${r.online}`, 'online now'], [totalWaterings, 'waterings'],
+    [r.alerts.length, 'alerts'], [r.updates.length, 'updates'], [r.parent_changes.length, 'parent changes']];
+  document.getElementById('summary').replaceChildren(
+    h('div', { class: 'summary-head' }, h('img', { src: '/static/logo.svg', alt: '', class: 'summary-logo' }),
+      h('div', {}, h('h3', { class: 'mb-0' }, 'ha-coap fleet summary'),
+        h('div', { class: 'text-body-secondary' }, `${dateShort(r.start)} to ${dateShort(r.end)} ${new Date(r.end * 1000).getFullYear()} · ${r.days} days`))),
+    h('div', { class: 'summary-numbers' }, numbers.map(([value, label]) => h('div', {}, h('b', {}, value), h('span', {}, label)))),
+    section('Plants', h('table', { class: 'table table-sm' },
+      h('thead', {}, h('tr', {}, h('th', {}, 'Plant'), h('th', { class: 'text-end' }, 'Soil (low to high)'), h('th', { class: 'text-end' }, 'Now'),
+        h('th', { class: 'text-end' }, 'Waterings'), h('th', {}, 'Next'))),
+      h('tbody', {}, r.plants.map((p) => h('tr', {},
+        h('td', {}, h('b', {}, p.name), p.plant && p.plant.toLowerCase() !== p.name.toLowerCase() ? ` · ${p.plant}` : ''),
+        h('td', { class: 'text-end' }, p.soil ? `${p.soil.min} to ${p.soil.max} %` : '–'),
+        h('td', { class: 'text-end' }, p.soil ? `${p.soil.last} %` : '–'),
+        h('td', { class: 'text-end' }, p.waterings ? `${p.waterings}${p.pump_runs ? ` (${p.pump_runs} from the app)` : ''}` : '0'),
+        h('td', { class: p.needs_water ? 'text-warning' : '' }, p.needs_water ? 'needs water now'
+          : p.water_forecast && p.water_forecast.days !== null ? `water ${waterIn(p.water_forecast)}` : '')))))),
+    section('Batteries', h('table', { class: 'table table-sm' },
+      h('thead', {}, h('tr', {}, h('th', {}, 'Board'), h('th', { class: 'text-end' }, 'Start'), h('th', { class: 'text-end' }, 'End'),
+        h('th', { class: 'text-end' }, 'Per day'), h('th', {}, 'Firmware'))),
+      h('tbody', {}, r.batteries.map((b) => h('tr', {}, h('td', {}, b.name),
+        h('td', { class: 'text-end' }, b.battery ? `${b.battery.first} %` : '–'), h('td', { class: 'text-end' }, b.battery ? `${b.battery.last} %` : '–'),
+        h('td', { class: 'text-end' }, b.per_day !== null ? `${b.per_day.toFixed(2)} %` : '–'),
+        h('td', {}, b.image_hash ? `v${b.image_version} · ${shortHash(b.image_hash)}` : '')))))),
+    r.drain_by_image.length ? section('Battery drain by firmware', list(r.drain_by_image.map((g) => h('li', {},
+      `${imageLabel(g.image_hash, g.version)}: ${perDay({ per_day: g.median })} over ${g.devices.length} board(s), ${fullLasts(g.days_full)}`)), '')) : null,
+    section('Alerts', list(r.alerts.map((a) => h('li', {}, `${when(a.raised)}: ${a.message}`, a.cleared ? h('span', { class: 'text-body-secondary' }, ` (cleared ${when(a.cleared)})`) : '')),
+      'No alerts.')),
+    section('Updates', list(r.updates.map((u) => h('li', {}, `${when(u.started)}: ${u.name} to v${u.image_version}, ${u.result}`)), 'No updates.')),
+    section('Network', list(r.parent_changes.map((e) => h('li', {}, `${when(e.time)}: ${e.message}`)),
+      `No parent changes${r.network_readings ? ` in ${r.network_readings} network reading(s)` : ' (no network readings in this period)'}.`)),
+    h('p', { class: 'small text-body-secondary mt-3 mb-0' }, `Made by the HA-CoAP Fleet Manager on ${when(Date.now() / 1000)}.`));
+  document.getElementById('summary-later').disabled = summaryView.weeksBack === 0;
+}
+
+document.getElementById('summary-days').addEventListener('change', () => loadSummary().catch(() => {}));
+document.getElementById('summary-earlier').addEventListener('click', () => { summaryView.weeksBack += 1; loadSummary().catch(() => {}); });
+document.getElementById('summary-later').addEventListener('click', () => {
+  summaryView.weeksBack = Math.max(0, summaryView.weeksBack - 1);
+  loadSummary().catch(() => {});
+});
+document.getElementById('summary-print').addEventListener('click', () => window.print());
+
 // ------------------------------------------------------------------ search (Ctrl+K)
 
 const palette = { items: [], shown: [], index: 0 };
@@ -2738,6 +3036,9 @@ function paletteItems() {
   action('Read all firmware', 'which image each device runs', runOnTab('devices', 'read-all-slots'));
   action('Check my connection', 'each step from this computer to the boards', () => runDoctor());
   action('Print labels', 'for the pots or the boards', runOnTab('devices', 'labels-open'));
+  action('Wall display', 'full screen, for a spare monitor', () => { location.hash = '#wall'; });
+  action('Weekly summary', 'what happened this week, to print', () => { location.hash = '#summary'; });
+  if (!(state.status && state.status.demo)) action('Start the demo', 'simulated boards, in a new tab', runOnTab('settings', 'demo-start'));
   action('Read the network', 'network', runOnTab('network', 'network-refresh'));
   action('Scan the channels', 'radio noise per channel', runOnTab('network', 'channel-scan'));
   action('Download a backup', 'settings', download('/api/backup'));

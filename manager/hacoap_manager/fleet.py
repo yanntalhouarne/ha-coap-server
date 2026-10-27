@@ -1,6 +1,7 @@
 """Fleet health: battery forecasts, which devices run the release image, which plants need
 water, and the dashboard."""
 
+import re
 import time
 
 DAY = 86400
@@ -134,6 +135,61 @@ def needs_water(device, settings):
     return target is not None and device.get("soil_moisture") is not None and device["soil_moisture"] < target
 
 
+WATERING_RISE = 5        # % of soil moisture up between two readings: the plant was watered
+SOON_DAYS = 3            # plants that will need water within this many days are listed as "soon"
+
+
+def _soil_points(readings):
+    return [(r["time"], r["soil_moisture"]) for r in readings if r.get("soil_moisture") is not None]
+
+
+def water_forecast(readings, target, now=None):
+    """When the soil will be under 'target' % at the rate it has dried since its last watering:
+    {days (0: already), per_day, soil}, with days None when it isn't drying. None without a
+    target, or without 3 readings over 6 hours since the last watering."""
+    if not target:
+        return None
+    now = now or time.time()
+    points = _soil_points(readings)
+    start = 0
+    for i in range(1, len(points)):
+        if points[i][1] > points[i - 1][1] + WATERING_RISE:
+            start = i            # watered: only the drying since counts
+    run = points[start:]
+    if len(run) < 3 or run[-1][0] - run[0][0] < 6 * 3600:
+        return None
+    per_day = -_slope(run) * DAY
+    soil = run[-1][1]
+    if soil < target:
+        return {"days": 0, "per_day": per_day, "soil": soil}
+    if per_day < 0.5:            # flat, or rising: no forecast
+        return {"days": None, "per_day": per_day, "soil": soil}
+    days = (soil - target) / per_day - (now - run[-1][0]) / DAY
+    return {"days": max(0.0, days), "per_day": per_day, "soil": soil}
+
+
+SECONDS = re.compile(r"\((\d+) s\)")
+
+
+def pump_effect(readings, activity, window_s=3 * 3600):
+    """How much the soil rose after the pump runs started from the app: {runs, rise (average %),
+    seconds (their usual run time)}, or None without a measurable one."""
+    points = _soil_points(readings)
+    rises, durations = [], []
+    for run in (a for a in activity if a["kind"] == "pump"):
+        before = [v for t, v in points if t <= run["time"]]
+        after = [v for t, v in points if run["time"] < t <= run["time"] + window_s]
+        if before and after:
+            rises.append(max(after) - before[-1])
+            found = SECONDS.search(run.get("message", ""))
+            if found:
+                durations.append(int(found.group(1)))
+    if not rises:
+        return None
+    return {"runs": len(rises), "rise": sum(rises) / len(rises),
+            "seconds": max(set(durations), key=durations.count) if durations else None}
+
+
 def image_status(device, release):
     """'current', 'outdated' or 'unknown' (slots never read), compared with the release image."""
     if release is None:
@@ -143,10 +199,14 @@ def image_status(device, release):
     return "current" if device["image_hash"] == release["hash"] else "outdated"
 
 
-def device_health(db, device, release, now=None):
+def device_health(db, device, release, now=None, target=None):
+    """The image status, the battery forecast and the watering forecast ('target': the device's
+    watering target; its water_target when it's described)."""
     now = now or time.time()
     readings = db.readings(device["device_id"], since=now - FORECAST_WINDOW_DAYS * DAY)
-    return {"image_status": image_status(device, release), "battery_forecast": battery_forecast(readings)}
+    target = target if target is not None else device.get("water_target")
+    return {"image_status": image_status(device, release), "battery_forecast": battery_forecast(readings),
+            "water_forecast": water_forecast(readings, target, now)}
 
 
 def weak_links(topology):
@@ -169,12 +229,31 @@ def weak_links(topology):
     return result
 
 
+def wall(db, inventory, now=None):
+    """The wall display: every plant with its photo, soil, target, forecasts and battery; the ones
+    that need water first, then the soonest to."""
+    now = now or time.time()
+    plants = []
+    for device in inventory.devices():
+        readings = db.readings(device["device_id"], since=now - FORECAST_WINDOW_DAYS * DAY)
+        plants.append({"device_id": device["device_id"], "name": device["name"] or device["device_id"],
+                       "plant": device["plant"], "location": device["location"], "photo": device["photo"],
+                       "soil_moisture": device["soil_moisture"], "water_target": device["water_target"],
+                       "needs_water": device["needs_water"], "battery": device["battery"], "online": device["online"],
+                       "water_forecast": water_forecast(readings, device["water_target"], now),
+                       "battery_forecast": battery_forecast(readings)})
+    soon = lambda p: (p["water_forecast"] or {}).get("days")  # noqa: E731
+    plants.sort(key=lambda p: (not p["needs_water"], soon(p) is None, soon(p) or 0, p["name"].lower()))
+    return plants
+
+
 def dashboard(db, inventory, topology):
     devices = inventory.devices()
     release = db.release_image()
     images = {i["hash"]: i for i in db.images()}
     by_image = {}
-    outdated, unknown, low, offline, dry = [], [], [], [], []
+    outdated, unknown, low, offline, dry, soon = [], [], [], [], [], []
+    names = {d["device_id"]: d["name"] or d["device_id"] for d in devices}
     for device in devices:
         health = device_health(db, device, release)
         entry = {"device_id": device["device_id"], "name": device["name"] or device["device_id"],
@@ -182,7 +261,7 @@ def dashboard(db, inventory, topology):
                  "image_version": device["image_version"], "image_hash": device["image_hash"],
                  "battery_forecast": health["battery_forecast"], "tags": device["tags"], "plant": device["plant"],
                  "photo": device["photo"], "soil_moisture": device["soil_moisture"],
-                 "water_target": device["water_target"]}
+                 "water_target": device["water_target"], "water_forecast": health["water_forecast"]}
         key = device["image_hash"] or ""
         group = by_image.setdefault(key, {"image_hash": key, "version": device["image_version"],
                                           "notes": images.get(key, {}).get("notes", ""), "count": 0,
@@ -200,8 +279,11 @@ def dashboard(db, inventory, topology):
             offline.append(entry)
         if device["needs_water"]:
             dry.append(entry)
+        elif (health["water_forecast"] or {}).get("days") is not None and health["water_forecast"]["days"] <= SOON_DAYS:
+            soon.append(entry)
     dry.sort(key=lambda e: e["soil_moisture"] - e["water_target"])  # the driest first
     low.sort(key=lambda e: (e["battery_forecast"] or {}).get("days_left", e["battery"] or 0))
+    soon.sort(key=lambda e: e["water_forecast"]["days"])
     return {
         "counts": {"devices": len(devices), "online": sum(1 for d in devices if d["online"]),
                    "outdated": len(outdated), "unknown": len(unknown), "low_battery": len(low),
@@ -213,7 +295,8 @@ def dashboard(db, inventory, topology):
         "low_battery": low,
         "offline": offline,
         "needs_water": dry,
+        "water_soon": soon,
         "weak_links": weak_links(topology)[:10],
-        "recent_updates": db.updates(limit=8),
+        "recent_updates": [{**u, "name": names.get(u["device_id"], u["device_id"])} for u in db.updates(limit=8)],
         "network_read": topology.get("fetched") if topology else None,
     }

@@ -26,7 +26,7 @@ AUTO_KEEP = 7
 MAX_RESTORE_SIZE = 200 * 1024 * 1024
 IMAGE_NAME = re.compile(r"images/[0-9a-f]{64}\.bin")
 BUILD_CONF_NAME = re.compile(r"builds/build-[0-9]+\.conf")
-PHOTO_NAME = re.compile(r"photos/[A-Za-z0-9_-]{1,32}")
+PHOTO_NAME = re.compile(r"photos/[A-Za-z0-9_-]{1,32}(\.[0-9]{1,12})?")  # current, or one of the timeline
 PUBLIC_KEY = "signing-public-key.pem"
 REQUIRED_TABLES = {"devices", "images", "updates"}
 

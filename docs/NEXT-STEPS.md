@@ -110,6 +110,8 @@ Added since (2026-10-25 and 26), all described in `manager/README.md`:
 - **battery drain per firmware** (dashboard and device pages): shows whether the power changes worked
 - **running in the background**, started with the computer, so history and alerts build up
 - **Home Assistant history import** (Settings), chart markers (updates, pump runs, parent changes), plant presets for watering targets, printable labels, and limits on how much data is kept
+- **watering forecasts** ("needs water in about 2 days") and what a pump run does, a **photo timeline** per plant, a **wall display**, a printable **weekly summary**, a **Getting started** list, and pulses on the map when boards answer
+- a **demo** (Settings → Try the demo): a second app with simulated boards and two weeks of history, in a throwaway data folder, to show the project or try it without boards
 - a **simulated fleet**: `python -m hacoap_manager.simdevice --count 9 --border-router api` runs 9 devices and a border router on this PC, to try everything without boards
 
 It talks to the devices directly (no `mcumgr` tool needed). Details and instructions: `manager/README.md`. Every change: `manager/CHANGELOG.md`. The plan, with what's next: `docs/FLEET-MANAGER-PLAN.md`.

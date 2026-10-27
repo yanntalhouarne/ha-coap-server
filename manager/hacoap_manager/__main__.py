@@ -17,6 +17,7 @@ import logging
 import os
 import socket
 import sys
+import tempfile
 import threading
 import urllib.request
 import webbrowser
@@ -61,10 +62,10 @@ def _running_instance(port, data_dir):
     return url if same else None
 
 
-def _log_to_file(data_dir):
+def _log_to_file(folder, name=LOG_NAME):
     """In the background there's no console: print and log into the data folder (the previous
     file kept as .old once it's over 2 MB)."""
-    path = Path(data_dir) / LOG_NAME
+    path = Path(folder) / name
     path.parent.mkdir(parents=True, exist_ok=True)
     if path.exists() and path.stat().st_size > LOG_MAX:
         path.replace(path.with_suffix(".log.old"))
@@ -84,14 +85,21 @@ def main(argv=None):
     parser.add_argument("--background", action="store_true",
                         help="no browser and no console window; log to the data folder (for starting with the computer)")
     parser.add_argument("--workdir", default=None, help="work from this folder (a ha-coap-server checkout, for builds)")
+    parser.add_argument("--demo", action="store_true",
+                        help="the demo: simulated boards and border router, in a throwaway data folder")
     parser.add_argument("--self-test", action="store_true", help="start, check that the server answers, and exit")
     parser.add_argument("--version", action="version", version=__version__)
     args = parser.parse_args(argv)
     if args.workdir:
         os.chdir(args.workdir)
     data_dir = args.data_dir or default_data_dir()
+    if args.demo:
+        data_dir = tempfile.mkdtemp(prefix="hacoap-manager-demo-")
     if args.background:
-        _log_to_file(data_dir)
+        if args.demo:  # outside its data folder, which goes when it stops (an open file couldn't)
+            _log_to_file(tempfile.gettempdir(), "hacoap-manager-demo.log")
+        else:
+            _log_to_file(data_dir)
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     # smpclient warns about every answer from Zephyr 3.3's older SMP version: expected, not useful
@@ -99,14 +107,13 @@ def main(argv=None):
         logging.getLogger(name).setLevel(logging.ERROR)
     if args.self_test:
         import importlib
-        import tempfile
         data_dir = tempfile.mkdtemp(prefix="hacoap-manager-selftest-")
         # Modules loaded only when used: a packaged app must still contain them.
         for module in ("zeroconf.asyncio", "serial.tools.list_ports", "smpclient.transport.udp",
                        "smpclient.transport.serial", "cryptography.hazmat.primitives.asymmetric.ec"):
             importlib.import_module(module)
 
-    if not args.self_test:
+    if not args.self_test and not args.demo:
         running = _running_instance(args.port, data_dir)
         if running:
             print(f"The fleet manager already runs at {running}")
@@ -114,9 +121,13 @@ def main(argv=None):
                 webbrowser.open(running)
             return 0
 
-    port = _free_port(0 if args.self_test else args.port)
-    services = create_services(data_dir)
-    services.launch = {"workdir": os.getcwd(), "data_dir": args.data_dir, "port": args.port if args.port != DEFAULT_PORT else None}
+    demo_port = 8790 if args.demo and args.port == DEFAULT_PORT else args.port  # where Start the demo looks
+    port = _free_port(0 if args.self_test else demo_port)
+    services = create_services(data_dir, **({"discover": None} if args.demo else {}))
+    services.demo = args.demo
+    if not args.demo:  # the demo never starts with the computer
+        services.launch = {"workdir": os.getcwd(), "data_dir": args.data_dir,
+                           "port": args.port if args.port != DEFAULT_PORT else None}
     app = create_app(services, background_tasks=not args.self_test, on_quit=lambda: setattr(server, "should_exit", True))
     url = f"http://127.0.0.1:{port}/"
     server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning"))
@@ -152,10 +163,26 @@ def main(argv=None):
             webbrowser.open(url)
 
         threading.Thread(target=open_browser, daemon=True).start()
+    async def run():
+        demo = None
+        if args.demo:
+            from .demo import Demo
+            demo = Demo(services)
+            await demo.start()  # before serving: the page opens on a ready demo
+        try:
+            await server.serve()
+        finally:
+            if demo is not None:
+                await demo.stop()
+
     try:
-        asyncio.run(server.serve())
+        asyncio.run(run())
     except KeyboardInterrupt:
         pass
+    if args.demo:
+        import shutil
+        services.db.close()
+        shutil.rmtree(data_dir, ignore_errors=True)  # the demo keeps nothing
     return 0
 
 

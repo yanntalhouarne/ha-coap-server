@@ -6,7 +6,7 @@ One application for Windows, macOS and Linux to look after a fleet of ha-coap de
 
 It runs on your PC when you need it. The app starts a small web server that only this computer can reach (`http://127.0.0.1:8710`), and opens it in your browser. Close the app's window and everything stops.
 
-**Status (2026-10-26):** version 0.1.0, the plan's phases 0–2, 5 and 6 (foundations, inventory, updates, builds, backups and releases), plus a dashboard, device pages with history charts and plant photos, groups, staged updates with signature and battery checks, alerts, a network map with each board's plant and readings, a floor plan, a signal heatmap, network history, a channel scan, a serial console, one-click setup of a new computer, flashing new boards over SWD, a connection check, battery drain per firmware, Home Assistant history import, labels, and running in the background. Tested against simulated devices and a simulated border router on Windows, macOS and Linux, and a real firmware build on Windows, **not yet with real boards, a real border router or a J-Link**. Runtime settings and commissioning come later (see [the plan](../docs/FLEET-MANAGER-PLAN.md)). Until it has updated real boards, keep using the scripts or the web updater for anything important.
+**Status (2026-10-26):** version 0.1.0, the plan's phases 0–2, 5 and 6 (foundations, inventory, updates, builds, backups and releases), plus a dashboard, device pages with history charts and plant photos, groups, staged updates with signature and battery checks, alerts, a network map with each board's plant and readings, a floor plan, a signal heatmap, network history, a channel scan, a serial console, one-click setup of a new computer, flashing new boards over SWD, a connection check, battery drain per firmware, Home Assistant history import, labels, running in the background, watering forecasts, a photo timeline per plant, a wall display, a weekly summary, and a built-in demo. Tested against simulated devices and a simulated border router on Windows, macOS and Linux, and a real firmware build on Windows, **not yet with real boards, a real border router or a J-Link**. Runtime settings and commissioning come later (see [the plan](../docs/FLEET-MANAGER-PLAN.md)). Until it has updated real boards, keep using the scripts or the web updater for anything important.
 
 ## Getting it
 
@@ -29,7 +29,7 @@ The app isn't code-signed, which is why each OS warns once.
 | Windows (PowerShell) | `py -m venv .venv` then `.venv\Scripts\pip install -r requirements.txt` | `.venv\Scripts\python -m hacoap_manager` |
 | macOS, Linux | `python3 -m venv .venv` then `.venv/bin/pip install -r requirements.txt` | `.venv/bin/python -m hacoap_manager` |
 
-Options: `--port 8710` (the next free port is used if it's taken), `--data-dir <folder>`, `--no-browser`, `--background` (no browser and no window; it logs to `hacoap-manager.log` in the data folder), `--workdir <folder>` (work from this folder, such as the ha-coap-server checkout). Starting the app while it already runs (same data folder) opens the running one in the browser instead of starting a second.
+Options: `--port 8710` (the next free port is used if it's taken), `--data-dir <folder>`, `--no-browser`, `--background` (no browser and no window; it logs to `hacoap-manager.log` in the data folder), `--workdir <folder>` (work from this folder, such as the ha-coap-server checkout), `--demo` (the demo, see below). Starting the app while it already runs (same data folder) opens the running one in the browser instead of starting a second.
 
 ## Before you use it
 - **Same network as the border router.** The PC reaches the devices through the border router, exactly like the scripts: CoAP on UDP 5683 for status, mcumgr on UDP 1337 for updates, and mDNS to find them. If `ping` to a device's address fails from this PC, the app can't reach it either.
@@ -42,7 +42,7 @@ The look follows [Omarchy](https://omarchy.org/): a terminal feel, JetBrains Mon
 
 On a phone (over Remote Desktop, say) the layout narrows: the tabs scroll sideways, and two fingers pinch to zoom the network map.
 
-**Dashboard.** The fleet at a glance:
+**Dashboard.** The fleet at a glance. On a new setup, a **Getting started** list comes first: check the connection, find your boards, read the network, mark the release, add a plant photo, start with the computer. Each step ticks itself off; **Hide this** puts it away. **Wall display** and **Weekly summary** (top right) open the pages below.
 - **Tiles:**
   - devices online
   - plants that need water
@@ -50,7 +50,7 @@ On a phone (over Remote Desktop, say) the layout narrows: the tabs scroll sidewa
   - devices whose firmware was never read
   - low batteries
   - weak links
-- **Needs water:** the plants whose soil is under their target, the driest first, with **Run the pump** for each.
+- **Needs water:** the plants whose soil is under their target, the driest first, with **Run the pump** for each. Under **Soon**, the ones that will be within 3 days, from how fast their soil has dried since they were last watered (a jump of 5 % or more up counts as a watering).
 - **Alerts:** what needs attention (see Alerts below), each with its time and a button to dismiss it.
 - **Firmware:** how many devices run each image, with the release marked. **Update the N behind…** starts a staged update of those devices (see Updates), and **Read all firmware** asks every device which image it runs.
 - **Batteries:** the lowest first, with the days left at the current rate. The estimate is a straight line through the last 14 days of readings. It needs at least three readings over six hours, and a battery that is actually going down.
@@ -91,7 +91,7 @@ Tick devices to update them, or to use **With selected**: refresh them, read the
 - **Plants:** a device with a photo shows it next to its name, and a **needs water** badge when its soil is under its target.
 
 **A device's page.** Click a device's name. It shows:
-- **Plant:** a photo of the plant it looks after (**Add a photo**: from a phone, too; big photos are shrunk to 1600 pixels before they're sent), and whether it needs water.
+- **Plant:** photos of the plant it looks after, over time. **Add a photo** adds one (from a phone, too; big photos are shrunk to 1600 pixels before they're sent), dated by the file's date, so a photo taken last week lands last week. With two or more, a slider steps through them: each with its date, the soil moisture then, and the soil chart with that date marked; watch the plant grow next to its readings. **Remove this one** removes the photo shown. The newest is the device's photo everywhere else. Under the photos: whether it needs water, when it will at its drying rate ("in about 2 days"), and what a pump run does ("a pump run of 3 s raises its soil by about 17 %", from the runs started from the app over 90 days: tune the run time with it).
 - **Status:** its readings, and the days of battery left.
 - **Firmware:** what it runs, compared with the release.
 - **Controls:**
@@ -123,7 +123,7 @@ The app keeps the public half of your key in its data folder (it isn't secret), 
 - **What your border router reports depends on its version.**
   - **2025 or later** (`/api/devices`): signal margin and RSSI for every link, and children's addresses, so boards get named.
   - **Older** (`/diagnostics`): link quality 0–3 between routers only, and no addresses for children, so boards show as "SED 0x5c01". The page says which one it got.
-- **Interacting:** drag nodes to tidy the map, and click a node or a line for details. Clicking one of your boards (on the mesh or the floor plan) shows its card: the plant's photo, its name, battery (with the days left), soil moisture (and whether it needs water), air humidity and temperature, with **Open its page**, **Run the pump** when it needs water, and **Beep**. The card follows new readings as they come in. Scroll (or pinch) to zoom around the pointer, drag the background to move around, and double-click it or click **fit** to see the whole map again.
+- **Interacting:** drag nodes to tidy the map, and click a node or a line for details. Clicking one of your boards (on the mesh or the floor plan) shows its card: the plant's photo, its name, battery (with the days left), soil moisture (and whether it needs water), air humidity and temperature, with **Open its page**, **Run the pump** when it needs water, and **Beep**. The card follows new readings as they come in, and says when the plant will need water. When a board answers (at a refresh), a short pulse runs from it to its parent on the map, and its ring flashes on the floor plan (not with "reduce motion" set in the OS). Scroll (or pinch) to zoom around the pointer, drag the background to move around, and double-click it or click **fit** to see the whole map again.
 - **Changes** logs boards that changed parent between two readings, or disappeared.
 - **History:** every reading is kept (the last 1000). Once there are two or more, a **history** slider appears. Drag it to see the network as it was, on the map and on the floor plan, then click **back to latest**. With a border router address set, the app reads the network by itself at every automatic refresh (every 15 minutes), so the history fills in while it runs.
 - **Floor plan:** switch the view to **floor plan**, choose a picture of your home (PNG, JPEG or WebP, up to 10 MB), and drag each node to where it really is. The links are drawn between them, coloured by strength, so a weak link shows where a router would help. Drag a node back to the strip on the left to unplace it. It zooms and pans like the mesh. **Signal heatmap** shades the plan with the signal estimated from the placed nodes: each one counts with its strongest link, and the colour fades away from the nodes. Red areas are where a board would struggle, and where a router would help. It's an estimate from a few points, not a measurement: the more nodes you place, the better. The same switch works on the mesh, where distance is radio closeness rather than space: there it shows which parts of the mesh are weak, and follows the nodes as you drag them. The picture is shown at most twice its own size (zoom goes further, up to 4 screen pixels per picture pixel), so use a sharp one: a full-size screenshot or export, not a thumbnail.
@@ -178,6 +178,12 @@ While a device is being updated, it polls its parent every 100 ms instead of eve
 
 An alert clears by itself when the condition ends; a failed update's stays until dismissed. Alerts show on the dashboard and in the status bar. **Notify me** (dashboard) or **Turn on** (Settings) also pops them up as browser notifications while the page is open, even in a background tab.
 
+**Wall display** (dashboard, or `#wall`). For a spare monitor: every plant big, with its photo, soil moisture (a bar, with its target marked), when it will need water, and its battery; the ones that need water first, with a banner naming them. More than 6 plants turn a page every 15 seconds. **Full screen** fills the screen (Esc leaves); it keeps itself up to date. Only on the PC running the app, which is local-only.
+
+**Weekly summary** (dashboard, or `#summary`). What happened over the last 7, 14 or 30 days, as one page to read or **Print**: the plants (soil low to high, now, how many waterings, when each needs water next), the batteries (start, end, % per day, firmware), battery drain per firmware, the alerts, the updates and the network's parent changes. **← the week before** goes back.
+
+**The demo** (Settings → **Try the demo**, or `--demo`). Opens a second fleet manager, in a new tab, with 9 simulated boards, a simulated border router and two weeks of made-up history: soil drying at each plant's rate and watered when dry, batteries draining faster under the older firmware than after last week's update. Every page has something to show, and **Run the pump** really waters a demo plant. It has its own data folder, deleted when it stops (**Stop the demo**, in its banner), so your fleet isn't touched: its boards answer on other ports than the simulator's (CoAP 15683, mcumgr 11337, or the next ones if taken) and aren't announced over mDNS, so your app never finds them. Starting it while one runs opens that one. Handy to show the project, or to try a new computer before the boards are in range. On macOS, without extra loopback addresses, it has one board.
+
 **Running in the background.** History, alerts and network readings only build up while the app runs. Settings → **Start with this computer, in the background** makes it start at login, without a window, as the PC it was turned on from runs it (the packaged app, or Python with the source; the checkout and data folder too):
 - **Windows:** a value in your user's Run key (`HKCU\Software\Microsoft\Windows\CurrentVersion\Run`). From the source it starts with `pythonw`, so no window at all; the packaged app shows its window for a moment, then hides it.
 - **macOS:** a LaunchAgent in `~/Library/LaunchAgents`.
@@ -222,6 +228,8 @@ To move to another PC: download a backup, install the app there, and restore it.
 - The devices' mcumgr has no authentication (see the main README's Security section). What protects the boards is the signing key: they only boot images signed with it.
 
 ## Trying it without a board
+The quickest: Settings → **Try the demo** (above). For tests, or to point the app itself at simulated boards:
+
 The simulated device answers like a real one: mcumgr over UDP, CoAP, and MCUboot's slots, including reverting an image that isn't confirmed.
 ```
 python -m hacoap_manager.simdevice          # mcumgr on 127.0.0.1:1337, CoAP on 127.0.0.1:5683
@@ -252,6 +260,8 @@ A whole fleet: `python -m hacoap_manager.simdevice --count 9 --border-router api
 | `hacoap_manager/homeassistant.py` | Importing the boards' history from Home Assistant, and keeping its token |
 | `hacoap_manager/autostart.py` | Starting with the computer (Run key, LaunchAgent, XDG autostart) |
 | `hacoap_manager/housekeeping.py` | The data folder's size, and deleting old data |
+| `hacoap_manager/summary.py` | The weekly summary |
+| `hacoap_manager/demo.py` | The demo: simulated boards following a plant model, two weeks of history, starting it from the app |
 | `hacoap_manager/setup_tools.py` | The Builds tab's setup buttons (toolchain, signing key, PSKd, SWD tools), and runs SWD flashes |
 | `hacoap_manager/swd.py` | Flashing a board over SWD: J-Link probes, the builds to flash, the `nrfutil device` commands |
 | `hacoap_manager/console.py` | The serial console |

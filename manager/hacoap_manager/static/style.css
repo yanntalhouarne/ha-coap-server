@@ -391,3 +391,80 @@ fieldset legend::before { content: "// "; color: var(--t-accent-text); }
   .labels-print.sheet-roll .label { break-after: page; }
   .labels-print .label { print-color-adjust: exact; -webkit-print-color-adjust: exact; }
 }
+
+/* ---------------------------------------------------------------- the demo */
+
+.demo-banner { background: color-mix(in srgb, var(--t-magenta) 22%, var(--t-bg-deep)); border: 1px solid var(--t-magenta);
+  border-radius: .4rem; padding: .5rem .8rem; margin-bottom: 1rem; font-size: .875rem; }
+
+/* ---------------------------------------------------------------- getting started */
+
+.guide { list-style: none; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(17rem, 1fr)); gap: .3rem 1.5rem; }
+.guide li { font-size: .875rem; }
+.guide li.done { color: var(--t-text-muted); text-decoration: line-through; }
+.guide-mark { display: inline-block; width: 1.3rem; color: var(--t-text-muted); }
+.guide li.done .guide-mark { color: var(--t-green); text-decoration: none; }
+
+/* ---------------------------------------------------------------- photos over time, map pulses */
+
+.event-photo { --event: var(--t-yellow); }
+@keyframes board-pulse { 0% { stroke-width: 2px; stroke-opacity: 1; } 100% { stroke-width: 14px; stroke-opacity: 0; } }
+.node.pulse .board-disc { animation: board-pulse 1.2s ease-out; }
+.pulse-dot { fill: var(--t-brand); pointer-events: none; filter: drop-shadow(0 0 4px var(--t-brand)); }
+@media (prefers-reduced-motion: reduce) { .node.pulse .board-disc { animation: none; } }
+
+/* ---------------------------------------------------------------- wall display */
+
+body.wall-mode .topbar, body.wall-mode .statusbar, body.wall-mode .demo-banner { display: none !important; }
+body.wall-mode { padding-bottom: 0; }
+body.wall-mode main { padding: 1.5rem 2rem !important; max-width: none; }
+.wall-head { display: flex; align-items: center; gap: 1.2rem; margin-bottom: 1.5rem; }
+.wall-logo { width: 3rem; height: 3rem; }
+.wall-title { font-size: 1.6rem; font-weight: 700; color: var(--t-brand); }
+.wall-title span { color: var(--t-text); font-weight: 400; }
+.wall-banner { flex: 1; text-align: center; font-size: 1.3rem; }
+.wall-alert { color: var(--t-yellow); font-weight: 700; }
+.wall-ok { color: var(--t-green); }
+.wall-clock { font-size: 1.1rem; color: var(--t-text-secondary); white-space: nowrap; }
+.wall-tools { display: flex; gap: .5rem; opacity: .35; transition: opacity .2s; }
+.wall-tools:hover { opacity: 1; }
+.wall-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(22rem, 1fr)); gap: 1.5rem; }
+.wall-card { display: flex; background: var(--t-surface); border: 1px solid var(--t-border-subtle); border-radius: .8rem; overflow: hidden; min-height: 12rem; }
+.wall-card.thirsty { border-color: var(--t-yellow); box-shadow: 0 0 0 1px var(--t-yellow); }
+.wall-card.offline { opacity: .55; }
+.wall-photo { width: 42%; object-fit: cover; flex: none; }
+.wall-photo.empty { display: flex; align-items: center; justify-content: center; background: var(--t-surface-2); color: var(--t-brand); }
+.wall-photo.empty svg { width: 40%; height: 40%; }
+.wall-body { padding: 1rem 1.2rem; flex: 1; min-width: 0; display: flex; flex-direction: column; gap: .25rem; }
+.wall-name { font-size: 1.5rem; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.wall-plant { color: var(--t-text-muted); font-size: .9rem; min-height: 1.2em; }
+.wall-soil { margin-top: auto; color: var(--t-text-muted); }
+.wall-value { font-size: 2.6rem; font-weight: 700; color: var(--t-cyan); line-height: 1; }
+.wall-card.thirsty .wall-value { color: var(--t-yellow); }
+.wall-bar { position: relative; height: .6rem; background: var(--t-surface-2); border-radius: .3rem; margin: .3rem 0; }
+.wall-bar-fill { height: 100%; background: var(--t-cyan); border-radius: .3rem; }
+.wall-card.thirsty .wall-bar-fill { background: var(--t-yellow); }
+.wall-bar-target { position: absolute; top: -.25rem; bottom: -.25rem; width: 2px; background: var(--t-text); }
+.wall-note { font-size: 1rem; min-height: 1.3em; }
+.wall-card.thirsty .wall-note { color: var(--t-yellow); font-weight: 700; }
+.wall-meta { color: var(--t-text-muted); font-size: .85rem; }
+.wall-foot { text-align: center; color: var(--t-text-muted); margin-top: 1rem; }
+
+/* ---------------------------------------------------------------- weekly summary */
+
+.summary { max-width: 60rem; }
+.summary-head { display: flex; align-items: center; gap: 1rem; margin-bottom: 1rem; }
+.summary-logo { width: 3rem; height: 3rem; }
+.summary-numbers { display: grid; grid-template-columns: repeat(auto-fill, minmax(8rem, 1fr)); gap: .5rem; margin-bottom: 1.5rem; }
+.summary-numbers div { border: 1px solid var(--t-border-subtle); border-radius: .4rem; padding: .5rem .7rem; }
+.summary-numbers b { display: block; font-size: 1.4rem; }
+.summary-numbers span { color: var(--t-text-muted); font-size: .8rem; }
+.summary-section { margin-bottom: 1.5rem; break-inside: avoid; }
+.summary-section h5 { border-bottom: 1px solid var(--t-border-subtle); padding-bottom: .3rem; }
+
+@media print {
+  .topbar, .statusbar, .no-print, .demo-banner { display: none !important; }
+  body:not(.printing-labels) { background: #fff !important; color: #000 !important; padding: 0; }
+  .summary, .summary * { color: #000 !important; background: transparent !important; border-color: #bbb !important; }
+  .summary .table { --bs-table-bg: transparent; }
+}

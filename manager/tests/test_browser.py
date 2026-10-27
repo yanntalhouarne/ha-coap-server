@@ -160,6 +160,7 @@ def test_dashboard_tab(page):
     assert "Run the pump" in dom                                      # the needs-water list
     assert "basil" in dom                                             # under batteries
     assert "Battery drain by firmware" in dom
+    assert "Wall display" in dom and "Weekly summary" in dom and "Getting started" in dom
 
 
 def test_device_page(page):
@@ -182,3 +183,14 @@ def test_floorplan_view(page):
 def test_console_tab(page):
     dom = page("console")
     assert 'id="console-port"><option' in dom                         # the ports were listed
+
+
+def test_wall_display(page):
+    dom = page("wall")
+    assert "wall-card" in dom and "basil" in dom and "needs water" in dom
+    assert 'class="wall-mode' in dom or "wall-mode" in dom          # the header and status bar hidden
+
+
+def test_weekly_summary(page):
+    dom = page("summary")
+    assert "ha-coap fleet summary" in dom and "basil" in dom and "Batteries" in dom

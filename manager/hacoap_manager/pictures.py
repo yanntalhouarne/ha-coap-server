@@ -3,6 +3,7 @@ WebP are accepted (checked from the file's first bytes, not its name), never SVG
 carry scripts."""
 
 import re
+import time
 from pathlib import Path
 
 MAX_SIZE = 10 * 1024 * 1024
@@ -25,7 +26,8 @@ def picture_type(data):
 
 
 class PhotoStore:
-    """One photo per device, in the data folder's photos/, named by device ID."""
+    """A timeline of photos per device, in the data folder's photos/: <device ID>.<when taken>
+    (Unix time). The newest is also kept as photos/<device ID>, the device's current photo."""
 
     def __init__(self, data_dir):
         self.folder = Path(data_dir) / "photos"
@@ -35,22 +37,64 @@ class PhotoStore:
             raise PictureError("Invalid device ID")
         return self.folder / device_id
 
-    def save(self, device_id, data):
-        picture_type(data)
-        path = self.path(device_id)
-        self.folder.mkdir(parents=True, exist_ok=True)
-        path.write_bytes(data)
+    def _dated(self, device_id, taken):
+        return self.folder / f"{self.path(device_id).name}.{int(taken)}"
 
-    def read(self, device_id):
-        """(bytes, media type), or None."""
+    def timeline(self, device_id):
+        """When each photo was taken, oldest first. A photo from before the timeline (only the
+        current one) joins it, dated by its file."""
+        current = self.path(device_id)
+        taken = sorted(int(p.suffix[1:]) for p in self.folder.glob(f"{current.name}.*") if p.suffix[1:].isdigit())
+        if not taken and current.is_file():
+            when = int(current.stat().st_mtime)
+            self._dated(device_id, when).write_bytes(current.read_bytes())
+            taken = [when]
+        return taken
+
+    def add(self, device_id, data, taken=None):
+        """Adds a photo taken at 'taken' (Unix time; now if None). Returns its time."""
+        picture_type(data)
+        self.folder.mkdir(parents=True, exist_ok=True)
+        self.timeline(device_id)  # an older current photo joins first
+        taken = int(taken or time.time())
+        while self._dated(device_id, taken).exists():
+            taken += 1
+        self._dated(device_id, taken).write_bytes(data)
+        self._sync_current(device_id)
+        return taken
+
+    save = add
+
+    def _sync_current(self, device_id):
+        """The current photo: the newest of the timeline, or none."""
+        taken = self.timeline(device_id)
+        current = self.path(device_id)
+        if taken:
+            current.write_bytes(self._dated(device_id, taken[-1]).read_bytes())
+        else:
+            current.unlink(missing_ok=True)
+
+    def read(self, device_id, taken=None):
+        """(bytes, media type) of the current photo, or of the one taken at 'taken'; or None."""
         try:
-            data = self.path(device_id).read_bytes()
+            path = self.path(device_id) if taken is None else self._dated(device_id, taken)
+            data = path.read_bytes()
             return data, picture_type(data)
-        except (OSError, PictureError):
+        except (OSError, PictureError, ValueError):
             return None
 
+    def remove(self, device_id, taken):
+        """Removes one photo of the timeline. Returns how many are left."""
+        self._dated(device_id, taken).unlink(missing_ok=True)
+        self._sync_current(device_id)
+        return len(self.timeline(device_id))
+
     def delete(self, device_id):
+        """Removes all of a device's photos."""
         try:
-            self.path(device_id).unlink(missing_ok=True)
+            current = self.path(device_id)
         except PictureError:
-            pass
+            return
+        for path in self.folder.glob(f"{current.name}.*"):
+            path.unlink(missing_ok=True)
+        current.unlink(missing_ok=True)

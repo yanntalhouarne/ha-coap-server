@@ -55,10 +55,20 @@
 </footer>
 
 <main class="container-fluid pt-3">
+  <div class="demo-banner d-none" id="demo-banner">
+    <b>Demo:</b> simulated boards and border router, two weeks of made-up history. Try anything: nothing here is
+    kept, and your own fleet isn't touched.
+    <button class="btn btn-sm btn-outline-light ms-2" id="demo-stop" type="button">Stop the demo</button>
+  </div>
   <div id="alerts"></div>
 
   <!-- Dashboard -->
   <section id="tab-dashboard" class="tab">
+    <div class="card mb-4 d-none" id="dash-guide"></div>
+    <div class="d-flex flex-wrap gap-2 mb-3 justify-content-end">
+      <a class="btn btn-sm btn-outline-secondary" href="#wall" title="Full screen, for a spare monitor">Wall display</a>
+      <a class="btn btn-sm btn-outline-secondary" href="#summary" title="What happened this week, to print">Weekly summary</a>
+    </div>
     <div class="tiles mb-4" id="dash-tiles"></div>
     <div class="row g-4">
       <div class="col-xl-6">
@@ -474,6 +484,36 @@
       adapter on J4. The battery variant prints nothing.</p>
   </section>
 
+  <!-- Wall display: full screen, for a spare monitor -->
+  <section id="tab-wall" class="tab d-none">
+    <div class="wall-head">
+      <img src="/static/logo.svg" alt="" class="wall-logo">
+      <div class="wall-title">ha-coap <span>plants</span></div>
+      <div class="wall-banner" id="wall-banner"></div>
+      <div class="wall-clock" id="wall-clock"></div>
+      <div class="wall-tools">
+        <button class="btn btn-sm btn-outline-secondary" id="wall-fullscreen" type="button">Full screen</button>
+        <a class="btn btn-sm btn-outline-secondary" href="#dashboard">Close</a>
+      </div>
+    </div>
+    <div class="wall-grid" id="wall-grid"></div>
+    <div class="wall-foot" id="wall-foot"></div>
+  </section>
+
+  <!-- Weekly summary: to print -->
+  <section id="tab-summary" class="tab d-none">
+    <div class="d-flex flex-wrap align-items-center gap-2 mb-3 no-print">
+      <a class="btn btn-sm btn-outline-secondary" href="#dashboard">← dashboard</a>
+      <select class="form-select form-select-sm w-auto" id="summary-days">
+        <option value="7" selected>the last 7 days</option><option value="14">the last 14 days</option>
+        <option value="30">the last 30 days</option></select>
+      <button class="btn btn-sm btn-outline-secondary" id="summary-earlier" type="button">← the week before</button>
+      <button class="btn btn-sm btn-outline-secondary" id="summary-later" type="button">the week after →</button>
+      <button class="btn btn-sm btn-primary ms-auto" id="summary-print" type="button">Print</button>
+    </div>
+    <div class="summary" id="summary"></div>
+  </section>
+
   <!-- Settings -->
   <section id="tab-settings" class="tab d-none">
     <div class="row g-4">
@@ -516,6 +556,15 @@
             <div class="form-text mb-3" id="autostart-note"></div>
             <button class="btn btn-outline-danger" id="quit-app" type="button">Stop the app</button>
             <div class="form-text">Stops collecting until it starts again. It waits for an update, build or setup step to finish.</div>
+          </div>
+        </div>
+        <div class="card mt-4">
+          <div class="card-header">Try the demo</div>
+          <div class="card-body">
+            <p class="small text-body-secondary mb-2">Opens a second fleet manager, in a new tab, with 9 simulated
+              boards, a simulated border router and two weeks of made-up history: every page has something to show.
+              It uses its own data folder, deleted when it stops, so your fleet isn't touched.</p>
+            <button class="btn btn-outline-primary" id="demo-start" type="button">Start the demo</button>
           </div>
         </div>
         <div class="card mt-4">

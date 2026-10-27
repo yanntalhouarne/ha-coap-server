@@ -35,6 +35,12 @@ First version: the plan's phases 0, 1, 2, 5 and 6. Tested against a simulated de
 - **Plant presets:** a suggested watering target for about 30 plants.
 - **Labels:** printable per device, on A4 or Letter label sheets or a label printer.
 - **Data limits:** how long readings, network history and backups are kept, the data folder's size, and compacting the database.
+- **Watering forecast:** when each plant will need water at its drying rate, a "soon" list on the dashboard, and what a pump run raises the soil by.
+- **Photo timeline:** several dated photos per plant, with a slider and the soil at each date.
+- **Wall display:** full screen, every plant big, for a spare monitor.
+- **Weekly summary:** what happened over a week, to print.
+- **Demo:** a second app with simulated boards and two weeks of history, in a throwaway data folder.
+- **Getting started** checklist on the dashboard, and a pulse on the map when a board answers.
 - **Data:** backups (one file; daily automatic ones, and one before every restore), restore, and the device list as CSV.
 - A look after [Omarchy](https://omarchy.org/): a terminal feel, JetBrains Mono, 12 colour themes (Tokyo Night by default, **T** cycles them) with Home Assistant's blue as the accent, the ha-coap logo, keys 1 to 8 for the tabs, and a status bar.
 - Answers only on this computer (127.0.0.1).

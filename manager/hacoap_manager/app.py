@@ -19,8 +19,8 @@ from fastapi.staticfiles import StaticFiles
 
 import re
 
-from . import (__version__, autostart, backup, config, discovery, fleet, homeassistant, housekeeping, kconfig, mcuboot,
-               report, serial_ports, signing, swd)
+from . import (__version__, autostart, backup, config, demo, discovery, fleet, homeassistant, housekeeping, kconfig,
+               mcuboot, report, serial_ports, signing, summary, swd)
 from .alerts import AlertService
 from .appupdate import UpdateCheck
 from .builds import VARIANTS, BuildError, BuildRunner
@@ -40,6 +40,7 @@ log = logging.getLogger(__name__)
 STATIC = Path(__file__).parent / "static"
 LOCAL_HOSTS = {"127.0.0.1", "localhost", "[::1]"}
 CHANGE_HEADER = "x-hacoap"
+DAY_S = 86400
 
 
 @dataclass
@@ -63,6 +64,7 @@ class Services:
     doctor: Doctor
     ha_token: homeassistant.TokenStore
     launch: dict = None   # how this app was started (for starting it with the computer)
+    demo: bool = False    # this app is the demo (simulated boards, a throwaway data folder)
 
 
 def create_services(data_dir, discover=discovery.discover):
@@ -132,6 +134,7 @@ def create_app(services, background_tasks=True, on_quit=None):
     async def status():
         return {
             "version": __version__,
+            "demo": s.demo,
             "data_dir": str(s.data_dir),
             "repository": str(s.repository) if s.repository else None,
             "discovery_available": discovery.discovery_available(),
@@ -202,25 +205,57 @@ def create_app(services, background_tasks=True, on_quit=None):
         return Response(data, media_type=content_type, headers={"Cache-Control": "no-cache"})
 
     @app.post("/api/devices/{device_id}/photo")
-    async def set_device_photo(device_id: str, request: Request):
+    async def set_device_photo(device_id: str, request: Request, taken: float = 0):
+        """Adds a photo to the device's timeline. 'taken': when (Unix time; the file's date, or now)."""
         if s.db.device(device_id) is None:
             raise HTTPException(404, "Unknown device")
+        if not 946684800 <= taken <= time.time() + DAY_S:  # after 2000, and not in the future
+            taken = time.time()
         try:
-            s.photos.save(device_id, await request.body())
+            s.photos.add(device_id, await request.body(), taken)
         except PictureError as exc:
             raise _bad_request(exc)
-        device = s.inventory.describe(s.db.upsert_device(device_id, photo=time.time()))
+        return _photo_changed(device_id, True)
+
+    def _photo_changed(device_id, any_left):
+        device = s.inventory.describe(s.db.upsert_device(device_id, photo=time.time() if any_left else None))
         s.events.publish("device", device=device)
         return device
 
+    @app.get("/api/devices/{device_id}/photos")
+    async def device_photos(device_id: str):
+        if s.db.device(device_id) is None:
+            raise HTTPException(404, "Unknown device")
+        try:
+            return [{"taken": t} for t in s.photos.timeline(device_id)]
+        except PictureError as exc:
+            raise _bad_request(exc)
+
+    @app.get("/api/devices/{device_id}/photos/{taken}")
+    async def device_photo_taken(device_id: str, taken: int):
+        found = s.photos.read(device_id, taken) if s.db.device(device_id) else None
+        if found is None:
+            raise HTTPException(404, "No such photo")
+        data, content_type = found
+        return Response(data, media_type=content_type, headers={"Cache-Control": "max-age=86400"})
+
+    @app.delete("/api/devices/{device_id}/photos/{taken}")
+    async def delete_device_photo_taken(device_id: str, taken: int):
+        if s.db.device(device_id) is None:
+            raise HTTPException(404, "Unknown device")
+        try:
+            left = s.photos.remove(device_id, taken)
+        except PictureError as exc:
+            raise _bad_request(exc)
+        return _photo_changed(device_id, left > 0)
+
     @app.delete("/api/devices/{device_id}/photo")
     async def delete_device_photo(device_id: str):
+        """Removes all of the device's photos."""
         if s.db.device(device_id) is None:
             raise HTTPException(404, "Unknown device")
         s.photos.delete(device_id)
-        device = s.inventory.describe(s.db.upsert_device(device_id, photo=None))
-        s.events.publish("device", device=device)
-        return device
+        return _photo_changed(device_id, False)
 
     @app.post("/api/discover")
     async def discover():
@@ -259,8 +294,12 @@ def create_app(services, background_tasks=True, on_quit=None):
         if device is None:
             raise HTTPException(404, "Unknown device")
         since = time.time() - max(1, min(days, 365)) * 86400
+        target = fleet.water_target(device, s.settings)
+        effect_since = time.time() - 90 * 86400
         return {"device": s.inventory.describe(device),
-                "health": fleet.device_health(s.db, device, s.db.release_image()),
+                "health": {**fleet.device_health(s.db, device, s.db.release_image(), target=target),
+                           "pump_effect": fleet.pump_effect(s.db.readings(device_id, effect_since),
+                                                            s.db.activity(device_id, effect_since))},
                 "readings": s.db.readings(device_id, since), "links": s.db.link_samples(device_id, since),
                 "updates": s.db.updates(device_id, limit=50), "network_events": s.db.network_events_for(device_id),
                 "activity": s.db.activity(device_id, since),
@@ -284,6 +323,24 @@ def create_app(services, background_tasks=True, on_quit=None):
     @app.get("/api/dashboard")
     async def dashboard():
         return fleet.dashboard(s.db, s.inventory, s.network.last())
+
+    @app.get("/api/wall")
+    async def wall():
+        return await asyncio.to_thread(fleet.wall, s.db, s.inventory)
+
+    @app.get("/api/summary")
+    async def weekly_summary(days: int = 7, end: float = 0):
+        return await asyncio.to_thread(summary.build, s.db, s.inventory, s.settings, max(1, min(days, 90)), end or None)
+
+    @app.post("/api/demo")
+    async def start_demo():
+        """Starts the demo (a second copy of the app, with simulated boards) and returns its address."""
+        if s.demo:
+            raise _bad_request("This is the demo already")
+        try:
+            return {"url": await demo.launch_async()}
+        except OSError as exc:
+            raise _bad_request(f"The demo didn't start: {exc}")
 
     @app.get("/api/battery-drain")
     async def battery_drain():

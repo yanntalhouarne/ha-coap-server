@@ -385,6 +385,24 @@ class Database:
         return self._query("SELECT time, kind, message FROM activity WHERE device_id = ? AND time >= ? ORDER BY time",
                            (device_id, since))
 
+    # ------------------------------------------------------------ a period, for the weekly summary
+
+    def alerts_between(self, start, end):
+        return self._query("SELECT * FROM alerts WHERE raised >= ? AND raised < ? ORDER BY raised", (start, end))
+
+    def network_events_between(self, start, end):
+        return self._query("SELECT * FROM network_events WHERE time >= ? AND time < ? ORDER BY time", (start, end))
+
+    def updates_between(self, start, end):
+        return self._query("SELECT * FROM updates WHERE started >= ? AND started < ? ORDER BY started", (start, end))
+
+    def activity_between(self, start, end):
+        return self._query("SELECT * FROM activity WHERE time >= ? AND time < ? ORDER BY time", (start, end))
+
+    def readings_between(self, device_id, start, end):
+        return self._query("SELECT time, battery, soil_moisture, air_humidity, temperature FROM readings "
+                           "WHERE device_id = ? AND time >= ? AND time < ? ORDER BY time", (device_id, start, end))
+
     # ------------------------------------------------------------ keeping the data in bounds
 
     def prune(self, before):
