@@ -67,6 +67,7 @@ def page(tmp_path_factory):
     for hours in range(48, -1, -6):
         services.db.add_reading("1a2b3c4d", 90 - (48 - hours) / 16, 40, 55, -5, when=now - hours * 3600)
         services.db.add_link_sample("1a2b3c4d", "0x6800", link_margin=40, when=now - hours * 3600)
+    services.db.add_activity("1a2b3c4d", "pump", "Pump started from the app (3 s)", when=now - 12 * 3600)
     # A checkout with nothing set up, so the Builds tab offers its setup buttons.
     empty_checkout = tmp / "checkout"
     (empty_checkout / "application").mkdir(parents=True)
@@ -107,6 +108,7 @@ def test_devices_tab(page):
     dom = page("devices")
     assert "basil" in dom and "87 %" in dom and "-5 °C" in dom
     assert "Update history" in dom
+    assert "Check my connection" in dom and "Print labels" in dom
 
 
 def test_network_tab(page):
@@ -139,6 +141,9 @@ def test_settings_tab(page):
     dom = page("settings")
     assert "Data folder" in dom and "Border router REST API" in dom
     assert "Check GitHub for app updates" in dom and "Download a problem report" in dom
+    assert "Keep readings (days)" in dom and "home_assistant_url" not in dom          # its own card
+    assert "Running in the background" in dom and "Home Assistant history" in dom
+    assert "readings," in dom                                                         # space used
 
 
 def test_dark_by_default(page):
@@ -154,6 +159,7 @@ def test_dashboard_tab(page):
     assert "basil needs water" in dom                                 # the alert
     assert "Run the pump" in dom                                      # the needs-water list
     assert "basil" in dom                                             # under batteries
+    assert "Battery drain by firmware" in dom
 
 
 def test_device_page(page):
@@ -162,6 +168,8 @@ def test_device_page(page):
     assert "Run the pump" in dom                                      # the controls
     assert "Add a photo of the plant" in dom and "it needs water" in dom
     assert "Soil moisture" in dom and "<svg" in dom                   # the charts
+    assert "chart-event event-pump" in dom                            # a pump run marked on them
+    assert "Battery drain by firmware" in dom                         # its drain (48 h of readings)
     assert "Updated and confirmed" in dom                             # its update history
 
 

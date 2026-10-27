@@ -30,6 +30,96 @@ def battery_forecast(readings, empty_at=0):
     return {"days_left": max(0.0, (latest - empty_at) / -per_day), "per_day": per_day}
 
 
+def _slope(points):
+    """Least-squares slope of (time, value) points, per second, or None."""
+    n = len(points)
+    mean_t = sum(t for t, _ in points) / n
+    mean_v = sum(v for _, v in points) / n
+    spread = sum((t - mean_t) ** 2 for t, _ in points)
+    return sum((t - mean_t) * (v - mean_v) for t, v in points) / spread if spread else None
+
+
+def drain_rate(readings):
+    """Battery % lost per day over these readings: {per_day, days, readings}, or None without
+    enough of them. A jump between two readings splits them into runs: a rise of more than 2 %
+    (charging), or a fall faster than 5 %/day plus 2 % (the reading drops when the charger is
+    unplugged). Each run of 3 readings or more over 6 hours or more counts, weighted by its length."""
+    points = [(r["time"], r["battery"]) for r in readings if r.get("battery") is not None]
+    runs, run = [], []
+    for point in points:
+        if run and (point[1] > run[-1][1] + 2 or point[1] < run[-1][1] - 2 - 5 * (point[0] - run[-1][0]) / DAY):
+            runs.append(run)
+            run = []
+        run.append(point)
+    runs.append(run)
+    weighted, span_total, used = 0.0, 0.0, 0
+    for run in runs:
+        span = run[-1][0] - run[0][0] if run else 0
+        slope = _slope(run) if len(run) >= 3 and span >= 6 * 3600 else None
+        if slope is not None:
+            weighted += -slope * DAY * span
+            span_total += span
+            used += len(run)
+    if not span_total:
+        return None
+    return {"per_day": weighted / span_total, "days": span_total / DAY, "readings": used}
+
+
+UPDATE_SETTLE_S = 2 * 3600  # readings this soon after an update are left out (the update itself draws power)
+
+
+def image_periods(device, updates):
+    """[(image_hash, version, start, end)]: which image the device ran when, from its successful
+    updates (end None: still running). Before the first one, the image isn't known (hash None).
+    Without any update, all of it is the image it runs now."""
+    done = sorted((u for u in updates if u["result"] == "updated" and u["finished"]), key=lambda u: u["finished"])
+    if not done:
+        return [(device.get("image_hash") or None, device.get("image_version"), 0, None)]
+    periods = [(None, None, 0, done[0]["finished"])]
+    for i, update in enumerate(done):
+        end = done[i + 1]["finished"] if i + 1 < len(done) else None
+        periods.append((update["image_hash"], update["image_version"], update["finished"], end))
+    return periods
+
+
+def battery_drain(db, device, now=None, days=180):
+    """The battery drain under each image the device ran: [{image_hash, version, start, end, rate}]."""
+    now = now or time.time()
+    readings = db.readings(device["device_id"], since=now - days * DAY)
+    result = []
+    for image_hash, version, start, end in image_periods(device, db.updates(device["device_id"], limit=500)):
+        settle = start + UPDATE_SETTLE_S if start else 0
+        part = [r for r in readings if r["time"] >= settle and (end is None or r["time"] < end)]
+        if part:
+            result.append({"image_hash": image_hash, "version": version, "start": part[0]["time"],
+                           "end": end, "rate": drain_rate(part)})
+    return result
+
+
+def drain_by_image(db, inventory, now=None):
+    """The fleet's battery drain per image: [{image_hash, version, release, devices: [{device_id,
+    name, per_day}], median, days_full}], the image with the most devices first."""
+    images = {i["hash"]: i for i in db.images()}
+    release = db.release_image()
+    groups = {}
+    for device in inventory.devices():
+        for period in battery_drain(db, device, now):
+            if period["rate"] is None or not period["image_hash"]:
+                continue
+            group = groups.setdefault(period["image_hash"], {
+                "image_hash": period["image_hash"],
+                "version": period["version"] or images.get(period["image_hash"], {}).get("version") or "",
+                "release": bool(release and release["hash"] == period["image_hash"]), "devices": []})
+            group["devices"].append({"device_id": device["device_id"], "name": device["name"] or device["device_id"],
+                                     "per_day": period["rate"]["per_day"], "days": period["rate"]["days"]})
+    for group in groups.values():
+        rates = sorted(d["per_day"] for d in group["devices"])
+        middle = len(rates) // 2
+        group["median"] = rates[middle] if len(rates) % 2 else (rates[middle - 1] + rates[middle]) / 2
+        group["days_full"] = 100 / group["median"] if group["median"] > 0.01 else None
+    return sorted(groups.values(), key=lambda g: -len(g["devices"]))
+
+
 def water_target(device, settings):
     """The soil moisture % under which the device's plant needs water, or None (not watched):
     its own target, else the default."""

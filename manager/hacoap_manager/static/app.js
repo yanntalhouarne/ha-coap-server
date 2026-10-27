@@ -98,7 +98,7 @@ function showTab(route) {
   if (tab === 'network') {
     loadNetwork().then(() => setNetworkView(rest[0] === 'floorplan' ? 'floorplan' : net.view || 'mesh'), () => {});
   }
-  if (name === 'settings') { loadSettings(); loadBackups(); }
+  if (name === 'settings') { loadSettings(); loadBackups(); loadStorage().catch(() => {}); loadAutostart().catch(() => {}); loadHomeAssistant().catch(() => {}); }
 }
 
 for (const link of document.querySelectorAll('#tabs a')) {
@@ -1255,12 +1255,14 @@ async function loadDashboard() {
     return h('tr', {}, h('td', { class: 'small' }, ago(u.finished)), h('td', {}, device ? deviceName(device) : u.device_id),
       h('td', {}, `v${u.image_version}`), h('td', {}, h('span', { class: `badge text-bg-${statusClass[u.result] || 'secondary'}` }, u.result)));
   }), 'No updates yet.'));
+  loadDrain().catch(() => {});
 }
 
 // ------------------------------------------------------------------ charts
 
-// A small line chart in SVG: points [{t, v}], drawn in the theme's colours.
-function lineChart(title, points, { unit = '', min = null, max = null, color = 'var(--t-brand)', step = false } = {}) {
+// A small line chart in SVG: points [{t, v}], drawn in the theme's colours. events [{t, kind,
+// text}] are drawn as markers across it (an update, a pump run, a parent change).
+function lineChart(title, points, { unit = '', min = null, max = null, color = 'var(--t-brand)', step = false, events = [] } = {}) {
   const data = points.filter((p) => p.v !== null && p.v !== undefined);
   const head = h('div', { class: 'chart-head' }, h('span', {}, title),
     data.length ? h('b', {}, `${data[data.length - 1].v}${unit}`) : null);
@@ -1269,7 +1271,8 @@ function lineChart(title, points, { unit = '', min = null, max = null, color = '
       'Not enough readings yet. One is stored at each refresh (every 15 minutes while the app runs).'));
   }
   const W = 600, H = 110, padX = 34, padY = 10;
-  const t0 = data[0].t, t1 = data[data.length - 1].t;
+  // The time axis runs to the latest event too (a pump run since the last reading), not before the first reading.
+  const t0 = data[0].t, t1 = Math.max(data[data.length - 1].t, ...events.map((e) => e.t).filter((t) => t >= t0));
   const lo = min ?? Math.min(...data.map((p) => p.v)), hi = max ?? Math.max(...data.map((p) => p.v));
   const span = hi - lo || 1;
   const x = (t) => padX + ((t - t0) / ((t1 - t0) || 1)) * (W - padX - 4);
@@ -1280,17 +1283,23 @@ function lineChart(title, points, { unit = '', min = null, max = null, color = '
     else if (step) path += `H${x(p.t)}V${y(p.v)}`;
     else path += `L${x(p.t)},${y(p.v)}`;
   });
-  const area = `${path}L${x(t1)},${H - padY}L${x(t0)},${H - padY}Z`;
+  const area = `${path}L${x(data[data.length - 1].t)},${H - padY}L${x(t0)},${H - padY}Z`;
   const date = (t) => new Date(t * 1000).toLocaleDateString([], { month: 'short', day: 'numeric' });
+  // Markers are HTML over the drawing (placed in %), so they keep their shape and show a tooltip.
+  const markers = events.filter((e) => e.t >= t0 && e.t <= t1).map((e) =>
+    h('div', { class: `chart-event event-${e.kind}`, style: `left: ${((x(e.t) - padX) / (W - padX)) * 100}%`,
+      title: `${when(e.t)}: ${e.text}` }));
   // The drawing stretches to its box; the labels stay as text beside it, so they don't stretch.
   return h('div', { class: 'chart' }, head,
     h('div', { class: 'chart-body' },
       h('div', { class: 'chart-y' }, h('span', {}, `${hi}${unit}`), h('span', {}, `${lo}${unit}`)),
-      svg('svg', { viewBox: `${padX} 0 ${W - padX} ${H}`, preserveAspectRatio: 'none' },
-        svg('line', { x1: padX, y1: y(hi), x2: W, y2: y(hi), class: 'grid' }),
-        svg('line', { x1: padX, y1: y(lo), x2: W, y2: y(lo), class: 'grid' }),
-        svg('path', { d: area, style: `fill: ${color}; opacity: .12` }),
-        svg('path', { d: path, style: `stroke: ${color}; fill: none`, 'stroke-width': 2, 'vector-effect': 'non-scaling-stroke' }))),
+      h('div', { class: 'chart-plot' },
+        svg('svg', { viewBox: `${padX} 0 ${W - padX} ${H}`, preserveAspectRatio: 'none' },
+          svg('line', { x1: padX, y1: y(hi), x2: W, y2: y(hi), class: 'grid' }),
+          svg('line', { x1: padX, y1: y(lo), x2: W, y2: y(lo), class: 'grid' }),
+          svg('path', { d: area, style: `fill: ${color}; opacity: .12` }),
+          svg('path', { d: path, style: `stroke: ${color}; fill: none`, 'stroke-width': 2, 'vector-effect': 'non-scaling-stroke' })),
+        markers)),
     h('div', { class: 'chart-x' }, h('span', {}, date(t0)), h('span', {}, date(t1))));
 }
 
@@ -1345,10 +1354,13 @@ function renderDeviceStatus(device) {
     ['Device ID', device.device_id],
     ['Address', device.address],
     ['Problem', device.last_error],
-  ]), h('button', { class: 'btn btn-sm btn-outline-secondary mt-2', onclick: (e) => busy(e.target, async () => {
-    await refreshDevice(device);
-    await loadDevicePage(device.device_id);
-  }) }, 'Refresh'));
+  ]), h('div', { class: 'd-flex flex-wrap gap-2 mt-2' },
+    h('button', { class: 'btn btn-sm btn-outline-secondary', onclick: (e) => busy(e.target, async () => {
+      await refreshDevice(device);
+      await loadDevicePage(device.device_id);
+    }) }, 'Refresh'),
+    h('button', { class: 'btn btn-sm btn-outline-secondary', title: 'Each step from this computer to this board, and how fast it answers',
+      onclick: () => runDoctor(device) }, 'Check the connection')));
 }
 
 function renderDeviceFirmware(details) {
@@ -1401,12 +1413,17 @@ function renderDeviceForm(device) {
     field('tags', 'Groups', device.tags || '', { placeholder: 'greenhouse, test' }),
     field('water_below', 'Needs water below (%)', device.water_below ?? '', { type: 'number', min: 0, max: 100,
       placeholder: defaultTarget ? `default: ${defaultTarget}` : 'default: off' }),
+    h('div', { class: 'col-12 small', id: 'plant-suggestion' }),
     field('notes', 'Notes', device.notes || '', { wide: true, textarea: true }),
     h('div', { class: 'col-12 d-flex gap-2' }, h('button', { class: 'btn btn-sm btn-primary', type: 'submit' }, 'Save'),
       h('button', { class: 'btn btn-sm btn-outline-danger ms-auto', type: 'button', onclick: async () => {
         await removeDevice(device);
         location.hash = '#devices';
       } }, 'Remove from the list')));
+  const suggest = () => renderPlantSuggestion(form.elements.plant.value, form.elements.water_below);
+  form.elements.plant.addEventListener('input', suggest);
+  form.elements.water_below.addEventListener('input', suggest);
+  suggest();
   form.onsubmit = (event) => {
     event.preventDefault();
     const values = Object.fromEntries(new FormData(form).entries());
@@ -1415,23 +1432,114 @@ function renderDeviceForm(device) {
   };
 }
 
+// ------------------------------------------------------------------ plant presets
+
+// Watering targets to start from: the soil moisture % (as the board reads it) under which a plant
+// usually wants water. A guide: adjust each plant's target once you see its readings.
+const PLANT_PRESETS = [
+  [['cactus', 'cacti'], 8, 'cacti'], [['succulent', 'echeveria', 'jade', 'haworthia'], 10, 'succulents'],
+  [['aloe'], 10, 'aloe'], [['snake plant', 'sansevieria'], 10, 'snake plants'], [['zz plant', 'zamioculcas'], 12, 'ZZ plants'],
+  [['rosemary'], 20, 'rosemary'], [['thyme'], 20, 'thyme'], [['lavender'], 20, 'lavender'], [['sage'], 25, 'sage'],
+  [['oregano', 'marjoram'], 25, 'oregano'], [['pothos', 'epipremnum'], 25, 'pothos'], [['orchid', 'phalaenopsis'], 25, 'orchids'],
+  [['monstera'], 30, 'monstera'], [['ficus', 'fig'], 30, 'ficus'], [['lemon', 'lime', 'orange', 'citrus'], 30, 'citrus'],
+  [['spider plant', 'chlorophytum'], 30, 'spider plants'], [['mint'], 45, 'mint'],  // before peppers: peppermint
+  [['chili', 'chilli', 'pepper'], 35, 'peppers'],
+  [['basil'], 40, 'basil'], [['parsley'], 40, 'parsley'], [['coriander', 'cilantro'], 40, 'coriander'],
+  [['tomato'], 40, 'tomatoes'], [['strawberr'], 40, 'strawberries'], [['chive'], 40, 'chives'],
+  [['lettuce', 'salad', 'spinach'], 45, 'leafy greens'], [['peace lily', 'spathiphyllum'], 45, 'peace lilies'],
+  [['fern'], 50, 'ferns'], [['calathea', 'maranta', 'prayer plant'], 50, 'calatheas'],
+];
+
+function plantPreset(plant) {
+  const name = (plant || '').toLowerCase();
+  if (!name.trim()) return null;
+  const found = PLANT_PRESETS.find(([words]) => words.some((w) => name.includes(w)));
+  return found ? { target: found[1], kind: found[2] } : null;
+}
+
+function renderPlantSuggestion(plant, input) {
+  const box = document.getElementById('plant-suggestion');
+  if (!box) return;
+  const preset = plantPreset(plant);
+  if (!preset || String(preset.target) === input.value) {
+    box.replaceChildren();
+    return;
+  }
+  box.replaceChildren(h('span', { class: 'text-body-secondary' }, `Usual for ${preset.kind}: water under ${preset.target} %. `),
+    h('button', { class: 'btn btn-link btn-sm p-0 align-baseline', type: 'button', onclick: () => {
+      input.value = preset.target;
+      box.replaceChildren(h('span', { class: 'text-body-secondary' }, 'Set: click Save to keep it.'));
+    } }, 'Use it'));
+}
+
+// What happened to the device, for the charts' markers.
+function deviceEvents(details) {
+  const updates = details.updates.filter((u) => u.finished && (u.result === 'updated' || u.result === 'failed')).map((u) => ({
+    t: u.finished, kind: u.result === 'updated' ? 'update' : 'failed',
+    text: u.result === 'updated' ? `updated to v${u.image_version}` : `update failed: ${u.message}` }));
+  const pumps = (details.activity || []).filter((a) => a.kind === 'pump').map((a) => ({ t: a.time, kind: 'pump', text: a.message }));
+  const parents = details.network_events.map((e) => ({ t: e.time, kind: 'parent', text: e.message }));
+  return { updates, pumps, parents };
+}
+
 function renderDeviceCharts(details) {
   const r = details.readings.map((x) => ({ t: x.time, ...x }));
   const pick = (key) => r.map((x) => ({ t: x.t, v: x[key] }));
   const links = details.links;
   const margins = links.filter((l) => l.link_margin !== null && l.link_margin !== undefined);
+  const { updates, pumps, parents: moves } = deviceEvents(details);
   const charts = [
-    lineChart('Battery', pick('battery'), { unit: ' %', min: 0, max: 100, color: 'var(--t-green)' }),
-    lineChart('Soil moisture', pick('soil_moisture'), { unit: ' %', min: 0, max: 100, color: 'var(--t-cyan)' }),
+    lineChart('Battery', pick('battery'), { unit: ' %', min: 0, max: 100, color: 'var(--t-green)', events: updates }),
+    lineChart('Soil moisture', pick('soil_moisture'), { unit: ' %', min: 0, max: 100, color: 'var(--t-cyan)', events: pumps }),
     lineChart('Air humidity', pick('air_humidity'), { unit: ' %', min: 0, max: 100, color: 'var(--t-blue)' }),
     lineChart('Temperature', pick('temperature'), { unit: ' °C', color: 'var(--t-orange)' }),
     margins.length
-      ? lineChart('Link to its parent', margins.map((l) => ({ t: l.time, v: l.link_margin })), { unit: ' dB', min: 0, color: 'var(--t-magenta)', step: true })
-      : lineChart('Link quality to its parent', links.map((l) => ({ t: l.time, v: l.link_quality })), { min: 0, max: 3, color: 'var(--t-magenta)', step: true }),
+      ? lineChart('Link to its parent', margins.map((l) => ({ t: l.time, v: l.link_margin })), { unit: ' dB', min: 0, color: 'var(--t-magenta)', step: true, events: [...moves, ...updates] })
+      : lineChart('Link quality to its parent', links.map((l) => ({ t: l.time, v: l.link_quality })), { min: 0, max: 3, color: 'var(--t-magenta)', step: true, events: [...moves, ...updates] }),
   ];
   const parents = [...new Set(links.map((l) => l.parent))];
-  document.getElementById('device-charts').replaceChildren(h('div', { class: 'charts' }, charts),
-    parents.length ? h('div', { class: 'small text-body-secondary mt-2' }, `Parents in this period: ${parents.join(', ')}`) : null);
+  const legend = h('div', { class: 'chart-legend small text-body-secondary mt-2' }, 'Markers: ',
+    h('span', { class: 'legend-event event-update' }), 'update ', h('span', { class: 'legend-event event-failed' }), 'failed update ',
+    h('span', { class: 'legend-event event-pump' }), 'pump run (from the app) ', h('span', { class: 'legend-event event-parent' }),
+    'parent change. Point at one for details.');
+  document.getElementById('device-charts').replaceChildren(h('div', { class: 'charts' }, charts), legend,
+    parents.length ? h('div', { class: 'small text-body-secondary mt-1' }, `Parents in this period: ${parents.join(', ')}`) : null);
+  renderDeviceDrain(details.drain || []);
+}
+
+// ------------------------------------------------------------------ battery drain per firmware
+
+const perDay = (rate) => `${rate.per_day.toFixed(rate.per_day < 1 ? 2 : 1)} %/day`;
+const fullLasts = (days) => !days ? 'no measurable drain' : days >= 60 ? `≈ ${Math.round(days / 30)} months from full` : `≈ ${Math.round(days)} days from full`;
+
+function imageLabel(hash, version) {
+  return hash ? `v${version || '?'} · ${shortHash(hash)}` : 'the image before its first update here';
+}
+
+function renderDeviceDrain(periods) {
+  const measured = periods.filter((p) => p.rate);
+  document.getElementById('device-drain').replaceChildren(measured.length ? h('div', { class: 'mb-3' },
+    h('div', { class: 'small fw-bold mb-1' }, 'Battery drain by firmware'),
+    h('table', { class: 'table table-sm mb-0 small' }, h('tbody', {}, measured.map((p) => h('tr', {},
+      h('td', {}, imageLabel(p.image_hash, p.version)),
+      h('td', { class: 'text-nowrap' }, `${when(p.start)} → ${p.end ? when(p.end) : 'now'}`),
+      h('td', { class: 'text-end text-nowrap' }, perDay(p.rate)),
+      h('td', { class: 'text-body-secondary text-nowrap' }, fullLasts(p.rate.per_day > 0.01 ? 100 / p.rate.per_day : null)),
+      h('td', { class: 'text-body-secondary text-nowrap' }, `over ${p.rate.days.toFixed(1)} days`)))))) : '');
+}
+
+async function loadDrain() {
+  const groups = await api('GET', '/api/battery-drain', undefined, { quiet: true });
+  document.getElementById('dash-drain').replaceChildren(groups.length ? h('table', { class: 'table table-sm mb-0' },
+    h('thead', {}, h('tr', {}, h('th', {}, 'Image'), h('th', { class: 'text-end' }, 'Devices'),
+      h('th', { class: 'text-end' }, 'Median'), h('th', {}, ''))),
+    h('tbody', {}, groups.map((g) => h('tr', { title: g.devices.map((d) => `${d.name}: ${d.per_day.toFixed(2)} %/day`).join('\n') },
+      h('td', {}, imageLabel(g.image_hash, g.version), g.release ? h('span', { class: 'badge text-bg-primary ms-2' }, '★') : null),
+      h('td', { class: 'text-end' }, g.devices.length),
+      h('td', { class: 'text-end text-nowrap' }, perDay({ per_day: g.median })),
+      h('td', { class: 'small text-body-secondary text-nowrap' }, fullLasts(g.days_full)))))) :
+    h('p', { class: 'text-body-secondary mb-0' }, 'Not enough battery readings yet: each device needs 3 or more over 6 hours ' +
+      'on an image. Import Home Assistant\'s history (Settings) to start with more.'));
 }
 
 document.getElementById('device-days').addEventListener('change', () => { if (devicePage.id) loadDevicePage(devicePage.id); });
@@ -1812,13 +1920,17 @@ const settingLabels = {
   min_battery_for_update: ['Lowest battery for an update (%)', 'Over the air, a device whose battery is under this is skipped (an update can include it anyway). 0: no check.'],
   water_below_default: ['Needs water below (%)', 'The soil moisture under which a plant needs water, unless its page sets its own. 0: off.'],
   check_app_updates: ['Check GitHub for app updates', 'Once a day, asks GitHub whether a newer fleet manager is out.'],
+  keep_readings_days: ['Keep readings (days)', 'Readings, link samples and pump runs older than this are deleted, once a day. 0: keep everything.'],
+  keep_network_readings: ['Keep network readings', 'How many network readings the history slider keeps'],
+  keep_backups: ['Keep backups', 'How many automatic daily backups are kept'],
 };
+const SETTINGS_ELSEWHERE = new Set(['home_assistant_url']);  // set in their own cards
 
 async function loadSettings() {
   const status = await api('GET', '/api/status');
   state.status = status;
   const form = document.getElementById('settings-form');
-  form.replaceChildren(...Object.entries(status.settings).map(([key, value]) => {
+  form.replaceChildren(...Object.entries(status.settings).filter(([key]) => !SETTINGS_ELSEWHERE.has(key)).map(([key, value]) => {
     const [label, help] = settingLabels[key] || [key, ''];
     if (typeof value === 'boolean') {
       return h('div', { class: 'col-12' }, h('div', { class: 'form-check form-switch' },
@@ -2398,6 +2510,208 @@ document.getElementById('heatmap-toggle').addEventListener('change', (event) => 
   renderHeatmapNote();
 });
 
+// ------------------------------------------------------------------ check my connection
+
+const doctorMarks = { ok: ['text-success', '✓'], warn: ['text-warning', '!'], fail: ['text-danger', '✗'], skip: ['text-body-secondary', '○'] };
+const millis = (v) => v === null || v === undefined ? '–' : v < 1 ? '< 1 ms' : v >= 1000 ? `${(v / 1000).toFixed(1)} s` : `${Math.round(v)} ms`;
+const roughly = (s) => s === null || s === undefined ? '–' : s < 1 ? '< 1 s' : s < 90 ? `≈ ${Math.round(s)} s` : `≈ ${Math.round(s / 60)} min`;
+
+async function runDoctor(device = null) {
+  document.getElementById('doctor-title').textContent = device ? `Check the connection to ${deviceName(device)}` : 'Check my connection';
+  const body = document.getElementById('doctor-body');
+  body.replaceChildren(h('p', { class: 'text-body-secondary mb-0' }, 'Checking the border router, finding boards, the route, ' +
+    'then each board. A sleepy board can take a few seconds to answer…'));
+  bootstrap.Modal.getOrCreateInstance(document.getElementById('doctor-modal')).show();
+  let result;
+  try {
+    result = await api('POST', '/api/doctor', device ? { device_id: device.device_id } : {}, { quiet: true });
+  } catch (error) {
+    body.replaceChildren(h('p', { class: 'text-danger mb-0' }, error.message));
+    return;
+  }
+  body.replaceChildren(
+    h('p', { class: `fw-bold ${result.ok ? 'text-success' : 'text-danger'}` }, result.summary),
+    h('ol', { class: 'list-unstyled doctor-steps' }, result.steps.map((s) => {
+      const [cls, mark] = doctorMarks[s.state] || doctorMarks.skip;
+      return h('li', { class: 'mb-2' }, h('span', { class: `${cls} me-2` }, mark), h('b', {}, s.name), ': ', s.detail,
+        s.advice && s.state !== 'ok' ? h('div', { class: 'small text-body-secondary ms-4' }, s.advice) : null);
+    })),
+    result.devices.length ? h('div', { class: 'table-responsive' }, h('table', { class: 'table table-sm small mb-2' },
+      h('thead', {}, h('tr', {}, h('th', {}, 'Board'), h('th', { class: 'text-end' }, 'CoAP'),
+        h('th', { class: 'text-end' }, 'mcumgr: first'), h('th', { class: 'text-end' }, 'then'), h('th', { class: 'text-end' }, 'Update upload'))),
+      h('tbody', {}, result.devices.map((d) => h('tr', {},
+        h('td', {}, d.name, d.error ? h('div', { class: 'text-danger' }, d.error) : null),
+        h('td', { class: 'text-end' }, millis(d.coap_ms)), h('td', { class: 'text-end' }, millis(d.mcumgr_first_ms)),
+        h('td', { class: 'text-end' }, millis(d.mcumgr_ms)), h('td', { class: 'text-end' }, roughly(d.upload_s))))))) : null,
+    result.devices.length ? h('p', { class: 'small text-body-secondary mb-0' }, 'The first mcumgr answer can wait for a sleepy ' +
+      'board\'s next poll (up to 3 s); after it, the board polls fast, as during an update. The upload estimate is one ' +
+      'packet per round trip, for the release image (or 300 KB without one).') : null);
+}
+
+document.getElementById('doctor-run').addEventListener('click', () => runDoctor());
+
+// ------------------------------------------------------------------ labels
+
+// Sheets: the printed page's size and margins, so the labels land on the sheet's own.
+const LABEL_SHEETS = {
+  a4: { page: 'A4', margin: '15.1mm 7.2mm' },
+  letter: { page: 'letter', margin: '12.7mm 4.8mm' },
+  roll: { page: '62mm 29mm', margin: '0' },
+};
+
+function labelDevices() {
+  const all = [...state.devices.values()];
+  const which = document.getElementById('labels-which').value;
+  return (which === 'all' ? all : all.filter((d) => state.selected.has(d.device_id)))
+    .sort((a, b) => deviceName(a).localeCompare(deviceName(b)));
+}
+
+function labelCard(device) {
+  return h('div', { class: 'label' },
+    svg('svg', { class: 'label-logo', viewBox: '0 0 512 512' }, svg('use', { href: '#hacoap-glyph' })),
+    h('div', { class: 'label-text' },
+      h('div', { class: 'label-name' }, deviceName(device)),
+      device.plant && device.plant.toLowerCase() !== deviceName(device).toLowerCase() ? h('div', { class: 'label-plant' }, device.plant) : null,
+      device.location ? h('div', { class: 'label-detail' }, device.location) : null,
+      h('div', { class: 'label-id' }, `ID ${device.device_id}`)));
+}
+
+function renderLabelPreview() {
+  const devices = labelDevices();
+  const sheet = document.getElementById('labels-sheet').value;
+  document.getElementById('labels-preview').className = `labels-preview sheet-${sheet}`;
+  document.getElementById('labels-preview').replaceChildren(...(devices.length ? devices.slice(0, 6).map(labelCard)
+    : [h('p', { class: 'text-body-secondary' }, 'No devices: tick some on the list, or choose All of them.')]));
+  document.getElementById('labels-count').textContent = devices.length
+    ? `${devices.length} label(s)${devices.length > 6 ? ', the first 6 shown' : ''}` : '';
+}
+
+document.getElementById('labels-open').addEventListener('click', () => {
+  document.getElementById('labels-which').value = state.selected.size ? 'selected' : 'all';
+  renderLabelPreview();
+  bootstrap.Modal.getOrCreateInstance(document.getElementById('labels-modal')).show();
+});
+document.getElementById('labels-which').addEventListener('change', renderLabelPreview);
+document.getElementById('labels-sheet').addEventListener('change', renderLabelPreview);
+document.getElementById('labels-print').addEventListener('click', () => {
+  const devices = labelDevices();
+  if (!devices.length) return notify('No devices to print: tick some, or choose All of them', 'warning');
+  const sheet = document.getElementById('labels-sheet').value;
+  const target = document.getElementById('labels-sheet-print');
+  target.className = `labels-print sheet-${sheet}`;
+  target.replaceChildren(...devices.map(labelCard));
+  let page = document.getElementById('labels-page');
+  if (!page) {
+    page = h('style', { id: 'labels-page' });
+    document.head.append(page);
+  }
+  page.textContent = `@page { size: ${LABEL_SHEETS[sheet].page}; margin: ${LABEL_SHEETS[sheet].margin}; }`;
+  document.body.classList.add('printing-labels');
+  window.addEventListener('afterprint', () => {
+    document.body.classList.remove('printing-labels');
+    page.textContent = '';
+  }, { once: true });
+  bootstrap.Modal.getOrCreateInstance(document.getElementById('labels-modal')).hide();
+  setTimeout(() => window.print(), 400);  // once the dialog has closed
+});
+
+// ------------------------------------------------------------------ data: space used, keeping it in bounds
+
+const megabytes = (bytes) => bytes >= 1024 * 1024 ? `${(bytes / 1024 / 1024).toFixed(1)} MB` : `${Math.round(bytes / 1024)} KB`;
+
+function renderStorage(usage) {
+  const names = { database: 'database', images: 'images', photos: 'photos', backups: 'backups', builds: 'build settings', other: 'other' };
+  const parts = Object.entries(usage.parts).filter(([, size]) => size > 0)
+    .map(([name, size]) => `${names[name] || name} ${megabytes(size)}`);
+  const rows = usage.rows;
+  document.getElementById('storage').replaceChildren(
+    h('div', {}, h('b', {}, megabytes(usage.total)), parts.length ? ` · ${parts.join(' · ')}` : ''),
+    h('div', { class: 'text-body-secondary' }, `${rows.readings.toLocaleString()} readings, ${rows.link_samples.toLocaleString()} link ` +
+      `samples, ${rows.network_snapshots.toLocaleString()} network readings, ${rows.activity.toLocaleString()} pump runs`));
+}
+
+async function loadStorage() {
+  renderStorage(await api('GET', '/api/storage', undefined, { quiet: true }));
+}
+
+document.getElementById('storage-prune').addEventListener('click', (event) => busy(event.target, async () => {
+  const result = await api('POST', '/api/storage/prune');
+  notify(`Deleted ${result.removed.rows} old row(s) and ${result.removed.network} network reading(s)`, 'success');
+  renderStorage(result);
+}));
+document.getElementById('storage-compact').addEventListener('click', (event) => busy(event.target, async () => {
+  renderStorage(await api('POST', '/api/storage/compact'));
+  notify('Database compacted', 'success', 3000);
+}));
+
+// ------------------------------------------------------------------ running in the background
+
+async function loadAutostart() {
+  const st = await api('GET', '/api/autostart', undefined, { quiet: true });
+  const toggle = document.getElementById('autostart-toggle');
+  toggle.checked = st.enabled;
+  toggle.disabled = !st.supported;
+  document.getElementById('background-address').textContent = location.origin + '/';
+  document.getElementById('background-address').href = location.origin + '/';
+  document.getElementById('autostart-note').textContent = st.supported
+    ? `In the background it writes its log to ${st.log}.`
+    : 'Not available here.';
+}
+
+document.getElementById('autostart-toggle').addEventListener('change', async (event) => {
+  try {
+    const st = await api('PUT', '/api/autostart', { enabled: event.target.checked });
+    event.target.checked = st.enabled;
+    notify(st.enabled ? 'It will start with this computer, in the background' : 'It won\'t start with this computer', 'success');
+  } catch (error) {
+    event.target.checked = !event.target.checked;
+  }
+});
+document.getElementById('quit-app').addEventListener('click', async () => {
+  if (!confirm('Stop the fleet manager? It stops collecting readings until it starts again.')) return;
+  try {
+    await api('POST', '/api/quit');
+  } catch (error) {
+    return;
+  }
+  document.querySelector('main').replaceChildren(h('div', { class: 'p-5 text-center' },
+    h('h4', {}, 'The fleet manager has stopped.'), h('p', { class: 'text-body-secondary' }, 'Start it again to use this page.')));
+});
+
+// ------------------------------------------------------------------ Home Assistant history
+
+async function loadHomeAssistant() {
+  const st = await api('GET', '/api/home-assistant', undefined, { quiet: true });
+  document.getElementById('ha-url').value = st.url;
+  document.getElementById('ha-token').value = '';
+  document.getElementById('ha-token').placeholder = st.token_set ? 'saved (paste a new one to replace it)' : 'paste it here';
+  document.getElementById('ha-token-state').textContent = st.token_set ? 'A token is saved.' : 'No token yet.';
+}
+
+document.getElementById('ha-form').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const token = document.getElementById('ha-token').value.trim();
+  await api('PUT', '/api/home-assistant', { url: document.getElementById('ha-url').value.trim(), token: token || null })
+    .then(() => { notify('Saved', 'success', 2000); loadHomeAssistant(); }, () => {});
+});
+document.getElementById('ha-check').addEventListener('click', (event) => busy(event.target, async () => {
+  const result = await api('POST', '/api/home-assistant/check');
+  const boards = result.boards;
+  document.getElementById('ha-boards').replaceChildren(
+    h('div', { class: 'text-success mb-1' }, `Connected to Home Assistant ${result.version}${result.name ? ` (${result.name})` : ''}: ` +
+      `${boards.length} ha-coap board(s).`),
+    boards.length ? h('ul', { class: 'mb-0 ps-3' }, boards.map((b) => h('li', {}, h('b', {}, b.ha_name), ' → ',
+      b.name ? b.name : h('span', { class: 'text-warning' }, b.device_id ? `device ${b.device_id}, not in the app yet` : 'no device ID'),
+      h('span', { class: 'text-body-secondary' }, ` · ${Object.keys(b.entities).length} sensor(s)`)))) : null);
+}));
+document.getElementById('ha-import').addEventListener('click', (event) => busy(event.target, async () => {
+  const result = await api('POST', '/api/home-assistant/import', { days: Number(document.getElementById('ha-days').value) });
+  notify(`Imported ${result.imported} reading(s) from Home Assistant`, 'success');
+  document.getElementById('ha-boards').replaceChildren(h('ul', { class: 'mb-0 ps-3' }, result.results.map((r) => h('li', {},
+    h('b', {}, r.ha_name), r.device_id ? ` → ${r.name}: ${r.imported} reading(s)` : '', r.note ? h('span', { class: 'text-warning' }, ` ${r.note}`) : null))));
+  loadStorage().catch(() => {});
+}));
+
 // ------------------------------------------------------------------ search (Ctrl+K)
 
 const palette = { items: [], shown: [], index: 0 };
@@ -2422,6 +2736,8 @@ function paletteItems() {
   action('Find devices', 'devices', runOnTab('devices', 'discover'));
   action('Refresh all devices', 'devices', runOnTab('devices', 'refresh-all'));
   action('Read all firmware', 'which image each device runs', runOnTab('devices', 'read-all-slots'));
+  action('Check my connection', 'each step from this computer to the boards', () => runDoctor());
+  action('Print labels', 'for the pots or the boards', runOnTab('devices', 'labels-open'));
   action('Read the network', 'network', runOnTab('network', 'network-refresh'));
   action('Scan the channels', 'radio noise per channel', runOnTab('network', 'channel-scan'));
   action('Download a backup', 'settings', download('/api/backup'));

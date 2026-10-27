@@ -6,7 +6,7 @@ One application for Windows, macOS and Linux to look after a fleet of ha-coap de
 
 It runs on your PC when you need it. The app starts a small web server that only this computer can reach (`http://127.0.0.1:8710`), and opens it in your browser. Close the app's window and everything stops.
 
-**Status (2026-10-26):** version 0.1.0, the plan's phases 0–2, 5 and 6 (foundations, inventory, updates, builds, backups and releases), plus a dashboard, device pages with history charts and plant photos, groups, staged updates with signature and battery checks, alerts, a network map with each board's plant and readings, a floor plan, a signal heatmap, network history, a channel scan, a serial console, one-click setup of a new computer, and flashing new boards over SWD. Tested against simulated devices and a simulated border router on Windows, macOS and Linux, and a real firmware build on Windows, **not yet with real boards, a real border router or a J-Link**. Runtime settings and commissioning come later (see [the plan](../docs/FLEET-MANAGER-PLAN.md)). Until it has updated real boards, keep using the scripts or the web updater for anything important.
+**Status (2026-10-26):** version 0.1.0, the plan's phases 0–2, 5 and 6 (foundations, inventory, updates, builds, backups and releases), plus a dashboard, device pages with history charts and plant photos, groups, staged updates with signature and battery checks, alerts, a network map with each board's plant and readings, a floor plan, a signal heatmap, network history, a channel scan, a serial console, one-click setup of a new computer, flashing new boards over SWD, a connection check, battery drain per firmware, Home Assistant history import, labels, and running in the background. Tested against simulated devices and a simulated border router on Windows, macOS and Linux, and a real firmware build on Windows, **not yet with real boards, a real border router or a J-Link**. Runtime settings and commissioning come later (see [the plan](../docs/FLEET-MANAGER-PLAN.md)). Until it has updated real boards, keep using the scripts or the web updater for anything important.
 
 ## Getting it
 
@@ -29,10 +29,11 @@ The app isn't code-signed, which is why each OS warns once.
 | Windows (PowerShell) | `py -m venv .venv` then `.venv\Scripts\pip install -r requirements.txt` | `.venv\Scripts\python -m hacoap_manager` |
 | macOS, Linux | `python3 -m venv .venv` then `.venv/bin/pip install -r requirements.txt` | `.venv/bin/python -m hacoap_manager` |
 
-Options: `--port 8710` (the next free port is used if it's taken), `--data-dir <folder>`, `--no-browser`.
+Options: `--port 8710` (the next free port is used if it's taken), `--data-dir <folder>`, `--no-browser`, `--background` (no browser and no window; it logs to `hacoap-manager.log` in the data folder), `--workdir <folder>` (work from this folder, such as the ha-coap-server checkout). Starting the app while it already runs (same data folder) opens the running one in the browser instead of starting a second.
 
 ## Before you use it
 - **Same network as the border router.** The PC reaches the devices through the border router, exactly like the scripts: CoAP on UDP 5683 for status, mcumgr on UDP 1337 for updates, and mDNS to find them. If `ping` to a device's address fails from this PC, the app can't reach it either.
+- **Check my connection** (Devices tab) checks each step from this PC to the boards, and says which one fails and what usually fixes it. Run it first on a new PC or network (see Devices below).
 - **Images signed with your key.** Build on the PC that has `application/keys/mcuboot-signing-key.pem` (see the main README). An image signed with another key uploads fine, but the board refuses to boot it, and the app reports that MCUboot reverted the update.
 
 ## Using it
@@ -53,6 +54,7 @@ On a phone (over Remote Desktop, say) the layout narrows: the tabs scroll sidewa
 - **Alerts:** what needs attention (see Alerts below), each with its time and a button to dismiss it.
 - **Firmware:** how many devices run each image, with the release marked. **Update the N behind…** starts a staged update of those devices (see Updates), and **Read all firmware** asks every device which image it runs.
 - **Batteries:** the lowest first, with the days left at the current rate. The estimate is a straight line through the last 14 days of readings. It needs at least three readings over six hours, and a battery that is actually going down.
+- **Battery drain by firmware:** how fast batteries go down under each image, as % per day (the median of the devices that ran it) and how long a full battery would last at that rate. Point at a row for each device's rate. It tells whether an update changed the battery life, such as the power changes of the `claude` branch. How it's measured: each device's readings are split at its updates (the 2 hours after an update are left out, the update itself draws power), and at any jump that isn't drain (a rise from charging, or the sudden drop when the charger is unplugged); a straight line through each stretch of 3 readings or more over 6 hours gives the rate. Readings from before a device's first update made here count for "the image before its first update". A device never updated from the app counts for the image it runs now.
 - **Offline:** devices that stopped answering.
 - **Weakest links:** from the last network read.
 - **Recent updates.**
@@ -73,6 +75,15 @@ The status refreshes every 15 minutes while the app runs, or with **Refresh all*
 - Notes
 - Remove from the list (it comes back with **Find devices**)
 
+- **Check my connection** walks the path from this PC to the boards, one step at a time:
+  1. **Border router:** its REST API answers (when its address is set).
+  2. **Finding boards (mDNS):** the border router answers for the boards on your LAN.
+  3. **Route to the Thread network:** this PC has a route to each Thread prefix the boards use (from the border router's router advertisements).
+  4. **Boards answering:** each board (up to 24, four at a time) answers CoAP and mcumgr, and how fast. The first mcumgr answer can wait for a sleepy board's next poll; the second shows the speed during an update, from which it estimates the upload time of the release image.
+
+  A failed step comes with what usually fixes it: the REST API only listening on the border router itself, mDNS blocked by Wi-Fi client isolation or a firewall, Linux not accepting the route (`accept_ra_rt_info_max_plen`), and so on. A device's page has the same check for that one board.
+- **Print labels…** prints a label per device (the ticked ones, or all) with the logo, its name, plant, location and device ID: on an A4 sheet of 21 (63.5 × 38.1 mm, Avery L7160), a US Letter sheet of 30 (66.7 × 25.4 mm, Avery 5160), or one per page for a label printer (62 × 29 mm). In the print dialog, keep the scale at 100 % and the margins as set (default), so the labels land on the sheet's.
+
 Tick devices to update them, or to use **With selected**: refresh them, read their firmware, beep, add them to a group or remove them from one, set their location or watering target, or remove them from the list, all at once.
 
 - **Groups:** give devices a location and tags (on the device's page, under **About this device**, for example `kitchen` and `herbs`). Click a tag above the list to show only those devices, then tick them all to update one group at a time. The filter box searches names, IDs, addresses, plants, locations, tags and notes.
@@ -88,8 +99,8 @@ Tick devices to update them, or to use **With selected**: refresh them, read the
   - **Beep**
 
   A command reaches a sleeping board at its next poll: up to 3 s.
-- **About this device:** name, plant, location, tags, notes, and **Needs water below**: the soil moisture % under which this plant needs water. Empty uses the default from Settings (30 %); a cactus wants less, a fern more.
-- **History:** **CSV** downloads every reading of the device as a spreadsheet. Charts of battery, soil moisture, air humidity, temperature and the link to its parent, over 1, 7, 30 or 90 days, and which parents it had. Every refresh and every network read adds a point, so the charts fill in while the app runs.
+- **About this device:** name, plant, location, tags, notes, and **Needs water below**: the soil moisture % under which this plant needs water. Empty uses the default from Settings (30 %). Type a plant and the app suggests the usual target for it (about 30 plants: herbs, vegetables, houseplants, succulents), with **Use it**: a guide to start from, adjust it once you see the plant's readings.
+- **History:** **CSV** downloads every reading of the device as a spreadsheet. Its **battery drain by firmware** (see the dashboard), then charts of battery, soil moisture, air humidity, temperature and the link to its parent, over 1, 7, 30 or 90 days, and which parents it had. Every refresh and every network read adds a point, so the charts fill in while the app runs (or import Home Assistant's history, see Settings). Markers on the charts show what happened: updates (and failed ones) on the battery and link charts, pump runs started from the app on the soil chart, and parent changes on the link chart. Point at one for when and what.
 - **Updates and network changes:** its own entries from both histories.
 
 **Images.** The library of firmware images. You can add an `app_update.bin` file, or add a build from this computer: when the app runs from the ha-coap-server folder, it lists `application/build*/zephyr/app_update.bin`. Images are identified by their SHA-256 hash, the same one `mcumgr image list` shows. Their version comes from `application/VERSION` (bump it before building a release), and an image built here also records its git commit. Mark one image as the **release**: the image your fleet should run. The dashboard and the device list compare every device with it.
@@ -167,12 +178,22 @@ While a device is being updated, it polls its parent every 100 ms instead of eve
 
 An alert clears by itself when the condition ends; a failed update's stays until dismissed. Alerts show on the dashboard and in the status bar. **Notify me** (dashboard) or **Turn on** (Settings) also pops them up as browser notifications while the page is open, even in a background tab.
 
-**Settings.** Ports, timeouts, the mcumgr packet size (1280 bytes over the air, which fits Thread without IP fragmentation; 512 over USB), how long a device counts as online, the automatic refresh, the lowest battery for an update, the default watering target, and **Check GitHub for app updates**. That last one is off by default. When on, the app asks GitHub once a day whether a newer fleet manager release is out, and says so in the status bar; **Check now** asks once. Under **Data**:
+**Running in the background.** History, alerts and network readings only build up while the app runs. Settings → **Start with this computer, in the background** makes it start at login, without a window, as the PC it was turned on from runs it (the packaged app, or Python with the source; the checkout and data folder too):
+- **Windows:** a value in your user's Run key (`HKCU\Software\Microsoft\Windows\CurrentVersion\Run`). From the source it starts with `pythonw`, so no window at all; the packaged app shows its window for a moment, then hides it.
+- **macOS:** a LaunchAgent in `~/Library/LaunchAgents`.
+- **Linux:** an autostart entry in `~/.config/autostart` (desktop sessions).
+
+No admin rights. To see it, open `http://127.0.0.1:8710` (bookmark it), or start the app again: it opens the running one. **Stop the app** (Settings) stops it; it refuses while an update, build or setup step runs. In the background it logs to `hacoap-manager.log` in the data folder.
+
+**Home Assistant history.** Home Assistant already has the boards' readings from before the app ran. Settings → **Home Assistant history**: its address (such as `http://homeassistant.local:8123`) and a long-lived access token (in Home Assistant: your profile, Security tab, Long-lived access tokens). **Check** lists the ha-coap boards it found and which device each one is in the app; **Import history** brings in the last 1 to 90 days. Boards are matched by the integration's `device-id` sensor, so names don't have to match. Home Assistant only stores changes, so the import makes one reading per 15 minutes where anything changed, each value holding until its next change; temperatures in °F are converted. Importing again adds nothing it already has. Home Assistant keeps 10 days of history by default (its recorder's `purge_keep_days`). The token is kept in its own file in the data folder (`ha-token`, readable only by you on macOS and Linux), never in `settings.json`, backups, problem reports or the page.
+
+**Settings.** Ports, timeouts, the mcumgr packet size (1280 bytes over the air, which fits Thread without IP fragmentation; 512 over USB), how long a device counts as online, the automatic refresh, the lowest battery for an update, the default watering target, how much history to keep (**Keep readings**: 730 days, 0 keeps everything; **Keep network readings**: 1000; **Keep backups**: 7), and **Check GitHub for app updates**. That last one is off by default. When on, the app asks GitHub once a day whether a newer fleet manager release is out, and says so in the status bar; **Check now** asks once. Under **Data**:
+- **Space used:** the data folder's size, by part (database, images, photos, backups), and how many readings, link samples, network readings and pump runs it holds. Old data goes once a day; **Delete old data now** does it at once, and **Compact the database** gives the freed space back to the disk.
 - **Export readings (CSV):** every stored reading of every device.
 - **Download a problem report:** one `.zip` to look into a problem or attach to an issue. It has the app's recent log, settings, devices, update and build history (with the last build logs), the alerts and the last network reading. It holds no signing key, and the PSKd is blanked out of every text in it.
 
 ## Where things are kept
-Everything is in one folder: the SQLite database (devices and their readings, images, update history, build profiles and builds, alerts, network history), the images themselves, `photos/` (the plants), `settings.json`, the public half of your signing key (`signing-public-key.pem`), and `backups/`.
+Everything is in one folder: the SQLite database (devices and their readings, images, update history, build profiles and builds, alerts, network history, pump runs), the images themselves, `photos/` (the plants), `settings.json`, the public half of your signing key (`signing-public-key.pem`), `backups/`, the Home Assistant token if you saved one (`ha-token`, never backed up), and `hacoap-manager.log` when it runs in the background.
 
 | OS | Folder |
 |---|---|
@@ -195,7 +216,8 @@ To move to another PC: download a backup, install the app there, and restore it.
 - The server listens on 127.0.0.1 only: other computers on the network can't open it. Using it from another PC is a possible later addition (see the plan).
 - Other websites open in the same browser can't use it either. The server only answers requests addressed to 127.0.0.1 or localhost, which blocks DNS rebinding. Every change must carry an `X-HACoap` header, which a page from another site can't add.
 - There is no login: anyone using this PC's account can use it.
-- The app only contacts the internet if you turn on **Check GitHub for app updates** (or click **Check now**): one request to GitHub's public releases API.
+- The app only contacts the internet if you turn on **Check GitHub for app updates** (or click **Check now**): one request to GitHub's public releases API. It contacts your Home Assistant only when you click **Check** or **Import history**.
+- The Home Assistant token gives full access to your Home Assistant: it stays in its own file (`ha-token`), never in backups, problem reports or the page. Remove it by saving an empty token, and revoke it in Home Assistant if this PC is lost.
 - Pictures (floor plan, plant photos) must be PNG, JPEG or WebP, checked from their content, never SVG, which can carry scripts.
 - The devices' mcumgr has no authentication (see the main README's Security section). What protects the boards is the signing key: they only boot images signed with it.
 
@@ -226,6 +248,10 @@ A whole fleet: `python -m hacoap_manager.simdevice --count 9 --border-router api
 | `hacoap_manager/pictures.py` | Plant photos and the floor plan picture: checks and storage |
 | `hacoap_manager/report.py` | The problem report, and the recent log it includes |
 | `hacoap_manager/appupdate.py` | The check for a newer app release on GitHub |
+| `hacoap_manager/doctor.py` | Check my connection: border router, mDNS, the route, each board's speed |
+| `hacoap_manager/homeassistant.py` | Importing the boards' history from Home Assistant, and keeping its token |
+| `hacoap_manager/autostart.py` | Starting with the computer (Run key, LaunchAgent, XDG autostart) |
+| `hacoap_manager/housekeeping.py` | The data folder's size, and deleting old data |
 | `hacoap_manager/setup_tools.py` | The Builds tab's setup buttons (toolchain, signing key, PSKd, SWD tools), and runs SWD flashes |
 | `hacoap_manager/swd.py` | Flashing a board over SWD: J-Link probes, the builds to flash, the `nrfutil device` commands |
 | `hacoap_manager/console.py` | The serial console |

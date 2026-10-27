@@ -74,6 +74,10 @@
           <div class="card-header">Batteries</div>
           <div class="card-body" id="dash-batteries"></div>
         </div>
+        <div class="card mb-4">
+          <div class="card-header">Battery drain by firmware</div>
+          <div class="card-body" id="dash-drain"></div>
+        </div>
       </div>
       <div class="col-xl-6">
         <div class="card mb-4">
@@ -120,7 +124,10 @@
             <select class="form-select form-select-sm w-auto" id="device-days">
               <option value="1">1 day</option><option value="7">7 days</option>
               <option value="30" selected>30 days</option><option value="90">90 days</option></select></div>
-          <div class="card-body" id="device-charts"></div>
+          <div class="card-body">
+            <div id="device-drain"></div>
+            <div id="device-charts"></div>
+          </div>
         </div>
         <div class="card mb-4"><div class="card-header">Updates</div><div class="card-body" id="device-updates"></div></div>
         <div class="card"><div class="card-header">Network changes</div><div class="card-body" id="device-events"></div></div>
@@ -138,6 +145,8 @@
         <button class="btn btn-outline-secondary" type="submit">Add</button>
       </form>
       <button class="btn btn-outline-secondary" id="read-all-slots" title="Asks every device which image it runs">Read all firmware</button>
+      <button class="btn btn-outline-secondary" id="doctor-run" title="Checks each step from this computer to the boards">Check my connection</button>
+      <button class="btn btn-outline-secondary" id="labels-open" title="Labels to stick on the pots or the boards">Print labels…</button>
       <div class="ms-auto d-flex gap-2 align-items-center">
         <span class="text-body-secondary small" id="selection-count"></span>
         <div class="dropdown">
@@ -494,6 +503,55 @@
             </div>
           </div>
         </div>
+        <div class="card mt-4">
+          <div class="card-header">Running in the background</div>
+          <div class="card-body">
+            <p class="small text-body-secondary mb-2">History, alerts and network readings only build up while the app
+              runs. Started with the computer, it runs in the background, without a window: open
+              <a href="/" id="background-address"></a> (bookmark it) to see it. Starting the app again also opens it.</p>
+            <div class="form-check form-switch mb-2">
+              <input class="form-check-input" type="checkbox" id="autostart-toggle">
+              <label class="form-check-label" for="autostart-toggle">Start with this computer, in the background</label>
+            </div>
+            <div class="form-text mb-3" id="autostart-note"></div>
+            <button class="btn btn-outline-danger" id="quit-app" type="button">Stop the app</button>
+            <div class="form-text">Stops collecting until it starts again. It waits for an update, build or setup step to finish.</div>
+          </div>
+        </div>
+        <div class="card mt-4">
+          <div class="card-header">Home Assistant history</div>
+          <div class="card-body">
+            <p class="small text-body-secondary mb-2">Home Assistant already has your boards' readings from before the app
+              ran. With its address and a long-lived access token (in Home Assistant: your profile, Security tab,
+              Long-lived access tokens), the app imports them into its charts. Boards are matched by their device-id
+              sensor. Home Assistant keeps 10 days of history by default.</p>
+            <form id="ha-form" class="row g-2 mb-2">
+              <div class="col-sm-6">
+                <label class="form-label small mb-1" for="ha-url">Address</label>
+                <input class="form-control form-control-sm" id="ha-url" placeholder="http://homeassistant.local:8123">
+              </div>
+              <div class="col-sm-6">
+                <label class="form-label small mb-1" for="ha-token">Access token</label>
+                <input class="form-control form-control-sm" id="ha-token" type="password" autocomplete="off">
+              </div>
+              <div class="col-12 d-flex flex-wrap gap-2 align-items-center">
+                <button class="btn btn-sm btn-primary" type="submit">Save</button>
+                <button class="btn btn-sm btn-outline-secondary" id="ha-check" type="button">Check</button>
+                <span class="small text-body-secondary" id="ha-token-state"></span>
+              </div>
+            </form>
+            <div class="small mb-2" id="ha-boards"></div>
+            <div class="d-flex flex-wrap gap-2 align-items-center">
+              <label class="small text-body-secondary" for="ha-days">Import the last</label>
+              <select class="form-select form-select-sm w-auto" id="ha-days">
+                <option value="1">1 day</option><option value="7">7 days</option><option value="10" selected>10 days</option>
+                <option value="30">30 days</option><option value="90">90 days</option></select>
+              <button class="btn btn-sm btn-outline-primary" id="ha-import" type="button">Import history</button>
+            </div>
+            <div class="form-text">The token stays in its own file in the data folder: never in backups, problem reports or
+              this page. Importing twice adds nothing new.</div>
+          </div>
+        </div>
       </div>
       <div class="col-lg-6">
         <div class="card mb-4">
@@ -503,6 +561,15 @@
         <div class="card">
           <div class="card-header">Data</div>
           <div class="card-body">
+            <h6>Space used</h6>
+            <div class="small mb-2" id="storage"></div>
+            <div class="d-flex flex-wrap gap-2 mb-1">
+              <button class="btn btn-sm btn-outline-secondary" id="storage-prune" type="button">Delete old data now</button>
+              <button class="btn btn-sm btn-outline-secondary" id="storage-compact" type="button">Compact the database</button>
+            </div>
+            <div class="form-text mb-3">How long readings and network history are kept is set under Settings (Keep
+              readings, Keep network readings, Keep backups). Old data is deleted once a day; compacting gives the space
+              back to the disk.</div>
             <h6>Backup</h6>
             <p class="small text-body-secondary">One file with everything: devices, images, update history, build profiles
               and settings. Use it to keep a copy, or to move the app to another PC.</p>
@@ -517,7 +584,7 @@
               saved as a backup first.</div>
             <h6>Saved backups</h6>
             <p class="small text-body-secondary mb-1">A backup is made automatically once a day while the app runs
-              (the last 7 are kept), and before every restore.</p>
+              (the last 7 are kept, see Settings), and before every restore.</p>
             <ul class="list-unstyled small" id="backups"></ul>
             <h6 class="mt-3">Device list</h6>
             <p class="small text-body-secondary">A spreadsheet (CSV) of the devices. Importing one adds or updates devices
@@ -565,6 +632,51 @@
     </div>
   </div>
 </div>
+
+<!-- Connection check dialog -->
+<div class="modal fade" id="doctor-modal" tabindex="-1">
+  <div class="modal-dialog modal-lg">
+    <div class="modal-content">
+      <div class="modal-header"><h5 class="modal-title" id="doctor-title">Check my connection</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+      <div class="modal-body" id="doctor-body"></div>
+    </div>
+  </div>
+</div>
+
+<!-- Labels dialog -->
+<div class="modal fade" id="labels-modal" tabindex="-1">
+  <div class="modal-dialog modal-lg">
+    <div class="modal-content">
+      <div class="modal-header"><h5 class="modal-title">Print labels</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+      <div class="modal-body">
+        <div class="row g-2 mb-3">
+          <div class="col-sm-6">
+            <label class="form-label small mb-1" for="labels-which">Devices</label>
+            <select class="form-select form-select-sm" id="labels-which">
+              <option value="selected">The ticked ones</option><option value="all">All of them</option></select>
+          </div>
+          <div class="col-sm-6">
+            <label class="form-label small mb-1" for="labels-sheet">Labels</label>
+            <select class="form-select form-select-sm" id="labels-sheet">
+              <option value="a4">A4 sheet, 21 labels of 63.5 x 38.1 mm (Avery L7160)</option>
+              <option value="letter">US Letter sheet, 30 labels of 66.7 x 25.4 mm (Avery 5160)</option>
+              <option value="roll">Label printer, one 62 x 29 mm label per page</option></select>
+          </div>
+        </div>
+        <div class="labels-preview" id="labels-preview"></div>
+      </div>
+      <div class="modal-footer">
+        <span class="small text-body-secondary me-auto" id="labels-count"></span>
+        <button class="btn btn-primary" id="labels-print" type="button">Print</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- What gets printed (only while printing labels) -->
+<div id="labels-sheet-print" class="labels-print"></div>
 
 <script src="/static/vendor/bootstrap.bundle.min.js"></script>
 <script type="module" src="/static/app.js"></script>

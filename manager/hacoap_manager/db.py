@@ -108,6 +108,14 @@ CREATE TABLE IF NOT EXISTS network_snapshots (
     boards   INTEGER NOT NULL,
     topology BLOB NOT NULL                     -- zlib-compressed JSON
 );
+CREATE TABLE IF NOT EXISTS activity (
+    id        INTEGER PRIMARY KEY AUTOINCREMENT,
+    time      REAL NOT NULL,
+    device_id TEXT NOT NULL,
+    kind      TEXT NOT NULL,                   -- pump (started from the app)
+    message   TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS activity_device_time ON activity (device_id, time);
 CREATE TABLE IF NOT EXISTS builds (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
     profile    TEXT NOT NULL,
@@ -359,6 +367,50 @@ class Database:
     def network_events_for(self, device_id, limit=50):
         return self._query("SELECT * FROM network_events WHERE device_id = ? ORDER BY id DESC LIMIT ?",
                            (device_id, limit))
+
+    def add_readings(self, rows):
+        """Adds many readings at once: [(device_id, time, battery, soil, air, temperature)]."""
+        with self._lock:
+            self._conn.executemany("INSERT INTO readings (device_id, time, battery, soil_moisture, air_humidity, "
+                                   "temperature) VALUES (?, ?, ?, ?, ?, ?)", rows)
+            self._conn.commit()
+
+    # ------------------------------------------------------------ activity: what the app did to a device
+
+    def add_activity(self, device_id, kind, message, when=None):
+        self._execute("INSERT INTO activity (time, device_id, kind, message) VALUES (?, ?, ?, ?)",
+                      (when or time.time(), device_id, kind, message))
+
+    def activity(self, device_id, since=0):
+        return self._query("SELECT time, kind, message FROM activity WHERE device_id = ? AND time >= ? ORDER BY time",
+                           (device_id, since))
+
+    # ------------------------------------------------------------ keeping the data in bounds
+
+    def prune(self, before):
+        """Deletes readings, link samples, activity and network events older than 'before'.
+        Returns how many rows went."""
+        removed = 0
+        with self._lock:
+            for table in ("readings", "link_samples", "activity", "network_events"):
+                removed += self._conn.execute(f"DELETE FROM {table} WHERE time < ?", (before,)).rowcount
+            self._conn.commit()
+        return removed
+
+    def keep_network_snapshots(self, keep):
+        return self._execute("DELETE FROM network_snapshots WHERE id NOT IN "
+                             "(SELECT id FROM network_snapshots ORDER BY time DESC LIMIT ?)", (keep,)).rowcount
+
+    def compact(self):
+        """Gives the space of deleted rows back to the disk."""
+        with self._lock:
+            self._conn.execute("VACUUM")
+
+    def counts(self):
+        """How many rows the big tables hold."""
+        with self._lock:
+            return {table: self._conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+                    for table in ("readings", "link_samples", "network_snapshots", "activity")}
 
     # ------------------------------------------------------------ floor plan
 

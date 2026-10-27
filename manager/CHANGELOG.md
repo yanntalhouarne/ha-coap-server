@@ -27,6 +27,14 @@ First version: the plan's phases 0, 1, 2, 5 and 6. Tested against a simulated de
 - **Exports:** readings as CSV, and a problem report (no keys, PSKd blanked out).
 - **App update check:** optional, asks GitHub once a day.
 - **Phones:** a narrower layout, and pinch to zoom the map.
+- **Check my connection:** border router, mDNS, the route to the Thread network, and each board's CoAP and mcumgr speed with an update time estimate; a failed step says what usually fixes it.
+- **Battery drain by firmware:** % per day under each image, per device and for the fleet, leaving out charging and the time around updates.
+- **Running in the background:** start with the computer (no admin rights), a second start opens the running app, **Stop the app**, and a log file.
+- **Home Assistant history:** imports the boards' readings from Home Assistant, matched by device ID; the token stays out of backups and reports.
+- **Chart markers:** updates, pump runs and parent changes on a device's charts.
+- **Plant presets:** a suggested watering target for about 30 plants.
+- **Labels:** printable per device, on A4 or Letter label sheets or a label printer.
+- **Data limits:** how long readings, network history and backups are kept, the data folder's size, and compacting the database.
 - **Data:** backups (one file; daily automatic ones, and one before every restore), restore, and the device list as CSV.
 - A look after [Omarchy](https://omarchy.org/): a terminal feel, JetBrains Mono, 12 colour themes (Tokyo Night by default, **T** cycles them) with Home Assistant's blue as the accent, the ha-coap logo, keys 1 to 8 for the tabs, and a status bar.
 - Answers only on this computer (127.0.0.1).

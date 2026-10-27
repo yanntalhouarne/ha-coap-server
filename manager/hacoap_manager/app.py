@@ -19,12 +19,14 @@ from fastapi.staticfiles import StaticFiles
 
 import re
 
-from . import __version__, backup, config, discovery, fleet, kconfig, mcuboot, report, serial_ports, signing, swd
+from . import (__version__, autostart, backup, config, discovery, fleet, homeassistant, housekeeping, kconfig, mcuboot,
+               report, serial_ports, signing, swd)
 from .alerts import AlertService
 from .appupdate import UpdateCheck
 from .builds import VARIANTS, BuildError, BuildRunner
 from .console import ConsoleError, SerialConsole
 from .db import Database
+from .doctor import Doctor
 from .events import EventBus
 from .images import ImageLibrary, build_commit, build_images, changes, find_repository
 from .inventory import Inventory, InventoryError
@@ -58,6 +60,9 @@ class Services:
     signing: signing.SigningCheck
     photos: PhotoStore
     app_update: UpdateCheck
+    doctor: Doctor
+    ha_token: homeassistant.TokenStore
+    launch: dict = None   # how this app was started (for starting it with the computer)
 
 
 def create_services(data_dir, discover=discovery.discover):
@@ -83,7 +88,8 @@ def create_services(data_dir, discover=discovery.discover):
     updates.on_failure = lambda job, target: alerts.update_failed(job.id, target.device_id, target.label, target.message)
     return Services(data_dir, settings, db, events, inventory, images, updates, repository, builds, network,
                     SerialConsole(events), setup, alerts, signing.SigningCheck(repository, data_dir),
-                    PhotoStore(data_dir), UpdateCheck())
+                    PhotoStore(data_dir), UpdateCheck(), Doctor(db, settings, discover),
+                    homeassistant.TokenStore(data_dir))
 
 
 def _host_name(host_header):
@@ -96,7 +102,7 @@ def _bad_request(exc):
     return HTTPException(status_code=400, detail=str(exc))
 
 
-def create_app(services, background_tasks=True):
+def create_app(services, background_tasks=True, on_quit=None):
     @contextlib.asynccontextmanager
     async def lifespan(app):
         tasks = []
@@ -256,15 +262,20 @@ def create_app(services, background_tasks=True):
         return {"device": s.inventory.describe(device),
                 "health": fleet.device_health(s.db, device, s.db.release_image()),
                 "readings": s.db.readings(device_id, since), "links": s.db.link_samples(device_id, since),
-                "updates": s.db.updates(device_id, limit=50), "network_events": s.db.network_events_for(device_id)}
+                "updates": s.db.updates(device_id, limit=50), "network_events": s.db.network_events_for(device_id),
+                "activity": s.db.activity(device_id, since),
+                "drain": await asyncio.to_thread(fleet.battery_drain, s.db, device)}
 
     @app.post("/api/devices/{device_id}/pump")
     async def pump(device_id: str, body: dict):
         on = body.get("on")
         try:
-            return await s.inventory.pump(device_id, on=None if on is None else bool(on), seconds=body.get("seconds"))
+            result = await s.inventory.pump(device_id, on=None if on is None else bool(on), seconds=body.get("seconds"))
         except InventoryError as exc:
             raise _bad_request(exc)
+        if on:
+            s.db.add_activity(device_id, "pump", f"Pump started from the app ({result['duration']} s)")
+        return result
 
     @app.post("/api/slots/read-all")
     async def read_all_slots():
@@ -273,6 +284,17 @@ def create_app(services, background_tasks=True):
     @app.get("/api/dashboard")
     async def dashboard():
         return fleet.dashboard(s.db, s.inventory, s.network.last())
+
+    @app.get("/api/battery-drain")
+    async def battery_drain():
+        return await asyncio.to_thread(fleet.drain_by_image, s.db, s.inventory)
+
+    @app.post("/api/doctor")
+    async def doctor(body: dict = None):
+        device_id = (body or {}).get("device_id") or None
+        if device_id and s.db.device(device_id) is None:
+            raise HTTPException(404, "Unknown device")
+        return await s.doctor.check(device_id)
 
     @app.post("/api/devices/{device_id}/ping")
     async def ping(device_id: str):
@@ -741,6 +763,101 @@ def create_app(services, background_tasks=True):
             return {"current": __version__, "checking": False}
         return await asyncio.to_thread(s.app_update.check, force)
 
+    # ------------------------------------------------------------ Home Assistant history
+
+    def _home_assistant():
+        try:
+            return homeassistant.HomeAssistant(s.settings.home_assistant_url, s.ha_token.get())
+        except homeassistant.HomeAssistantError as exc:
+            raise _bad_request(exc)
+
+    @app.get("/api/home-assistant")
+    async def home_assistant_state():
+        return {"url": s.settings.home_assistant_url, "token_set": bool(s.ha_token.get())}
+
+    @app.put("/api/home-assistant")
+    async def home_assistant_set(body: dict):
+        """{url, token}: a token of null keeps the saved one, "" removes it."""
+        url = str(body.get("url", s.settings.home_assistant_url)).strip()
+        if url and not url.startswith(("http://", "https://")):
+            raise _bad_request("The address starts with http:// or https://")
+        s.settings.update({"home_assistant_url": url})
+        config.save_settings(s.data_dir, s.settings)
+        if body.get("token") is not None:
+            s.ha_token.set(str(body["token"]))
+        return await home_assistant_state()
+
+    @app.post("/api/home-assistant/check")
+    async def home_assistant_check():
+        ha = _home_assistant()
+        try:
+            about = await asyncio.to_thread(ha.check)
+            boards = await asyncio.to_thread(ha.boards)
+        except homeassistant.HomeAssistantError as exc:
+            raise _bad_request(exc)
+        known = {d["device_id"]: d for d in s.db.devices()}
+        for board in boards:
+            device = known.get(board["device_id"])
+            board["name"] = (device["name"] or device["device_id"]) if device else ""
+        return {**about, "boards": boards}
+
+    @app.post("/api/home-assistant/import")
+    async def home_assistant_import(body: dict = None):
+        ha = _home_assistant()
+        days = int((body or {}).get("days", 10))
+        try:
+            results = await asyncio.to_thread(homeassistant.import_history, s.db, ha, s.db.devices(), days)
+        except homeassistant.HomeAssistantError as exc:
+            raise _bad_request(exc)
+        return {"results": results, "imported": sum(r["imported"] for r in results)}
+
+    # ------------------------------------------------------------ the data folder's size
+
+    @app.get("/api/storage")
+    async def storage():
+        return await asyncio.to_thread(housekeeping.usage, s.data_dir, s.db)
+
+    @app.post("/api/storage/prune")
+    async def storage_prune():
+        removed = await asyncio.to_thread(housekeeping.prune, s.db, s.settings)
+        backup.prune_backups(s.data_dir, max(s.settings.keep_backups, 1))
+        return {"removed": removed, **await asyncio.to_thread(housekeeping.usage, s.data_dir, s.db)}
+
+    @app.post("/api/storage/compact")
+    async def storage_compact():
+        _busy()
+        await asyncio.to_thread(s.db.compact)
+        return await asyncio.to_thread(housekeeping.usage, s.data_dir, s.db)
+
+    # ------------------------------------------------------------ running in the background
+
+    @app.get("/api/autostart")
+    async def autostart_state():
+        return {"supported": autostart.supported() and bool(s.launch), "enabled": autostart.enabled(),
+                "log": str(Path(s.data_dir) / "hacoap-manager.log")}
+
+    @app.put("/api/autostart")
+    async def autostart_set(body: dict):
+        if not s.launch:
+            raise _bad_request("Start the app normally (not from a test) to use this")
+        try:
+            if body.get("enabled"):
+                autostart.enable(autostart.command(s.launch["workdir"], s.launch.get("data_dir"), s.launch.get("port")))
+            else:
+                autostart.disable()
+        except OSError as exc:
+            raise _bad_request(f"Couldn't change it: {exc}")
+        return await autostart_state()
+
+    @app.post("/api/quit")
+    async def quit_app():
+        if s.updates.running_job() is not None or s.builds.running() or s.setup.running():
+            raise _bad_request("Wait for the update, build or setup step in progress to finish")
+        if on_quit is None:
+            raise _bad_request("This app can't be stopped from the page")
+        asyncio.get_running_loop().call_later(0.5, on_quit)  # after answering
+        return {"stopping": True}
+
     # ------------------------------------------------------------ live events
 
     @app.websocket("/api/events")
@@ -801,10 +918,16 @@ async def _auto_alerts(services):
 
 
 async def _auto_backup(services):
-    """A backup a day in the data folder's backups/, while the app runs."""
+    """A backup a day in the data folder's backups/, while the app runs, and the old data deleted
+    as the settings say."""
     while True:
         try:
-            await asyncio.to_thread(backup.auto_backup, services.data_dir, services.db, services.settings)
+            await asyncio.to_thread(backup.auto_backup, services.data_dir, services.db, services.settings,
+                                    max(services.settings.keep_backups, 1))
         except Exception:  # noqa: BLE001 - try again later
             log.exception("automatic backup")
+        try:
+            await asyncio.to_thread(housekeeping.prune, services.db, services.settings)
+        except Exception:  # noqa: BLE001
+            log.exception("pruning old data")
         await asyncio.sleep(6 * 3600)

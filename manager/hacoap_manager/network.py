@@ -112,7 +112,7 @@ class NetworkService:
             self.cache.write_text(text, encoding="utf-8")
             self.db.add_network_snapshot(topology.get("fetched") or time.time(), len(topology["nodes"]),
                                          sum(1 for n in topology["nodes"] if n.get("device_id")),
-                                         zlib.compress(text.encode("utf-8")))
+                                         zlib.compress(text.encode("utf-8")), keep=max(self.settings.keep_network_readings, 2))
         self.events.publish("network")
         return self.state()
 

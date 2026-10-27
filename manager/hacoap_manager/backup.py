@@ -127,9 +127,14 @@ def auto_backup(data_dir, db, settings, keep=AUTO_KEEP, min_age_hours=20):
         return None
     path = folder / f"{AUTO_PREFIX}{time.strftime('%Y%m%d-%H%M%S')}.zip"
     path.write_bytes(create_backup(data_dir, db, settings))
-    for old in sorted(folder.glob(f"{AUTO_PREFIX}*.zip"))[:-keep]:
-        old.unlink()
+    prune_backups(data_dir, keep)
     return path
+
+
+def prune_backups(data_dir, keep):
+    """Deletes the automatic backups beyond the newest 'keep' (never the ones made before a restore)."""
+    for old in sorted(backups_dir(data_dir).glob(f"{AUTO_PREFIX}*.zip"))[:-keep]:
+        old.unlink()
 
 
 def list_backups(data_dir):

@@ -106,6 +106,10 @@ Added since (2026-10-25 and 26), all described in `manager/README.md`:
 - on the Network page: **click a board** for its plant photo and readings, a **floor plan** of your home, a **signal heatmap** (floor plan and mesh), **network history** with a slider, zoom and pan, and a **channel scan**
 - **Flash a board over SWD** with a J-Link (Builds tab), keeping its network or erasing everything, with an optional one-click install of the SWD tools (`nrfutil device`; SEGGER's J-Link software is still installed by hand)
 - a **serial console**, **Set up this computer** buttons (toolchain, signing key, PSKd), **Ctrl+K search**, a **readings CSV**, a **problem report**, an optional **app update check** (off by default), and a **phone layout**
+- **Check my connection** (Devices tab): each step from this PC to the boards, with what usually fixes a failed one
+- **battery drain per firmware** (dashboard and device pages): shows whether the power changes worked
+- **running in the background**, started with the computer, so history and alerts build up
+- **Home Assistant history import** (Settings), chart markers (updates, pump runs, parent changes), plant presets for watering targets, printable labels, and limits on how much data is kept
 - a **simulated fleet**: `python -m hacoap_manager.simdevice --count 9 --border-router api` runs 9 devices and a border router on this PC, to try everything without boards
 
 It talks to the devices directly (no `mcumgr` tool needed). Details and instructions: `manager/README.md`. Every change: `manager/CHANGELOG.md`. The plan, with what's next: `docs/FLEET-MANAGER-PLAN.md`.
@@ -124,6 +128,7 @@ After PR #6's board tests (the fast polling during updates is in that firmware):
    - `git checkout fleet-manager && git pull`, then from `manager/`: `py -m venv .venv` (once), `.venv\Scripts\pip install -r requirements.txt`, `.venv\Scripts\python -m hacoap_manager`
    - or the packaged `hacoap-manager.exe` from the latest CI run on `fleet-manager` (GitHub → Actions → Artifacts). There's no release yet: making one is a tag away (`manager/README.md` → Making a release), best done once it has updated real boards.
 2. In the browser page it opens:
+   - [ ] **Devices → Check my connection** first: every step should be green. If one isn't, it says what to fix (often the route from this PC to the Thread network, or mDNS). Note the update upload estimate it gives.
    - [ ] **Find devices** lists every board, and their status fills in (battery, readings)
    - [ ] **Actions → Firmware slots** answers for a board
    - [ ] **Builds → Build with this profile** (Production) makes an image signed with your key (already checked on this PC), or **Images → Builds on this computer → Add** your latest build. Its **Signed** column says *your key*
@@ -131,6 +136,8 @@ After PR #6's board tests (the fast polling during updates is in that firmware):
    - [ ] **Update** one board on USB (choose its serial port). This path has no simulated test, so it's the most likely to need a fix.
    - [ ] **Network:** set the border router's address (or **Find it**), then **Read the network**. It works without the boards too. Note what the page says it got: "with signal strength" (a 2025+ border router) or "link quality only" (an older one, where boards can't be named on the map). Then click one of your boards on the map: its card should show its readings.
    - [ ] **Run the pump** and **Beep** from a device's page reach the board (within 3 s)
+   - [ ] **Settings → Home Assistant history:** with a long-lived token, **Check** finds your boards, and **Import history** fills the charts. Then the dashboard's **Battery drain by firmware** compares the old firmware with PR #6's (once a board has run each for a few days).
+   - [ ] Optional: **Start with this computer** (Settings), so it keeps collecting
    - [ ] **Builds → Flash a board over SWD** (needs the J-Link software, then **Install the SWD flashing tools**): **Find** lists your J-Link, and flashing with **Keep its network** brings the board back on the network. Try **Erase everything** only on a board you're ready to rejoin. This path has no real test yet either.
 3. Tell Claude what happened. Once it works, `fleet-manager` can become a pull request, and the web updater can go.
 

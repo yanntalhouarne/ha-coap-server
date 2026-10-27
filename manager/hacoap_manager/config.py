@@ -33,6 +33,10 @@ class Settings:
     min_battery_for_update: int = 20  # % under which an over-the-air update skips a device (0: never)
     water_below_default: int = 30   # soil moisture % under which a plant needs water (0: off), unless set per device
     check_app_updates: bool = False  # ask GitHub once a day whether there's a newer version of this app
+    keep_readings_days: int = 730   # readings, link samples and activity older than this are deleted (0: keep all)
+    keep_network_readings: int = 1000  # network readings kept for the history slider
+    keep_backups: int = 7           # automatic daily backups kept
+    home_assistant_url: str = ""    # such as http://homeassistant.local:8123, to import its history
 
     def link_settings(self):
         return LinkSettings(udp_port=self.smp_port, udp_mtu=self.udp_mtu, serial_buffer=self.serial_buffer,
