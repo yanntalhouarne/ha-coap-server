@@ -650,14 +650,30 @@ function linkPath(a, b, bend = 0.1) {
 }
 
 // The layout: the border router in the middle, the routers on rings by how many hops they
-// are from it, and each router's children fanned out away from the middle. The rings are
-// ellipses as wide as the map is ('aspect': its width over its height), so it fills the view.
-// Nodes you dragged stay where you put them.
+// are from it, and each router's children fanned out away from the middle. Distance follows
+// signal strength: a child sits closer to its parent the stronger its link, and a router sits
+// inside its ring with a strong link towards the border router, outside it with a weak one.
+// The rings are ellipses as wide as the map is ('aspect': its width over its height), so it
+// fills the view. Nodes you dragged stay where you put them until the next Read the network.
 const RING_GAP = 210;
+
+// How weak a link is, from 0 (strong) to 1 (weak); 0.5 without signal information.
+function weakness(link) {
+  if (!link) return 0.5;
+  if (link.link_margin !== null && link.link_margin !== undefined) return Math.max(0, Math.min(1, (35 - link.link_margin) / 30));
+  const quality = linkStrength(link).quality;
+  return quality === null ? 0.5 : { 3: 0.1, 2: 0.45, 1: 0.8, 0: 1 }[quality];
+}
 
 function layoutNetwork(topology, aspect = 1.8) {
   const sx = Math.sqrt(Math.max(0.5, Math.min(3, aspect))), sy = 1 / sx;
   const nodes = topology.nodes.map((node) => ({ node, x: 0, y: 0 }));
+  const between = new Map();
+  for (const link of topology.links) {
+    between.set(`${link.a} ${link.b}`, link);
+    between.set(`${link.b} ${link.a}`, link);
+  }
+  const linkOf = (a, b) => between.get(`${a} ${b}`);
   const byId = new Map(nodes.map((n) => [n.node.id, n]));
   const center = nodes.find((n) => n.node.border_router) || nodes.find((n) => !n.node.parent) || nodes[0];
   const routers = nodes.filter((n) => !n.node.parent);
@@ -694,7 +710,9 @@ function layoutNetwork(topology, aspect = 1.8) {
     radii.push({ ring, rx: radius * sx, ry: radius * sy });
     members.forEach((n, i) => {
       const angle = (ring % 2 ? -Math.PI / 2 : 0) + (i / members.length) * 2 * Math.PI;
-      n.x = Math.cos(angle) * radius * sx; n.y = Math.sin(angle) * radius * sy;
+      // Inside the ring with a strong link to the router before it (towards the border router), outside with a weak one
+      const r = radius * (0.8 + 0.4 * weakness(linkOf(n.node.id, towards.get(n.node.id))));
+      n.x = Math.cos(angle) * r * sx; n.y = Math.sin(angle) * r * sy;
     });
   }
   // Children: around the border router on a small ring, else fanned out away from the middle
@@ -709,7 +727,7 @@ function layoutNetwork(topology, aspect = 1.8) {
     if (!parent || parent === center) {
       kids.forEach((n, i) => {
         const angle = -Math.PI / 2 + ((i + 0.5) / kids.length) * 2 * Math.PI;
-        const r = parent ? 115 + (kids.length > 8 ? (i % 2) * 40 : 0) : radius + RING_GAP;
+        const r = parent ? 85 + 130 * weakness(linkOf(n.node.id, parentId)) : radius + RING_GAP;
         n.x = Math.cos(angle) * r * (parent ? 1.25 : sx); n.y = Math.sin(angle) * r * (parent ? 0.85 : sy);
       });
       continue;
@@ -720,7 +738,7 @@ function layoutNetwork(topology, aspect = 1.8) {
     const spread = Math.min(2.6, (80 / r0) * (kids.length - 1) / (kids.length > 5 ? 2 : 1));
     kids.forEach((n, i) => {
       const angle = kids.length === 1 ? out : out - spread / 2 + (spread * i) / (kids.length - 1);
-      const r = r0 + (kids.length > 5 ? (i % 2) * 70 : 0);
+      const r = 75 + 150 * weakness(linkOf(n.node.id, parentId));  // strong: close to its parent
       n.x = parent.x + Math.cos(angle) * r; n.y = parent.y + Math.sin(angle) * r;
     });
   }
@@ -1118,9 +1136,10 @@ function renderNetworkLegend() {
   const mini = (shape) => svg('svg', { class: 'legend-node', viewBox: '-28 -28 56 56' }, shape);
   const help = h('div', { class: 'legend-help d-none' },
     'Your boards show their plant photo (or the logo), ringed by their soil moisture. Rings mark the hops from the ',
-    'border router. Lines: thick and green is a strong link, thin and red a weak one; the dashes flow from each child ',
+    'border router. The closer a board is to its parent, the stronger its link; a router inside its ring has a strong ',
+    'link towards the border router. Lines: thick and green is a strong link, thin and red a weak one; the dashes flow from each child ',
     'to its parent. Your boards never link to each other. Point at a node to see its way to the border router, click ',
-    'it for details, drag it to tidy up. Scroll to zoom, drag the background to move around, double-click to fit.');
+    'it for details, drag it to tidy up (Read the network puts it back). Scroll to zoom, drag the background to move around, double-click to fit.');
   document.getElementById('network-legend').replaceChildren(
     pill(mini(nodeShape({ border_router: true }).el), 'border router'),
     pill(mini(nodeShape({ kind: 'router' }).el), 'router'),
@@ -1160,6 +1179,7 @@ for (const [id, key] of [['labels-toggle', 'allNames'], ['links-toggle', 'showLi
 
 document.getElementById('network-refresh').addEventListener('click', (event) => busy(event.target, async () => {
   net.state = await api('POST', '/api/network/refresh');
+  net.dragged.clear();  // a new reading: every node back where its signal puts it (the floor plan keeps its places)
   await loadNetwork();
 }));
 
