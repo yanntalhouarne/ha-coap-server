@@ -52,10 +52,105 @@ export function renderTagFilter() {
     ...(tags.length ? [] : [h('span', { class: 'small text-body-secondary' }, 'none yet (add some on a device\'s page)')]));
 }
 
+// ------------------------------------------------------------------ table or cards, and the order
+
+const remembered = (key, fallback) => { try { return localStorage.getItem(key) || fallback; } catch (error) { return fallback; } };
+const remember = (key, value) => { try { localStorage.setItem(key, value); } catch (error) { /* not remembered */ } };
+export const deviceView = { mode: remembered('hacoap-devices-view', 'table'), sort: remembered('hacoap-devices-sort', 'name'),
+  forecasts: new Map(), fetched: 0 };
+
+// When each plant will need water: from the wall display's data, asked again after a minute
+async function loadForecasts() {
+  if (Date.now() - deviceView.fetched < 60000) return;
+  deviceView.fetched = Date.now();
+  const plants = await api('GET', '/api/wall', undefined, { quiet: true });
+  deviceView.forecasts = new Map(plants.map((p) => [p.device_id, p]));
+  renderDevices();
+}
+
+const missing = (v) => v === null || v === undefined;
+const lastly = (v) => (missing(v) ? Infinity : v);
+
+function sortDevices(list) {
+  const by = {
+    name: (a, b) => deviceName(a).localeCompare(deviceName(b)),
+    driest: (a, b) => lastly(a.soil_moisture - (a.water_target || 0)) - lastly(b.soil_moisture - (b.water_target || 0)),
+    battery: (a, b) => lastly(a.battery) - lastly(b.battery),
+    seen: (a, b) => (b.last_seen || 0) - (a.last_seen || 0),
+    water: (a, b) => {
+      const days = (d) => (d.needs_water ? -1 : lastly(((deviceView.forecasts.get(d.device_id) || {}).water_forecast || {}).days));
+      return days(a) - days(b);
+    },
+  }[deviceView.sort] || ((a, b) => deviceName(a).localeCompare(deviceName(b)));
+  return [...list].sort((a, b) => by(a, b) || deviceName(a).localeCompare(deviceName(b)));
+}
+
+// A ring gauge: the soil moisture, with the watering target marked
+export function soilGauge(soil, target, size = 64) {
+  const r = size / 2 - 5, around = 2 * Math.PI * r;
+  const at = (v) => (Math.max(0, Math.min(100, v)) / 100) * around;
+  return svg('svg', { class: 'soil-gauge', viewBox: `${-size / 2} ${-size / 2} ${size} ${size}`, width: size, height: size, 'aria-hidden': 'true' },
+    svg('circle', { r, class: 'gauge-track' }),
+    missing(soil) ? null : svg('circle', { r, class: 'gauge', transform: 'rotate(-90)', 'stroke-dasharray': `${at(soil)} ${around}` }),
+    target ? svg('line', { x1: 0, y1: -r - 4, x2: 0, y2: -r + 4, class: 'gauge-target', transform: `rotate(${(target / 100) * 360})` }) : null,
+    svg('text', { x: 0, y: 2, 'text-anchor': 'middle', 'dominant-baseline': 'middle', class: 'gauge-value' }, missing(soil) ? '–' : `${soil}%`));
+}
+
+function deviceCard(device) {
+  const id = device.device_id;
+  const open = () => { location.hash = `#device/${encodeURIComponent(id)}`; };
+  const forecast = (deviceView.forecasts.get(id) || {}).water_forecast;
+  const status = imageStatus(device);
+  const water = device.needs_water ? 'needs water now'
+    : forecast && forecast.days !== null && forecast.days !== undefined ? `water ${waterWhen(forecast.days)}` : '';
+  return h('article', { class: `device-card${state.selected.has(id) ? ' selected' : ''}${device.needs_water ? ' dry' : ''}${device.online ? '' : ' offline'}` },
+    h('input', { class: 'form-check-input card-check', type: 'checkbox', checked: state.selected.has(id), 'aria-label': `Select ${deviceName(device)}`,
+      onchange: (e) => { e.target.checked ? state.selected.add(id) : state.selected.delete(id); renderDevices(); } }),
+    h('button', { class: 'card-photo', type: 'button', onclick: open, 'aria-label': `Open ${deviceName(device)}` },
+      device.photo ? h('img', { src: photoUrl(device), alt: '', loading: 'lazy' })
+        : svg('svg', { viewBox: '0 0 512 512', class: 'card-glyph' }, svg('use', { href: '#hacoap-glyph' }))),
+    h('div', { class: 'card-main' },
+      h('a', { class: 'card-name', href: `#device/${encodeURIComponent(id)}` }, deviceName(device)),
+      h('div', { class: 'card-sub' }, [device.plant && device.plant.toLowerCase() !== deviceName(device).toLowerCase() ? device.plant : null,
+        device.location].filter(Boolean).join(' · ') || '\u00a0'),
+      h('div', { class: 'card-stats' }, soilGauge(device.soil_moisture, device.water_target),
+        h('div', { class: 'card-figures' },
+          h('div', {}, h('span', { class: 'card-label' }, 'battery'), h('b', {}, pct(device.battery))),
+          h('div', { class: 'card-bar' }, h('i', { style: `width: ${missing(device.battery) ? 0 : device.battery}%`,
+            class: !missing(device.battery) && device.battery <= 20 ? 'low' : '' })),
+          h('div', { class: `card-water${device.needs_water ? ' now' : ''}` }, water))),
+      h('div', { class: 'card-foot' }, h('span', { class: `online-dot ${device.online ? 'on' : 'off'}` }), ago(device.last_seen),
+        status === 'outdated' ? h('span', { class: 'badge text-bg-warning ms-auto' }, 'behind') : null)));
+}
+
+const waterWhen = (days) => (days === 0 ? 'now' : days < 0.5 ? 'within hours' : days < 1.5 ? 'in about a day' : `in about ${Math.round(days)} days`);
+
+export function setDeviceView(mode) {
+  deviceView.mode = mode;
+  remember('hacoap-devices-view', mode);
+  renderDevices();
+}
+
+document.getElementById('view-table').addEventListener('click', () => setDeviceView('table'));
+document.getElementById('view-cards').addEventListener('click', () => setDeviceView('cards'));
+document.getElementById('device-sort').value = deviceView.sort;
+document.getElementById('device-sort').addEventListener('change', (event) => {
+  deviceView.sort = event.target.value;
+  remember('hacoap-devices-sort', deviceView.sort);
+  renderDevices();
+});
+
 export function renderDevices() {
   const body = document.querySelector('#devices-table tbody');
-  const visible = visibleDevices();
+  const visible = sortDevices(visibleDevices());
+  const cards = deviceView.mode === 'cards';
+  if (cards || deviceView.sort === 'water') loadForecasts().catch(() => {});
+  document.getElementById('view-table').classList.toggle('active', !cards);
+  document.getElementById('view-cards').classList.toggle('active', cards);
+  document.getElementById('devices-table-wrap').classList.toggle('d-none', cards);
+  document.getElementById('device-cards').classList.toggle('d-none', !cards);
   body.replaceChildren(...visible.map(deviceRow));
+  if (cards) document.getElementById('device-cards').replaceChildren(...visible.map(deviceCard));
   document.getElementById('devices-empty').classList.toggle('d-none', state.devices.size > 0);
   document.querySelector('.empty-logo').classList.toggle('d-none', state.devices.size > 0);
   const count = state.selected.size;

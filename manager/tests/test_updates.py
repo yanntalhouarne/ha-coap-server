@@ -87,6 +87,7 @@ async def test_a_reverted_update_fails_and_stops_the_rollout(fleet, start_sim):
     assert job.state == "failed"
     assert job.targets[0].status == "failed"
     assert "reverted" in job.targets[0].message
+    assert job.targets[0].failed_at == "waiting for the device"   # where the page's timeline shows it stopped
     assert job.targets[1].status == "skipped"
     assert first.device.slots[0].info.hash == OLD_HASH  # still runs the old image
     assert second.device.resets == 0

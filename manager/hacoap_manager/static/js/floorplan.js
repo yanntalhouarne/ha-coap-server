@@ -118,7 +118,13 @@ export function drawFloorplanNodes(stage, img) {
     const p = points.get(node.id);
     const shape = shapes.get(node.id);
     const group = svg('g', { class: `node${node.device_id ? ' board' : ''}`, transform: `translate(${p.x},${p.y})`,
-      'data-device': node.device_id || null },
+      'data-device': node.device_id || null, tabindex: 0, role: 'button', 'aria-label': nodeLabel(node),
+      onkeydown: (event) => {
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault();
+          showNodeDetails(node, true);
+        }
+      } },
       shape.el, shownName(node) ? nameChip(nodeLabel(node), shape.chipY, node.device_id ? 'board' : '') : null,
       svg('title', {}, `${nodeLabel(node)}: drag it where it is (off the picture to take it off the plan)`));
     let start = null;

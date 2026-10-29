@@ -26,12 +26,37 @@ export const settingLabels = {
   keep_backups: ['Keep backups', 'How many automatic daily backups are kept'],
 };
 export const SETTINGS_ELSEWHERE = new Set(['home_assistant_url']);  // set in their own cards
+export const SETTING_GROUPS = [
+  ['Devices and plants', ['online_minutes', 'auto_refresh_minutes', 'water_below_default', 'min_battery_for_update']],
+  ['Network and timing', ['border_router_url', 'coap_port', 'smp_port', 'udp_mtu', 'serial_buffer', 'coap_timeout_s',
+    'mcumgr_timeout_s', 'discovery_timeout_s', 'reboot_timeout_s']],
+  ['Keeping data', ['keep_readings_days', 'keep_network_readings', 'keep_backups']],
+  ['App', ['check_app_updates']],
+];
+
+// The side menu: one entry per group of settings and per card, the one in view lit up
+let navWatch = null;
+export function renderSettingsNav() {
+  const targets = [...document.querySelectorAll('#tab-settings [data-nav]')];
+  const links = new Map(targets.map((el) => [el, h('a', { href: `#settings`, class: 'settings-nav-link', onclick: (e) => {
+    e.preventDefault();
+    el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  } }, el.dataset.nav)]));
+  document.getElementById('settings-nav').replaceChildren(...links.values());
+  if (navWatch) navWatch.disconnect();
+  navWatch = new IntersectionObserver((seen) => {
+    const visible = seen.filter((e) => e.isIntersecting).sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top)[0];
+    if (!visible) return;
+    for (const [el, link] of links) link.classList.toggle('active', el === visible.target);
+  }, { rootMargin: '-10% 0px -70% 0px' });
+  targets.forEach((el) => navWatch.observe(el));
+}
 
 export async function loadSettings() {
   const status = await api('GET', '/api/status');
   state.status = status;
   const form = document.getElementById('settings-form');
-  form.replaceChildren(...Object.entries(status.settings).filter(([key]) => !SETTINGS_ELSEWHERE.has(key)).map(([key, value]) => {
+  const field = ([key, value]) => {
     const [label, help] = settingLabels[key] || [key, ''];
     if (typeof value === 'boolean') {
       return h('div', { class: 'col-12' }, h('div', { class: 'form-check form-switch' },
@@ -43,7 +68,16 @@ export async function loadSettings() {
     return h('div', { class: text ? 'col-12' : 'col-sm-6' }, h('label', { class: 'form-label', for: `setting-${key}` }, label),
       h('input', { class: 'form-control', id: `setting-${key}`, name: key, type: text ? 'text' : 'number', step: text ? null : 'any', value }),
       help ? h('div', { class: 'form-text' }, help) : null);
-  }), h('div', { class: 'col-12' }, h('button', { class: 'btn btn-primary', type: 'submit' }, 'Save')));
+  };
+  // In groups, each with its heading (and its entry in the side menu); a setting in no group goes last
+  const entries = Object.entries(status.settings).filter(([key]) => !SETTINGS_ELSEWHERE.has(key));
+  const grouped = new Set(SETTING_GROUPS.flatMap(([, keys]) => keys));
+  const groups = [...SETTING_GROUPS, ['Other', entries.map(([k]) => k).filter((k) => !grouped.has(k))]];
+  form.replaceChildren(...groups.filter(([, keys]) => keys.some((k) => k in status.settings)).flatMap(([title, keys]) => [
+    h('h6', { class: 'col-12 settings-group', id: `group-${title.toLowerCase().replace(/[^a-z]+/g, '-')}`, 'data-nav': title }, title),
+    ...entries.filter(([key]) => keys.includes(key)).map(field)]),
+  h('div', { class: 'col-12' }, h('button', { class: 'btn btn-primary', type: 'submit' }, 'Save')));
+  renderSettingsNav();
   const about = [['Version', status.version], ['Data folder', status.data_dir],
     ['Firmware checkout', status.repository || 'not found (builds can still be added as files)'],
     ['Discovery', status.discovery_available ? 'available' : 'unavailable (zeroconf missing)'],

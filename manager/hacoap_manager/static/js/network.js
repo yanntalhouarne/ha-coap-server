@@ -273,13 +273,23 @@ export function renderNetwork() {
   const groups = layout.nodes.map((n) => {
     const shape = nodeShape(n.node);
     const group = svg('g', { class: `node${net.selected === n.node.id ? ' selected' : ''}${n.node.device_id ? ' board' : ''}`,
-      'data-device': n.node.device_id || null, 'data-node': n.node.id },
+      'data-device': n.node.device_id || null, 'data-node': n.node.id,
+      tabindex: 0, role: 'button', 'aria-label': `${nodeLabel(n.node)}, ${n.node.device_id ? 'your board' : nodeStyle(n.node).label}` },
       svg('circle', { r: shape.r + 6, class: 'select-ring' }), shape.el,
       shownName(n.node) ? nameChip(nodeLabel(n.node), shape.r + 6, n.node.device_id ? 'board' : '') : null);
     n.group = group;
     makeDraggable(group, n);
     group.addEventListener('pointerenter', () => traceNode(n, true));
     group.addEventListener('pointerleave', () => traceNode(n, false));
+    // From the keyboard: Tab goes from node to node (tracing each), Enter or Space opens it
+    group.addEventListener('focus', () => traceNode(n, true));
+    group.addEventListener('blur', () => traceNode(n, false));
+    group.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault();
+        showNodeDetails(n.node, true);
+      }
+    });
     return group;
   });
   const drawing = svg('svg', { viewBox: (net.zoom.mesh || box).join(' '), preserveAspectRatio: 'xMidYMid meet',

@@ -19,7 +19,7 @@ from fastapi.staticfiles import StaticFiles
 
 import re
 
-from . import (__version__, autostart, backup, config, demo, discovery, fleet, homeassistant, housekeeping, kconfig,
+from . import (__version__, autostart, backup, config, demo, discovery, feed, fleet, homeassistant, housekeeping, kconfig,
                mcuboot, report, serial_ports, signing, summary, swd)
 from .alerts import AlertService
 from .appupdate import UpdateCheck
@@ -346,6 +346,10 @@ def create_app(services, background_tasks=True, on_quit=None):
             return {"url": await demo.launch_async()}
         except OSError as exc:
             raise _bad_request(f"The demo didn't start: {exc}")
+
+    @app.get("/api/activity-feed")
+    async def activity_feed(before: float = 0, limit: int = 30):
+        return await asyncio.to_thread(feed.build, s.db, s.inventory, s.photos, before or None, max(1, min(limit, 200)))
 
     @app.get("/api/battery-drain")
     async def battery_drain():

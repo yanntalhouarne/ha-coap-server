@@ -176,3 +176,23 @@ def test_trends(services):
     t = fleet.trends(db, services.inventory, days=7, now=now)
     assert t["online"] == [0, 1, 0, 0, 0, 0, 1] and t["needs_water"] == [0, 1, 0, 0, 0, 0, 0]
     assert t["low_battery"] == [0, 1, 0, 0, 0, 0, 0] and t["weak_links"] == [0, 0, 0, 0, 0, 0, 1]
+
+
+# ---------------------------------------------------------------- the activity feed
+
+async def test_activity_feed(services, client):
+    db, now = services.db, time.time()
+    db.upsert_device("abcd0001", name="basil")
+    db.add_update("job", "abcd0001", "udp", "f" * 64, "1.1.0", now - 500, now - 400, "updated", "Updated and confirmed")
+    db.add_update("job", "abcd0001", "udp", "f" * 64, "1.2.0", now - 300, now - 200, "failed", "MCUboot reverted it")
+    db.add_activity("abcd0001", "pump", "Pump started from the app (3 s)", when=now - 100)
+    db.add_network_event("abcd0001", "basil moved from 0x5000 to 0x6800")
+    services.photos.add("abcd0001", PNG, taken=now - 50)
+    entries = (await client.get("/api/activity-feed")).json()
+    assert [e["kind"] for e in entries] == ["parent", "photo", "pump", "update", "update"]   # newest first
+    assert entries[2]["text"] == "basil: pump started from the app (3 s)"
+    assert entries[3]["text"].startswith("Update of basil to v1.2.0 failed")
+    older = (await client.get(f"/api/activity-feed?before={entries[1]['time']}")).json()
+    assert [e["kind"] for e in older] == ["pump", "update", "update"]
+    with pytest.raises(ValueError):
+        db.recent("devices", "last_seen", "name", now, 5)   # only the feed's tables

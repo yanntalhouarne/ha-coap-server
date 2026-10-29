@@ -31,3 +31,11 @@ def test_every_import_exists():
         for names, source in re.findall(r"^import \{ ([^}]+) \} from '\./([\w.]+)';", module.read_text(encoding="utf-8"), re.M):
             for name in (n.strip() for n in names.split(",")):
                 assert name in exported[source], f"{module.name} imports {name}, which {source} doesn't export"
+
+
+def test_page_ids_are_unique():
+    """Two elements with one ID: the script finds the wrong one (it once wiped a Settings card)."""
+    import re
+    page = (Path(__file__).resolve().parents[1] / "hacoap_manager" / "static" / "index.html").read_text(encoding="utf-8")
+    ids = re.findall(r'\bid="([^"]+)"', page)
+    assert not {i for i in ids if ids.count(i) > 1}

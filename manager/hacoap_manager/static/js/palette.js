@@ -2,7 +2,7 @@
 
 import { TABS } from './tabs.js';
 import { checkAppUpdate, notificationsOn, toggleNotifications } from './dashboard.js';
-import { cycleTheme } from './themes.js';
+import { cycleTheme, setTheme, showShortcuts } from './themes.js';
 import { deviceName, runDoctor } from './devices.js';
 import { h, state } from './core.js';
 
@@ -42,6 +42,8 @@ export function paletteItems() {
   action('Export readings (CSV)', 'every device', download('/api/readings.csv'));
   action('Export devices (CSV)', 'the device list', download('/api/devices.csv'));
   action('Next colour theme', 'T', () => cycleTheme(1));
+  action('Keyboard shortcuts', '?', () => showShortcuts());
+  action('Follow the computer\'s light or dark theme', 'System theme', () => setTheme('auto'));
   action(notificationsOn() ? 'Turn off notifications' : 'Turn on notifications', 'alerts in the browser', toggleNotifications);
   action('Check for an app update', 'GitHub', () => { location.hash = '#settings'; checkAppUpdate(true).catch(() => {}); });
   return items;

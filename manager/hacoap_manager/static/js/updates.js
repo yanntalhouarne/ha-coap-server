@@ -1,6 +1,6 @@
 // The Updates tab: starting updates, their progress and history, and who signed an image.
 
-import { api, busy, h, notify, shortHash, state, when } from './core.js';
+import { api, busy, h, notify, shortHash, state, svg, when } from './core.js';
 import { deviceName, loadDevices } from './devices.js';
 
 // ------------------------------------------------------------------ updates
@@ -110,6 +110,61 @@ document.getElementById('whats-new').addEventListener('click', async () => {
   body.replaceChildren(...sections);
 });
 
+// ------------------------------------------------------------------ an update's steps, as a timeline
+
+const STEPS = [['connecting', 'connect'], ['uploading', 'upload'], ['testing', 'test'], ['rebooting', 'reboot'],
+  ['waiting for the device', 'back online'], ['confirming', 'confirm']];
+const uploads = new Map();  // when each upload started showing progress: for the time left
+
+// Where each step stands for this device: done, active, failed, skipped or (by default) waiting
+function stepStates(t) {
+  const at = STEPS.findIndex(([step]) => step === (t.status === 'failed' ? t.failed_at : t.step));
+  if (t.status === 'updated') return STEPS.map(() => 'done');
+  if (t.status === 'already-current') return STEPS.map((_, i) => (i === 0 ? 'done' : 'skipped'));
+  if (t.status === 'running') return STEPS.map((_, i) => (i < at ? 'done' : i === at ? 'active' : 'waiting'));
+  if (t.status === 'failed' && at >= 0) return STEPS.map((_, i) => (i < at ? 'done' : i === at ? 'failed' : 'waiting'));
+  return STEPS.map(() => 'waiting');
+}
+
+function timeLeft(key, progress) {
+  if (progress <= 0) return '';
+  const now = Date.now() / 1000;
+  if (!uploads.has(key)) uploads.set(key, { t: now, p: progress });
+  const first = uploads.get(key);
+  const rate = (progress - first.p) / Math.max(1, now - first.t);
+  if (rate <= 0 || progress >= 1) return '';
+  const seconds = (1 - progress) / rate;
+  return seconds < 90 ? `≈ ${Math.round(seconds)} s left` : `≈ ${Math.round(seconds / 60)} min left`;
+}
+
+function ring(progress) {
+  const r = 9, around = 2 * Math.PI * r;
+  return svg('svg', { class: 'step-ring', viewBox: '-12 -12 24 24', 'aria-hidden': 'true' },
+    svg('circle', { r, class: 'gauge-track' }),
+    svg('circle', { r, class: 'gauge', transform: 'rotate(-90)', 'stroke-dasharray': `${progress * around} ${around}` }));
+}
+
+const stepIcon = { done: 'check', failed: 'x', skipped: 'minus', waiting: 'circle', active: 'loader-circle' };
+
+function targetTimeline(job, t) {
+  const states = stepStates(t);
+  const key = `${job.id}:${t.label}`;
+  return h('ol', { class: 'steps' }, STEPS.map(([step, label], i) => {
+    const uploading = states[i] === 'active' && step === 'uploading';
+    return h('li', { class: `step ${states[i]}` },
+      h('span', { class: 'step-mark' }, uploading ? ring(t.progress)
+        : svg('svg', { class: 'icon', 'aria-hidden': 'true' }, svg('use', { href: `#i-${stepIcon[states[i]]}` }))),
+      h('span', { class: 'step-label' }, uploading ? `${label} ${Math.round(t.progress * 100)} %` : label),
+      uploading ? h('span', { class: 'step-note' }, timeLeft(key, t.progress)) : null);
+  }));
+}
+
+const elapsed = (t) => {
+  if (!t.started) return '';
+  const seconds = (t.finished || Date.now() / 1000) - t.started;
+  return seconds < 90 ? `${Math.round(seconds)} s` : `${Math.round(seconds / 60)} min`;
+};
+
 export function renderJobs() {
   const container = document.getElementById('jobs');
   const jobs = [...state.jobs.values()].sort((a, b) => b.created - a.created);
@@ -124,13 +179,12 @@ export function renderJobs() {
         onclick: () => api('POST', `/api/updates/${job.id}/continue`).catch(() => {}) }, 'Continue with the rest') : null,
       ['running', 'paused'].includes(job.state) ? h('button', { class: `btn btn-sm btn-outline-danger${job.state === 'running' ? ' ms-auto' : ''}`,
         onclick: () => api('POST', `/api/updates/${job.id}/cancel`).catch(() => {}) }, 'Cancel the rest') : null),
-    h('table', { class: 'table table-sm mb-0' }, h('tbody', {}, job.targets.map((t) => h('tr', {},
-      h('td', {}, t.label), h('td', {}, t.transport === 'serial' ? 'USB' : 'air'),
-      h('td', {}, h('span', { class: `badge text-bg-${statusClass[t.status] || 'secondary'}` }, t.status)),
-      h('td', {}, t.step),
-      h('td', {}, t.status === 'running' && t.step === 'uploading' ? h('div', { class: 'progress' },
-        h('div', { class: 'progress-bar', style: `width: ${Math.round(t.progress * 100)}%` })) : null),
-      h('td', { class: t.status === 'failed' ? 'error-text' : 'small' }, t.message))))))));
+    h('div', { class: 'card-body job-targets' }, job.targets.map((t) => h('div', { class: `job-target ${t.status}` },
+      h('div', { class: 'job-who' }, h('b', {}, t.label),
+        h('div', { class: 'small text-body-secondary' }, `${t.transport === 'serial' ? 'USB' : 'over the air'}${t.started ? ` · ${elapsed(t)}` : ''}`)),
+      targetTimeline(job, t),
+      h('div', { class: 'job-result' }, h('span', { class: `badge text-bg-${statusClass[t.status] || 'secondary'}` }, t.status),
+        t.message ? h('div', { class: t.status === 'failed' ? 'error-text small' : 'small text-body-secondary' }, t.message) : null)))))));
 }
 
 export async function loadJobs() {

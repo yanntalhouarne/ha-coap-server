@@ -1,17 +1,24 @@
 // A device's page: status, firmware, controls, form, charts, plant photos and presets.
 
-import { ago, api, busy, h, notify, pct, shortHash, state, when } from './core.js';
+import { ago, api, busy, h, notify, pct, photoUrl, shortHash, state, svg, when } from './core.js';
 import { daysText, renderDeviceDrain } from './dashboard.js';
 import { detailsTable, waterIn } from './network.js';
-import { deviceName, devicePath, deviceTags, pingDevice, refreshDevice, removeDevice, runDoctor, showSlots } from './devices.js';
+import { deviceName, devicePath, deviceTags, pingDevice, refreshDevice, removeDevice, runDoctor, showSlots, soilGauge } from './devices.js';
 import { lineChart } from './charts.js';
 import { prepareUpdate, statusClass } from './updates.js';
 
 // ------------------------------------------------------------------ one device
 
-export const devicePage = { id: null, details: null };
+// range: the period the charts zoom into (null: all of it); compare: other devices drawn on them
+export const devicePage = { id: null, details: null, range: null, compare: [] };
+const COMPARE_COLORS = ['var(--t-magenta)', 'var(--t-yellow)', 'var(--t-text-secondary)'];
+const compareDays = () => document.getElementById('device-days').value;
 
 export async function loadDevicePage(id) {
+  if (devicePage.id !== id) {
+    devicePage.range = null;
+    devicePage.compare = [];
+  }
   devicePage.id = id;
   const days = document.getElementById('device-days').value;
   let details;
@@ -22,6 +29,11 @@ export async function loadDevicePage(id) {
     return;
   }
   devicePage.details = details;
+  // The plants compared, over the same days
+  devicePage.compare = await Promise.all(devicePage.compare.map(async (c) => ({ ...c,
+    readings: (await api('GET', `/api/devices/${encodeURIComponent(c.device_id)}/details?days=${days}`, undefined, { quiet: true })
+      .catch(() => ({ readings: [] }))).readings })));
+  renderCompareMenu();
   document.getElementById('device-csv').href = `/api/readings.csv?device_id=${encodeURIComponent(id)}`;
   renderDevicePhoto(details.device);
   renderDeviceStatus(details.device);
@@ -65,6 +77,47 @@ export function renderDeviceStatus(device) {
     }) }, 'Refresh'),
     h('button', { class: 'btn btn-sm btn-outline-secondary', title: 'Each step from this computer to this board, and how fast it answers',
       onclick: () => runDoctor(device) }, 'Check the connection')));
+  renderDeviceHero(device);
+}
+
+// The top of the page: the plant's photo, its soil as a big gauge, and the numbers that matter
+// (battery and how long it lasts, when it needs water, its signal), with the quick actions.
+export function renderDeviceHero(device) {
+  if (device.device_id !== devicePage.id) return;
+  const details = devicePage.details && devicePage.details.device.device_id === device.device_id ? devicePage.details : null;
+  const health = (details && details.health) || {};
+  const link = details && details.links.length ? details.links[details.links.length - 1] : null;
+  const has = (v) => v !== null && v !== undefined;
+  const signal = !link ? '–' : has(link.link_margin) ? `${link.link_margin} dB` : has(link.link_quality) ? `quality ${link.link_quality}/3` : '–';
+  const water = device.needs_water ? 'now' : health.water_forecast && has(health.water_forecast.days) ? waterIn(health.water_forecast)
+    : device.water_target ? 'not soon' : 'not watched';
+  const figure = (icon, label, value, note, cls = '') => h('div', { class: `hero-figure ${cls}` },
+    svg('svg', { class: 'icon', 'aria-hidden': 'true' }, svg('use', { href: `#i-${icon}` })),
+    h('div', {}, h('div', { class: 'hero-label' }, label), h('div', { class: 'hero-value' }, value), note ? h('div', { class: 'hero-note' }, note) : null));
+  const pump = (e) => busy(e.target, async () => {
+    await api('POST', devicePath(device, '/pump'), { on: true });
+    notify(`Watering ${deviceName(device)}`, 'success', 3000);
+  });
+  document.getElementById('device-hero').replaceChildren(
+    h('div', { class: 'hero-photo' }, device.photo ? h('img', { src: photoUrl(device), alt: device.plant ? `The ${device.plant}` : '' })
+      : svg('svg', { viewBox: '0 0 512 512', class: 'card-glyph' }, svg('use', { href: '#hacoap-glyph' }))),
+    h('div', { class: 'hero-gauge' }, soilGauge(device.soil_moisture, device.water_target, 112),
+      h('div', { class: 'hero-label text-center' }, device.water_target ? `soil · water under ${device.water_target} %` : 'soil')),
+    h('div', { class: 'hero-figures' },
+      figure('droplet', 'needs water', water, device.plant || '', device.needs_water ? 'warn' : ''),
+      figure('battery-medium', 'battery', pct(device.battery), has(device.battery) ? daysText(health.battery_forecast) : '',
+        has(device.battery) && device.battery <= 20 ? 'bad' : ''),
+      figure('signal-low', 'signal', signal, link ? `to its parent ${link.parent}` : 'read the network to see it'),
+      figure('thermometer', 'air', has(device.temperature) ? `${device.temperature} °C` : '–', `humidity ${pct(device.air_humidity)}`)),
+    h('div', { class: 'hero-actions' },
+      h('button', { class: `btn btn-sm ${device.needs_water ? 'btn-primary' : 'btn-outline-primary'}`, type: 'button', onclick: pump },
+        svg('svg', { class: 'icon', 'aria-hidden': 'true' }, svg('use', { href: '#i-droplets' })), ' Run the pump'),
+      h('button', { class: 'btn btn-sm btn-outline-secondary', type: 'button', onclick: () => pingDevice(device) },
+        svg('svg', { class: 'icon', 'aria-hidden': 'true' }, svg('use', { href: '#i-bell-ring' })), ' Beep'),
+      h('button', { class: 'btn btn-sm btn-outline-secondary', type: 'button', onclick: (e) => busy(e.target, async () => {
+        await refreshDevice(device);
+        await loadDevicePage(device.device_id);
+      }) }, svg('svg', { class: 'icon', 'aria-hidden': 'true' }, svg('use', { href: '#i-refresh-cw' })), ' Refresh')));
 }
 
 export function renderDeviceFirmware(details) {
@@ -192,24 +245,69 @@ export function renderDeviceCharts(details) {
   const links = details.links;
   const margins = links.filter((l) => l.link_margin !== null && l.link_margin !== undefined);
   const { updates, pumps, parents: moves } = deviceEvents(details);
+  // Zoom: every chart shows the period dragged across one of them
+  const zoom = { range: devicePage.range, onZoom: (t0, t1) => { devicePage.range = [t0, t1]; renderDeviceCharts(details); } };
+  const name = deviceName(details.device);
+  const others = (key) => devicePage.compare.map((c, i) => ({ name: c.name, color: COMPARE_COLORS[i],
+    points: c.readings.map((x) => ({ t: x.time, v: x[key] })) }));
   const charts = [
-    lineChart('Battery', pick('battery'), { unit: ' %', min: 0, max: 100, color: 'var(--t-green)', events: updates }),
-    lineChart('Soil moisture', pick('soil_moisture'), { unit: ' %', min: 0, max: 100, color: 'var(--t-cyan)', events: pumps }),
-    lineChart('Air humidity', pick('air_humidity'), { unit: ' %', min: 0, max: 100, color: 'var(--t-blue)' }),
-    lineChart('Temperature', pick('temperature'), { unit: ' °C', color: 'var(--t-orange)' }),
+    lineChart('Battery', pick('battery'), { unit: ' %', min: 0, max: 100, color: 'var(--t-green)', events: updates, overlays: others('battery'), name, ...zoom }),
+    lineChart('Soil moisture', pick('soil_moisture'), { unit: ' %', min: 0, max: 100, color: 'var(--t-cyan)', events: pumps, overlays: others('soil_moisture'), name, ...zoom }),
+    lineChart('Air humidity', pick('air_humidity'), { unit: ' %', min: 0, max: 100, color: 'var(--t-blue)', overlays: others('air_humidity'), name, ...zoom }),
+    lineChart('Temperature', pick('temperature'), { unit: ' °C', color: 'var(--t-orange)', overlays: others('temperature'), name, ...zoom }),
     margins.length
-      ? lineChart('Link to its parent', margins.map((l) => ({ t: l.time, v: l.link_margin })), { unit: ' dB', min: 0, color: 'var(--t-magenta)', step: true, events: [...moves, ...updates] })
-      : lineChart('Link quality to its parent', links.map((l) => ({ t: l.time, v: l.link_quality })), { min: 0, max: 3, color: 'var(--t-magenta)', step: true, events: [...moves, ...updates] }),
+      ? lineChart('Link to its parent', margins.map((l) => ({ t: l.time, v: l.link_margin })), { unit: ' dB', min: 0, color: 'var(--t-magenta)', step: true, events: [...moves, ...updates], name, ...zoom })
+      : lineChart('Link quality to its parent', links.map((l) => ({ t: l.time, v: l.link_quality })), { min: 0, max: 3, color: 'var(--t-magenta)', step: true, events: [...moves, ...updates], name, ...zoom }),
   ];
+  document.getElementById('device-zoom-reset').classList.toggle('d-none', !devicePage.range);
   const parents = [...new Set(links.map((l) => l.parent))];
   const legend = h('div', { class: 'chart-legend small text-body-secondary mt-2' }, 'Markers: ',
     h('span', { class: 'legend-event event-update' }), 'update ', h('span', { class: 'legend-event event-failed' }), 'failed update ',
     h('span', { class: 'legend-event event-pump' }), 'pump run (from the app) ', h('span', { class: 'legend-event event-parent' }),
     'parent change. Point at one for details.');
-  document.getElementById('device-charts').replaceChildren(h('div', { class: 'charts' }, charts), legend,
+  const compared = devicePage.compare.length ? h('div', { class: 'chart-legend small text-body-secondary mt-1' }, 'Compared: ',
+    h('span', { class: 'legend-line' }), `${name} (solid) `, ...devicePage.compare.flatMap((c, i) =>
+      [h('span', { class: 'legend-line dashed', style: `--line: ${COMPARE_COLORS[i]}` }), `${c.name} `])) : null;
+  const help = h('div', { class: 'small text-body-secondary mt-1' }, 'Point at a chart to read its values; drag across one to zoom into a period.');
+  document.getElementById('device-charts').replaceChildren(h('div', { class: 'charts' }, charts), legend, compared, help,
     parents.length ? h('div', { class: 'small text-body-secondary mt-1' }, `Parents in this period: ${parents.join(', ')}`) : null);
   renderDeviceDrain(details.drain || []);
 }
+
+// The plants to compare with: up to 3, drawn dashed on the same charts
+export function renderCompareMenu() {
+  const menu = document.getElementById('device-compare-menu');
+  const others = [...state.devices.values()].filter((d) => d.device_id !== devicePage.id)
+    .sort((a, b) => deviceName(a).localeCompare(deviceName(b)));
+  const chosen = new Set(devicePage.compare.map((c) => c.device_id));
+  menu.replaceChildren(...[h('div', { class: 'text-body-secondary mb-1' }, 'Draw with this one (up to 3):'), ...others.map((d) =>
+    h('label', { class: 'dropdown-item d-flex gap-2 align-items-center' },
+      h('input', { class: 'form-check-input m-0', type: 'checkbox', checked: chosen.has(d.device_id),
+        disabled: !chosen.has(d.device_id) && chosen.size >= 3,
+        onchange: (e) => compareWith(d, e.target.checked) }), deviceName(d))),
+  others.length ? null : h('div', { class: 'text-body-secondary' }, 'No other devices.')].filter(Boolean));
+  document.getElementById('device-compare-button').textContent = chosen.size ? `compare (${chosen.size})` : 'compare';
+}
+
+async function compareWith(device, on) {
+  if (on) {
+    const details = await api('GET', `/api/devices/${encodeURIComponent(device.device_id)}/details?days=${compareDays()}`, undefined, { quiet: true });
+    devicePage.compare.push({ device_id: device.device_id, name: deviceName(device), readings: details.readings });
+  } else {
+    devicePage.compare = devicePage.compare.filter((c) => c.device_id !== device.device_id);
+  }
+  renderCompareMenu();
+  if (devicePage.details) renderDeviceCharts(devicePage.details);
+}
+
+document.getElementById('device-zoom-reset').addEventListener('click', () => {
+  devicePage.range = null;
+  if (devicePage.details) renderDeviceCharts(devicePage.details);
+});
+document.getElementById('device-days').addEventListener('change', () => {
+  devicePage.range = null;
+  if (devicePage.id) loadDevicePage(devicePage.id);
+});
 
 // ------------------------------------------------------------------ the plant's photo
 

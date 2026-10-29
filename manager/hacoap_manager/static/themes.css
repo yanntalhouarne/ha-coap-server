@@ -46,7 +46,7 @@
 [data-theme=everforest] {
   --t-bg-deep: #21272c; --t-bg: #2d353b; --t-surface: #303a40; --t-surface-2: #343f44;
   --t-border-subtle: #343f44; --t-border-strong: #475258;
-  --t-text: #d3c6aa; --t-text-secondary: #d3c6aa; --t-text-muted: #918f84;
+  --t-text: #d3c6aa; --t-text-secondary: #d3c6aa; --t-text-muted: #a9a392;
   --t-selection: #3d484d;
   --t-red: #e67e80; --t-orange: #e69875; --t-yellow: #dbbc7f; --t-green: #a7c080;
   --t-cyan: #83c092; --t-blue: #7fbbb3; --t-magenta: #d699b6;

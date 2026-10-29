@@ -389,6 +389,18 @@ class Database:
         return self._query("SELECT time, kind, message FROM activity WHERE device_id = ? AND time >= ? ORDER BY time",
                            (device_id, since))
 
+    # ------------------------------------------------------------ the activity feed
+
+    FEED_TABLES = {("updates", "finished"), ("alerts", "raised"), ("network_events", "time"), ("activity", "time"),
+                   ("builds", "finished")}
+
+    def recent(self, table, column, columns, before, limit):
+        """The newest rows of a table before a time, with that time as 'time' (feed tables only)."""
+        if (table, column) not in self.FEED_TABLES or not all(c.strip().isidentifier() for c in columns.split(",")):
+            raise ValueError(f"not a feed table: {table}.{column}")
+        return self._query(f"SELECT {column} AS time, {columns} FROM {table} WHERE {column} IS NOT NULL AND {column} < ? "
+                           f"ORDER BY {column} DESC LIMIT ?", (before if before != float("inf") else 1e18, limit))
+
     # ------------------------------------------------------------ a period, for the weekly summary
 
     def alerts_between(self, start, end):

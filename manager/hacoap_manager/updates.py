@@ -39,6 +39,7 @@ class Target:
     label: str = ""
     status: str = "queued"   # queued, running, updated, already-current, failed, skipped, cancelled
     step: str = ""
+    failed_at: str = ""      # the step a failed update stopped at
     progress: float = 0.0    # upload, 0 to 1
     message: str = ""
     started: float = None
@@ -195,10 +196,10 @@ class UpdateManager:
         try:
             target.status, target.message = await self._update_steps(job, target, data)
         except (McumgrError, UpdateError, OSError) as exc:
-            target.status, target.message = "failed", str(exc)
+            target.status, target.message, target.failed_at = "failed", str(exc), target.step
         except Exception as exc:  # noqa: BLE001 - reported, and the next device can go on
             log.exception("update of %s", target.label)
-            target.status, target.message = "failed", f"Unexpected error: {exc}"
+            target.status, target.message, target.failed_at = "failed", f"Unexpected error: {exc}", target.step
         target.step = ""
         target.finished = time.time()
         self._record(job, target)

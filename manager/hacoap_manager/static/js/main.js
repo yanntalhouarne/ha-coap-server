@@ -20,7 +20,7 @@ import { setTheme } from './themes.js';
 import './pages.js';
 import './palette.js';
 
-setTheme(document.documentElement.getAttribute('data-theme'));
+setTheme(null);  // the theme chosen (System included), as theme.js applied it
 renderClock();
 setInterval(renderClock, 30000);
 showTab(currentRoute());

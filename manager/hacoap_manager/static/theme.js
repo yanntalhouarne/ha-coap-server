@@ -15,12 +15,28 @@ window.HACOAP_THEMES = [
   { id: 'white', name: 'White', scheme: 'light' },
 ];
 
+// 'auto' follows the computer's light or dark setting: Tokyo Night by dark, White by light.
+window.HACOAP_AUTO = { id: 'auto', name: 'System', dark: 'tokyo-night', light: 'white' };
+const systemDark = () => !window.matchMedia || window.matchMedia('(prefers-color-scheme: dark)').matches;
+
 window.hacoapApplyTheme = function (id) {
-  const theme = window.HACOAP_THEMES.find((t) => t.id === id) || window.HACOAP_THEMES[0];
+  const auto = id === 'auto';
+  const wanted = auto ? (systemDark() ? window.HACOAP_AUTO.dark : window.HACOAP_AUTO.light) : id;
+  const theme = window.HACOAP_THEMES.find((t) => t.id === wanted) || window.HACOAP_THEMES[0];
   document.documentElement.setAttribute('data-theme', theme.id);
   document.documentElement.setAttribute('data-bs-theme', theme.scheme);
-  return theme;
+  document.documentElement.setAttribute('data-theme-choice', auto ? 'auto' : theme.id);
+  return auto ? { ...theme, id: 'auto', name: `System · ${theme.name}` } : theme;
 };
+
+// With 'auto', switch when the computer does (and tell the page, which redraws what it draws itself)
+if (window.matchMedia) {
+  window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
+    if (document.documentElement.getAttribute('data-theme-choice') !== 'auto') return;
+    window.hacoapApplyTheme('auto');
+    window.dispatchEvent(new Event('hacoap-theme'));
+  });
+}
 
 (function () {
   let saved = null;

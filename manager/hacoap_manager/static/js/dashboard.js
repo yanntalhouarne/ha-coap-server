@@ -2,7 +2,6 @@
 
 import { ago, api, busy, h, notify, pct, photoUrl, shortHash, state, svg, when } from './core.js';
 import { deviceName, runDoctor } from './devices.js';
-import { devicePage, loadDevicePage } from './device.js';
 import { loadStatus } from './live.js';
 import { prepareUpdate, statusClass } from './updates.js';
 import { runOnTab } from './palette.js';
@@ -121,7 +120,28 @@ export async function loadDashboard() {
       h('td', {}, `v${u.image_version}`), h('td', {}, h('span', { class: `badge text-bg-${statusClass[u.result] || 'secondary'}` }, u.result)));
   }), 'No updates yet.'));
   loadDrain().catch(() => {});
+  loadFeed().catch(() => {});
 }
+
+// ------------------------------------------------------------------ the activity feed
+
+const feedIcons = { update: 'upload', alert: 'triangle-alert', parent: 'network', pump: 'droplets', photo: 'camera', build: 'hammer' };
+const feed = { entries: [] };
+
+export async function loadFeed(older = false) {
+  const before = older && feed.entries.length ? feed.entries[feed.entries.length - 1].time : 0;
+  const entries = await api('GET', `/api/activity-feed?limit=25${before ? `&before=${before}` : ''}`, undefined, { quiet: true });
+  feed.entries = older ? [...feed.entries, ...entries] : entries;
+  document.getElementById('feed-more').classList.toggle('d-none', entries.length < 25);
+  document.getElementById('dash-feed').replaceChildren(feed.entries.length ? h('ol', { class: 'feed' }, feed.entries.map((e) =>
+    h('li', { class: `feed-${e.kind}${e.kind === 'update' && /failed/.test(e.text) ? ' failed' : ''}` },
+      svg('svg', { class: 'icon', 'aria-hidden': 'true' }, svg('use', { href: `#i-${feedIcons[e.kind] || 'activity'}` })),
+      e.device_id ? h('a', { href: `#device/${encodeURIComponent(e.device_id)}` }, e.text) : h('span', {}, e.text),
+      h('time', { title: when(e.time) }, ago(e.time))))) : h('p', { class: 'text-body-secondary mb-0' },
+    'Nothing yet: updates, alerts, pump runs, photos and builds show here as they happen.'));
+}
+
+document.getElementById('feed-more').addEventListener('click', (event) => busy(event.target, () => loadFeed(true)));
 
 // ------------------------------------------------------------------ battery drain per firmware
 
@@ -158,7 +178,6 @@ export async function loadDrain() {
       'on an image. Import Home Assistant\'s history (Settings) to start with more.'));
 }
 
-document.getElementById('device-days').addEventListener('change', () => { if (devicePage.id) loadDevicePage(devicePage.id); });
 
 // ------------------------------------------------------------------ alerts and notifications
 
