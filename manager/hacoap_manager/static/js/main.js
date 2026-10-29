@@ -26,3 +26,4 @@ setInterval(renderClock, 30000);
 showTab(currentRoute());
 connectEvents();
 renderNotificationState();
+window.hacoapStarted = true;  // index.html reports any error before this

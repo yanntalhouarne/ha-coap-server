@@ -206,3 +206,19 @@ async def test_static_files_are_checked_each_time(client):
     """A new version's page never runs with an older cached script."""
     response = await client.get("/static/js/main.js")
     assert response.headers["cache-control"] == "no-cache" and response.headers.get("etag")
+
+
+async def test_page_files_have_versioned_addresses(client):
+    """The page asks for /v/<version>/...: a file a browser saved from an older version (even one
+    sent without no-cache) is never run with a newer page."""
+    import re
+    from hacoap_manager.app import static_version
+    page = (await client.get("/")).text
+    assert "/static/" not in re.sub(r"<script>.*?</script>", "", page, flags=re.S).split("<body>")[0]
+    version = static_version()
+    assert f'<script type="module" src="/v/{version}/js/main.js">' in page
+    response = await client.get(f"/v/{version}/js/main.js")
+    assert response.status_code == 200 and "hacoapStarted" in response.text
+    assert response.headers["cache-control"] == "no-cache"
+    assert (await client.get(f"/v/{version}/vendor/bootstrap.min.css")).status_code == 200
+    assert (await client.get(f"/v/{version}/..%2fapp.py")).status_code == 404  # only the page's files

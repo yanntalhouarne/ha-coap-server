@@ -194,5 +194,8 @@ async def test_activity_feed(services, client):
     assert entries[3]["text"].startswith("Update of basil to v1.2.0 failed")
     older = (await client.get(f"/api/activity-feed?before={entries[1]['time']}")).json()
     assert [e["kind"] for e in older] == ["pump", "update", "update"]
+    db.add_alert("dry:abcd0001", "dry", "abcd0001", "{name} needs water (soil under 30 %)")
+    newest = (await client.get("/api/activity-feed")).json()[0]
+    assert newest["kind"] == "alert" and newest["text"] == "basil needs water (soil under 30 %)"  # the name filled in
     with pytest.raises(ValueError):
         db.recent("devices", "last_seen", "name", now, 5)   # only the feed's tables

@@ -1,6 +1,8 @@
 """The activity feed: everything that happened, newest first, in one list: updates, alerts,
 parent changes, pump runs started from the app, plant photos and builds."""
 
+from .alerts import NAME
+
 # Each source: (table, its time column, the columns it brings). Only these tables are read.
 SOURCES = {
     "update": ("updates", "finished", "device_id, image_version, result, message"),
@@ -22,7 +24,7 @@ def _text(kind, row, name):
         return f"Build of {row['profile']} ({row['variant']}): {row['result']}"
     if kind == "pump":
         return f"{name}: {row['message'][0].lower()}{row['message'][1:]}" if row["message"] else f"{name}: pump run"
-    return row["message"]
+    return row["message"].replace(NAME, name)  # alerts are stored with a {name} placeholder
 
 
 def build(db, inventory, photos, before=None, limit=30):

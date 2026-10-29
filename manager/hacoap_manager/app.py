@@ -8,6 +8,7 @@ another site can't add without the server's permission (against cross-site reque
 
 import asyncio
 import contextlib
+import hashlib
 import logging
 import time
 from dataclasses import dataclass
@@ -127,7 +128,7 @@ def create_app(services, background_tasks=True, on_quit=None):
         if request.method not in ("GET", "HEAD") and request.headers.get(CHANGE_HEADER) != "1":
             return JSONResponse({"detail": f"Missing {CHANGE_HEADER} header"}, status_code=403)
         response = await call_next(request)
-        if request.url.path.startswith("/static/"):
+        if request.url.path.startswith(("/static/", "/v/")):
             # The browser checks with the app each time (a 304 when unchanged), so a new
             # version's page is never run with an older cached script.
             response.headers["Cache-Control"] = "no-cache"
@@ -945,10 +946,26 @@ def create_app(services, background_tasks=True, on_quit=None):
 
     @app.get("/")
     async def index():
-        return FileResponse(STATIC / "index.html", headers={"Cache-Control": "no-cache"})
+        # The page asks for its files at /v/<version>/..., a new address whenever any of them
+        # changes: a browser that saved a file from an older version (before no-cache, it could
+        # keep one for days) never runs it with a newer page.
+        page = (STATIC / "index.html").read_text(encoding="utf-8")
+        page = page.replace('="/static/', f'="/v/{static_version()}/')
+        return Response(page, media_type="text/html", headers={"Cache-Control": "no-cache"})
 
+    app.mount("/v/{version}", StaticFiles(directory=STATIC), name="versioned")
     app.mount("/static", StaticFiles(directory=STATIC), name="static")
     return app
+
+
+def static_version():
+    """Changes whenever a file of the page does (its name, size or time)."""
+    digest = hashlib.sha256()
+    for path in sorted(STATIC.rglob("*")):
+        if path.is_file():
+            info = path.stat()
+            digest.update(f"{path.relative_to(STATIC).as_posix()} {info.st_size} {info.st_mtime_ns}\n".encode())
+    return digest.hexdigest()[:12]
 
 
 async def _auto_refresh(services):

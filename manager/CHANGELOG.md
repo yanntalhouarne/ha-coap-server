@@ -50,6 +50,7 @@ First version: the plan's phases 0, 1, 2, 5 and 6. Tested against a simulated de
 - **Settings in sections**, with a side menu. **Activity feed** on the dashboard. **?** lists the keyboard shortcuts. A **System** theme that follows the computer's light or dark setting.
 - **Accessibility:** keyboard focus shown everywhere, the network map usable from the keyboard, and contrast checked in every theme.
 - The page's code is now ES modules, one per tab or feature (static/js), instead of one 3,400-line file.
+- The page asks for its scripts and styles at an address that changes with every version (/v/<version>/), so a browser never runs a new page with a script it kept from an older one. If the page's scripts fail to start anyway, it says so at the top, instead of showing no data.
 - **Icons** (Lucide) on the tabs, the status bar and the map; 7-day charts in the dashboard's tiles; tabs that fade in and placeholders while cards load.
 - **Data:** backups (one file; daily automatic ones, and one before every restore), restore, and the device list as CSV.
 - A look after [Omarchy](https://omarchy.org/): a terminal feel, JetBrains Mono, 12 colour themes (Tokyo Night by default, **T** cycles them) with Home Assistant's blue as the accent, the ha-coap logo, keys 1 to 8 for the tabs, and a status bar.

@@ -9,6 +9,25 @@
   <link rel="stylesheet" href="/static/style.css">
   <link rel="icon" href="/static/icon.svg" type="image/svg+xml">
   <script src="/static/theme.js"></script>
+  <script>
+    // If the page's scripts fail before it starts (main.js sets hacoapStarted), say so, instead
+    // of a page that shows no data and whose tabs don't switch. Plain styles: the CSS may be what failed.
+    window.addEventListener('error', function (event) {
+      if (window.hacoapStarted || document.getElementById('start-error')) return;
+      var failed = event.target && event.target !== window && (event.target.src || event.target.href);
+      if (event.target && event.target !== window && !/\.(js|css)$/.test(failed || '')) return;  // a missing photo isn't this
+      var show = function () {
+        var box = document.createElement('div');
+        box.id = 'start-error';
+        box.setAttribute('role', 'alert');
+        box.style.cssText = 'position:fixed;inset:0 0 auto 0;z-index:9999;padding:12px 16px;background:#f7768e;color:#1a1b26;font:14px/1.5 sans-serif';
+        box.textContent = 'The page couldn’t start (' + (failed ? 'couldn’t load ' + failed : event.message) +
+          '). Reload it with Ctrl+F5 (Cmd+Shift+R on a Mac); if that doesn’t help, restart the app.';
+        document.body.appendChild(box);
+      };
+      if (document.body) show(); else document.addEventListener('DOMContentLoaded', show);
+    }, true);
+  </script>
 </head>
 <body>
 <!-- Icons: Lucide 0.460.0 (ISC licence, static/vendor/lucide/LICENSE), drawn with the text colour -->
