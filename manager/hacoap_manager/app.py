@@ -126,7 +126,12 @@ def create_app(services, background_tasks=True, on_quit=None):
             return JSONResponse({"detail": "This app only answers on this computer (127.0.0.1)"}, status_code=403)
         if request.method not in ("GET", "HEAD") and request.headers.get(CHANGE_HEADER) != "1":
             return JSONResponse({"detail": f"Missing {CHANGE_HEADER} header"}, status_code=403)
-        return await call_next(request)
+        response = await call_next(request)
+        if request.url.path.startswith("/static/"):
+            # The browser checks with the app each time (a 304 when unchanged), so a new
+            # version's page is never run with an older cached script.
+            response.headers["Cache-Control"] = "no-cache"
+        return response
 
     # ------------------------------------------------------------ status and settings
 

@@ -1178,9 +1178,14 @@ for (const [id, key] of [['labels-toggle', 'allNames'], ['links-toggle', 'showLi
 }
 
 document.getElementById('network-refresh').addEventListener('click', (event) => busy(event.target, async () => {
-  net.state = await api('POST', '/api/network/refresh');
-  net.dragged.clear();  // a new reading: every node back where its signal puts it (the floor plan keeps its places)
-  await loadNetwork();
+  // Every node goes back where its signal puts it (the floor plan keeps its places), even if
+  // the reading fails (such as when the automatic one is running)
+  net.dragged.clear();
+  try {
+    net.state = await api('POST', '/api/network/refresh');
+  } finally {
+    await loadNetwork();
+  }
 }));
 
 document.getElementById('border-router-form').addEventListener('submit', (event) => {

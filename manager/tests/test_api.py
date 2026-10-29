@@ -200,3 +200,9 @@ async def test_build_checks_and_history(client):
     assert (await client.get("/api/firmware-builds")).json() == []
     assert (await client.get("/api/firmware-builds/99")).status_code == 404
     assert (await client.post("/api/firmware-builds/cancel", headers=CHANGE)).status_code == 400
+
+
+async def test_static_files_are_checked_each_time(client):
+    """A new version's page never runs with an older cached script."""
+    response = await client.get("/static/app.js")
+    assert response.headers["cache-control"] == "no-cache" and response.headers.get("etag")

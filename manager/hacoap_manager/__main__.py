@@ -130,7 +130,9 @@ def main(argv=None):
                            "port": args.port if args.port != DEFAULT_PORT else None}
     app = create_app(services, background_tasks=not args.self_test, on_quit=lambda: setattr(server, "should_exit", True))
     url = f"http://127.0.0.1:{port}/"
-    server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning"))
+    # Stopping waits at most 5 s for open connections (a page's live events) to close
+    server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning",
+                                           timeout_graceful_shutdown=5))
 
     if args.self_test:
         def check():
