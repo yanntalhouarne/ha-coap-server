@@ -270,7 +270,8 @@ A whole fleet: `python -m hacoap_manager.simdevice --count 9 --border-router api
 | `hacoap_manager/simborder.py` | A simulated border router REST API, with a small made-up network |
 | `hacoap_manager/db.py` | The SQLite database |
 | `hacoap_manager/simdevice.py` | The simulated device |
-| `hacoap_manager/static/` | The page: plain JavaScript and Bootstrap, no build step, nothing loaded from the internet |
+| `hacoap_manager/static/` | The page: `index.html`, `style.css`, `themes.css`, and Bootstrap, fonts and icons in `vendor/`. No build step, nothing loaded from the internet |
+| `hacoap_manager/static/js/` | The page's JavaScript, as ES modules: `main.js` starts it; `core.js` holds the shared state and helpers; one module per tab or feature (`dashboard`, `devices`, `device`, `network`, `floorplan`, `updates`, `images`, `builds`, `console`, `settings`, `pages` for the wall and summary, `palette` for Ctrl+K, `live` for live events and the status bar, `themes`, `charts`, `tabs`). Each module imports what it uses and wires its own part of the page as it loads |
 | `tests/` | Tests against the simulated device, and every tab opened in a headless browser (Chrome, Chromium or Edge, when installed) |
 
 ```

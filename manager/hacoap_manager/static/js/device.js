@@ -1,0 +1,308 @@
+// A device's page: status, firmware, controls, form, charts, plant photos and presets.
+
+import { ago, api, busy, h, notify, pct, shortHash, state, when } from './core.js';
+import { daysText, renderDeviceDrain } from './dashboard.js';
+import { detailsTable, waterIn } from './network.js';
+import { deviceName, devicePath, deviceTags, pingDevice, refreshDevice, removeDevice, runDoctor, showSlots } from './devices.js';
+import { lineChart } from './charts.js';
+import { prepareUpdate, statusClass } from './updates.js';
+
+// ------------------------------------------------------------------ one device
+
+export const devicePage = { id: null, details: null };
+
+export async function loadDevicePage(id) {
+  devicePage.id = id;
+  const days = document.getElementById('device-days').value;
+  let details;
+  try {
+    details = await api('GET', `/api/devices/${encodeURIComponent(id)}/details?days=${days}`, undefined, { quiet: true });
+  } catch (error) {
+    document.getElementById('device-title').textContent = 'Unknown device';
+    return;
+  }
+  devicePage.details = details;
+  document.getElementById('device-csv').href = `/api/readings.csv?device_id=${encodeURIComponent(id)}`;
+  renderDevicePhoto(details.device);
+  renderDeviceStatus(details.device);
+  renderDeviceFirmware(details);
+  renderDeviceControls(details.device);
+  renderDeviceForm(details.device);
+  renderDeviceCharts(details);
+  const updates = details.updates;
+  document.getElementById('device-updates').replaceChildren(updates.length ? h('table', { class: 'table table-sm mb-0' },
+    h('tbody', {}, updates.map((r) => h('tr', {}, h('td', { class: 'small' }, when(r.finished)),
+      h('td', {}, r.transport === 'serial' ? 'USB' : 'air'), h('td', {}, `v${r.image_version} · ${shortHash(r.image_hash)}`),
+      h('td', {}, h('span', { class: `badge text-bg-${statusClass[r.result] || 'secondary'}` }, r.result)),
+      h('td', { class: 'small' }, r.message)))))
+    : h('p', { class: 'text-body-secondary mb-0' }, 'No updates yet.'));
+  const events = details.network_events;
+  document.getElementById('device-events').replaceChildren(events.length ? h('ul', { class: 'list-unstyled small mb-0' },
+    events.map((e) => h('li', {}, h('span', { class: 'text-body-secondary' }, `${when(e.time)} `), e.message)))
+    : h('p', { class: 'text-body-secondary mb-0' }, 'No parent changes seen. Read the network now and then (Network tab) to follow them.'));
+}
+
+export function renderDeviceStatus(device) {
+  if (device.device_id !== devicePage.id) return;
+  const forecast = devicePage.details && devicePage.details.health.battery_forecast;
+  document.getElementById('device-title').textContent = deviceName(device);
+  document.getElementById('device-badges').replaceChildren(
+    h('span', { class: `online-dot ${device.online ? 'on' : 'off'}` }), device.online ? 'online' : 'offline',
+    ...deviceTags(device).map((t) => h('span', { class: 'tag ms-2' }, t)));
+  document.getElementById('device-status').replaceChildren(detailsTable([
+    ['Last seen', ago(device.last_seen)],
+    ['Battery', device.battery !== null && device.battery !== undefined ? `${device.battery} % · ${daysText(forecast)}` : ''],
+    ['Soil moisture', pct(device.soil_moisture)],
+    ['Air humidity', pct(device.air_humidity)],
+    ['Temperature', device.temperature !== null && device.temperature !== undefined ? `${device.temperature} °C` : ''],
+    ['Device ID', device.device_id],
+    ['Address', device.address],
+    ['Problem', device.last_error],
+  ]), h('div', { class: 'd-flex flex-wrap gap-2 mt-2' },
+    h('button', { class: 'btn btn-sm btn-outline-secondary', onclick: (e) => busy(e.target, async () => {
+      await refreshDevice(device);
+      await loadDevicePage(device.device_id);
+    }) }, 'Refresh'),
+    h('button', { class: 'btn btn-sm btn-outline-secondary', title: 'Each step from this computer to this board, and how fast it answers',
+      onclick: () => runDoctor(device) }, 'Check the connection')));
+}
+
+export function renderDeviceFirmware(details) {
+  const device = details.device;
+  const status = details.health.image_status;
+  const rows = detailsTable([
+    ['Firmware', device.fw_version ? `commit ${device.fw_version}` : ''],
+    ['Image', device.image_version ? `v${device.image_version} · ${shortHash(device.image_hash)}` : 'not read yet'],
+    ['Hardware', device.hw_version],
+    ['Compared with the release', { current: 'running it', outdated: 'behind it', unknown: 'not known yet', 'no-release': 'no release image chosen' }[status]],
+  ]);
+  const buttons = h('div', { class: 'd-flex flex-wrap gap-2 mt-2' },
+    h('button', { class: 'btn btn-sm btn-outline-secondary', onclick: () => showSlots(device) }, 'Firmware slots'),
+    status === 'outdated' && state.release ? h('button', { class: 'btn btn-sm btn-success',
+      onclick: () => prepareUpdate(state.release.hash, [device.device_id], false) }, 'Update to the release…') : null);
+  document.getElementById('device-firmware').replaceChildren(rows, buttons);
+}
+
+export function renderDeviceControls(device) {
+  const id = encodeURIComponent(device.device_id);
+  const result = h('div', { class: 'small text-body-secondary mt-2' });
+  const show = (state) => { result.textContent = `Pump ${state.running ? 'running' : 'off'} · run time ${state.duration} s`; };
+  const seconds = h('select', { class: 'form-select form-select-sm w-auto' },
+    [1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) => h('option', { value: n }, `${n} s`)));
+  const call = (body) => (e) => busy(e.target, async () => show(await api('POST', `/api/devices/${id}/pump`, body)));
+  document.getElementById('device-controls').replaceChildren(
+    h('div', { class: 'd-flex flex-wrap gap-2 align-items-center' },
+      h('button', { class: 'btn btn-sm btn-primary', onclick: call({ on: true }) }, 'Run the pump'),
+      h('button', { class: 'btn btn-sm btn-outline-danger', onclick: call({ on: false }) }, 'Stop'),
+      h('span', { class: 'small text-body-secondary ms-2' }, 'run time'), seconds,
+      h('button', { class: 'btn btn-sm btn-outline-secondary', onclick: (e) => call({ seconds: Number(seconds.value) })(e) }, 'Set'),
+      h('button', { class: 'btn btn-sm btn-outline-secondary ms-auto', onclick: () => pingDevice(device) }, 'Beep')),
+    result,
+    h('div', { class: 'form-text' }, 'Commands reach a sleeping board at its next poll: up to 3 s.'));
+}
+
+export function renderDeviceForm(device) {
+  const field = (name, label, value, attrs = {}) => h('div', { class: attrs.wide ? 'col-12' : 'col-sm-6' },
+    h('label', { class: 'form-label', for: `device-${name}` }, label),
+    h(attrs.textarea ? 'textarea' : 'input', { class: 'form-control form-control-sm', id: `device-${name}`, name,
+      value: attrs.textarea ? null : value, placeholder: attrs.placeholder || null, rows: attrs.textarea ? 2 : null,
+      type: attrs.type || null, min: attrs.min ?? null, max: attrs.max ?? null },
+    attrs.textarea ? value : null));
+  const defaultTarget = state.status ? state.status.settings.water_below_default : null;
+  const form = document.getElementById('device-form');
+  form.replaceChildren(
+    field('name', 'Name', device.name || ''),
+    field('plant', 'Plant', device.plant || '', { placeholder: 'basil' }),
+    field('location', 'Location', device.location || '', { placeholder: 'kitchen window' }),
+    field('tags', 'Groups', device.tags || '', { placeholder: 'greenhouse, test' }),
+    field('water_below', 'Needs water below (%)', device.water_below ?? '', { type: 'number', min: 0, max: 100,
+      placeholder: defaultTarget ? `default: ${defaultTarget}` : 'default: off' }),
+    h('div', { class: 'col-12 small', id: 'plant-suggestion' }),
+    field('notes', 'Notes', device.notes || '', { wide: true, textarea: true }),
+    h('div', { class: 'col-12 d-flex gap-2' }, h('button', { class: 'btn btn-sm btn-primary', type: 'submit' }, 'Save'),
+      h('button', { class: 'btn btn-sm btn-outline-danger ms-auto', type: 'button', onclick: async () => {
+        await removeDevice(device);
+        location.hash = '#devices';
+      } }, 'Remove from the list')));
+  const suggest = () => renderPlantSuggestion(form.elements.plant.value, form.elements.water_below);
+  form.elements.plant.addEventListener('input', suggest);
+  form.elements.water_below.addEventListener('input', suggest);
+  suggest();
+  form.onsubmit = (event) => {
+    event.preventDefault();
+    const values = Object.fromEntries(new FormData(form).entries());
+    api('PATCH', `/api/devices/${encodeURIComponent(device.device_id)}`, values)
+      .then(() => { notify('Saved', 'success', 2000); loadDevicePage(device.device_id); }, () => {});
+  };
+}
+
+// ------------------------------------------------------------------ plant presets
+
+// Watering targets to start from: the soil moisture % (as the board reads it) under which a plant
+// usually wants water. A guide: adjust each plant's target once you see its readings.
+export const PLANT_PRESETS = [
+  [['cactus', 'cacti'], 8, 'cacti'], [['succulent', 'echeveria', 'jade', 'haworthia'], 10, 'succulents'],
+  [['aloe'], 10, 'aloe'], [['snake plant', 'sansevieria'], 10, 'snake plants'], [['zz plant', 'zamioculcas'], 12, 'ZZ plants'],
+  [['rosemary'], 20, 'rosemary'], [['thyme'], 20, 'thyme'], [['lavender'], 20, 'lavender'], [['sage'], 25, 'sage'],
+  [['oregano', 'marjoram'], 25, 'oregano'], [['pothos', 'epipremnum'], 25, 'pothos'], [['orchid', 'phalaenopsis'], 25, 'orchids'],
+  [['monstera'], 30, 'monstera'], [['ficus', 'fig'], 30, 'ficus'], [['lemon', 'lime', 'orange', 'citrus'], 30, 'citrus'],
+  [['spider plant', 'chlorophytum'], 30, 'spider plants'], [['mint'], 45, 'mint'],  // before peppers: peppermint
+  [['chili', 'chilli', 'pepper'], 35, 'peppers'],
+  [['basil'], 40, 'basil'], [['parsley'], 40, 'parsley'], [['coriander', 'cilantro'], 40, 'coriander'],
+  [['tomato'], 40, 'tomatoes'], [['strawberr'], 40, 'strawberries'], [['chive'], 40, 'chives'],
+  [['lettuce', 'salad', 'spinach'], 45, 'leafy greens'], [['peace lily', 'spathiphyllum'], 45, 'peace lilies'],
+  [['fern'], 50, 'ferns'], [['calathea', 'maranta', 'prayer plant'], 50, 'calatheas'],
+];
+
+export function plantPreset(plant) {
+  const name = (plant || '').toLowerCase();
+  if (!name.trim()) return null;
+  const found = PLANT_PRESETS.find(([words]) => words.some((w) => name.includes(w)));
+  return found ? { target: found[1], kind: found[2] } : null;
+}
+
+export function renderPlantSuggestion(plant, input) {
+  const box = document.getElementById('plant-suggestion');
+  if (!box) return;
+  const preset = plantPreset(plant);
+  if (!preset || String(preset.target) === input.value) {
+    box.replaceChildren();
+    return;
+  }
+  box.replaceChildren(h('span', { class: 'text-body-secondary' }, `Usual for ${preset.kind}: water under ${preset.target} %. `),
+    h('button', { class: 'btn btn-link btn-sm p-0 align-baseline', type: 'button', onclick: () => {
+      input.value = preset.target;
+      box.replaceChildren(h('span', { class: 'text-body-secondary' }, 'Set: click Save to keep it.'));
+    } }, 'Use it'));
+}
+
+// What happened to the device, for the charts' markers.
+export function deviceEvents(details) {
+  const updates = details.updates.filter((u) => u.finished && (u.result === 'updated' || u.result === 'failed')).map((u) => ({
+    t: u.finished, kind: u.result === 'updated' ? 'update' : 'failed',
+    text: u.result === 'updated' ? `updated to v${u.image_version}` : `update failed: ${u.message}` }));
+  const pumps = (details.activity || []).filter((a) => a.kind === 'pump').map((a) => ({ t: a.time, kind: 'pump', text: a.message }));
+  const parents = details.network_events.map((e) => ({ t: e.time, kind: 'parent', text: e.message }));
+  return { updates, pumps, parents };
+}
+
+export function renderDeviceCharts(details) {
+  const r = details.readings.map((x) => ({ t: x.time, ...x }));
+  const pick = (key) => r.map((x) => ({ t: x.t, v: x[key] }));
+  const links = details.links;
+  const margins = links.filter((l) => l.link_margin !== null && l.link_margin !== undefined);
+  const { updates, pumps, parents: moves } = deviceEvents(details);
+  const charts = [
+    lineChart('Battery', pick('battery'), { unit: ' %', min: 0, max: 100, color: 'var(--t-green)', events: updates }),
+    lineChart('Soil moisture', pick('soil_moisture'), { unit: ' %', min: 0, max: 100, color: 'var(--t-cyan)', events: pumps }),
+    lineChart('Air humidity', pick('air_humidity'), { unit: ' %', min: 0, max: 100, color: 'var(--t-blue)' }),
+    lineChart('Temperature', pick('temperature'), { unit: ' °C', color: 'var(--t-orange)' }),
+    margins.length
+      ? lineChart('Link to its parent', margins.map((l) => ({ t: l.time, v: l.link_margin })), { unit: ' dB', min: 0, color: 'var(--t-magenta)', step: true, events: [...moves, ...updates] })
+      : lineChart('Link quality to its parent', links.map((l) => ({ t: l.time, v: l.link_quality })), { min: 0, max: 3, color: 'var(--t-magenta)', step: true, events: [...moves, ...updates] }),
+  ];
+  const parents = [...new Set(links.map((l) => l.parent))];
+  const legend = h('div', { class: 'chart-legend small text-body-secondary mt-2' }, 'Markers: ',
+    h('span', { class: 'legend-event event-update' }), 'update ', h('span', { class: 'legend-event event-failed' }), 'failed update ',
+    h('span', { class: 'legend-event event-pump' }), 'pump run (from the app) ', h('span', { class: 'legend-event event-parent' }),
+    'parent change. Point at one for details.');
+  document.getElementById('device-charts').replaceChildren(h('div', { class: 'charts' }, charts), legend,
+    parents.length ? h('div', { class: 'small text-body-secondary mt-1' }, `Parents in this period: ${parents.join(', ')}`) : null);
+  renderDeviceDrain(details.drain || []);
+}
+
+// ------------------------------------------------------------------ the plant's photo
+
+// Phone photos are large: shrink them to 1600 px at most (JPEG) before sending, so the page,
+// the database folder and the backups stay light.
+export async function shrinkPhoto(file) {
+  const MAX = 1600;
+  let bitmap;
+  try {
+    bitmap = await createImageBitmap(file, { imageOrientation: 'from-image' });
+  } catch (error) {
+    return file;  // a format the browser can't draw: the app says whether it takes it
+  }
+  const scale = Math.min(1, MAX / Math.max(bitmap.width, bitmap.height));
+  if (scale === 1 && file.size < 1.5 * 1024 * 1024) return file;
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.round(bitmap.width * scale);
+  canvas.height = Math.round(bitmap.height * scale);
+  canvas.getContext('2d').drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+  return new Promise((resolve) => canvas.toBlob((blob) => resolve(blob || file), 'image/jpeg', 0.85));
+}
+
+// The plant card: its photos over time (a slider steps through them, with the soil at each
+// date), whether it needs water, when it will, and what a pump run does.
+export const timeline = { device: null, photo: null, taken: [], index: -1 };
+
+export async function loadTimeline(device) {
+  timeline.taken = (await api('GET', devicePath(device, '/photos'), undefined, { quiet: true })).map((p) => p.taken);
+  timeline.device = device.device_id;
+  timeline.photo = device.photo;
+  timeline.index = timeline.taken.length - 1;
+}
+
+export function renderDevicePhoto(device) {
+  if (device.device_id !== devicePage.id) return;
+  if (timeline.device !== device.device_id || timeline.photo !== device.photo) {
+    loadTimeline(device).then(() => renderDevicePhoto(device), () => {});
+    if (timeline.device !== device.device_id) return;
+  }
+  const input = h('input', { type: 'file', class: 'd-none', accept: 'image/png,image/jpeg,image/webp' });
+  const choose = h('button', { class: 'btn btn-sm btn-outline-secondary', type: 'button', onclick: () => input.click() },
+    'Add a photo');
+  input.addEventListener('change', () => {
+    const file = input.files[0];
+    // When it was taken: the file's date (a phone keeps it), sent along; the app checks it.
+    if (file) busy(choose, async () => api('POST', devicePath(device, `/photo?taken=${Math.round(file.lastModified / 1000)}`), await shrinkPhoto(file)));
+  });
+  const taken = timeline.taken[timeline.index];
+  const alt = device.plant ? `The ${device.plant}` : `The plant of ${deviceName(device)}`;
+  const picture = taken
+    ? h('img', { class: 'plant-photo', src: `${devicePath(device, `/photos/${taken}`)}`, alt })
+    : h('button', { class: 'plant-photo-empty', type: 'button', onclick: () => input.click() },
+      'Add a photo of the plant this device looks after');
+
+  // The slider, with the soil at that date and a chart marking it
+  let steps = null;
+  if (timeline.taken.length > 1) {
+    const readings = (devicePage.details && devicePage.details.readings) || [];
+    const near = readings.filter((r) => r.soil_moisture !== null && r.soil_moisture !== undefined)
+      .reduce((best, r) => (!best || Math.abs(r.time - taken) < Math.abs(best.time - taken) ? r : best), null);
+    const slider = h('input', { type: 'range', class: 'form-range', min: 0, max: timeline.taken.length - 1, value: timeline.index,
+      'aria-label': 'Photo date' });
+    slider.addEventListener('input', () => { timeline.index = Number(slider.value); renderDevicePhoto(device); });
+    const soil = readings.map((r) => ({ t: r.time, v: r.soil_moisture }));
+    steps = h('div', { class: 'mt-2' }, slider,
+      h('div', { class: 'small d-flex justify-content-between' },
+        h('span', {}, new Date(taken * 1000).toLocaleDateString([], { year: 'numeric', month: 'short', day: 'numeric' })),
+        h('span', { class: 'text-body-secondary' }, `photo ${timeline.index + 1} of ${timeline.taken.length}` +
+          (near && Math.abs(near.time - taken) < 2 * 86400 ? ` · soil then ${near.soil_moisture} %` : ''))),
+      lineChart('Soil moisture', soil, { unit: ' %', min: 0, max: 100, color: 'var(--t-cyan)',
+        events: [{ t: taken, kind: 'photo', text: 'this photo' }] }));
+  }
+
+  const target = device.water_target;
+  let water = 'No soil reading yet.';
+  if (device.soil_moisture !== null && device.soil_moisture !== undefined) {
+    water = !target ? `Soil at ${device.soil_moisture} % (no watering target).`
+      : device.needs_water ? `Soil at ${device.soil_moisture} %: under its target of ${target} %, it needs water.`
+        : `Soil at ${device.soil_moisture} %: fine (it needs water under ${target} %).`;
+  }
+  const health = devicePage.details && devicePage.details.device.device_id === device.device_id ? devicePage.details.health : {};
+  const forecast = health.water_forecast;
+  const effect = health.pump_effect;
+  document.getElementById('device-photo').replaceChildren(...[picture, steps,
+    device.plant ? h('div', { class: 'fw-bold mt-2' }, device.plant) : null,
+    h('div', { class: `small mt-1 ${device.needs_water ? 'text-warning' : 'text-body-secondary'}` }, water),
+    forecast && !device.needs_water && forecast.days !== null ? h('div', { class: 'small text-body-secondary' },
+      `It dries about ${forecast.per_day.toFixed(1)} % a day: it will need water ${waterIn(forecast)}.`) : null,
+    effect ? h('div', { class: 'small text-body-secondary' }, `A pump run${effect.seconds ? ` of ${effect.seconds} s` : ''} ` +
+      `raises its soil by about ${Math.round(effect.rise)} % (from ${effect.runs} run${effect.runs > 1 ? 's' : ''} started here).`) : null,
+    h('div', { class: 'd-flex flex-wrap gap-2 mt-2' }, choose,
+      taken ? h('button', { class: 'btn btn-sm btn-outline-danger', type: 'button', onclick: async () => {
+        if (confirm('Remove this photo?')) await api('DELETE', devicePath(device, `/photos/${taken}`)).catch(() => {});
+      } }, timeline.taken.length > 1 ? 'Remove this one' : 'Remove') : null),
+    input].filter(Boolean));
+}

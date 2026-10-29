@@ -45,7 +45,7 @@ async def test_page_is_served(client):
     response = await client.get("/")
     assert response.status_code == 200
     assert "HA-CoAP Fleet Manager" in response.text
-    assert (await client.get("/static/app.js")).status_code == 200
+    assert (await client.get("/static/js/main.js")).status_code == 200
     assert (await client.get("/static/vendor/bootstrap.min.css")).status_code == 200
 
 
@@ -204,5 +204,5 @@ async def test_build_checks_and_history(client):
 
 async def test_static_files_are_checked_each_time(client):
     """A new version's page never runs with an older cached script."""
-    response = await client.get("/static/app.js")
+    response = await client.get("/static/js/main.js")
     assert response.headers["cache-control"] == "no-cache" and response.headers.get("etag")
