@@ -164,7 +164,7 @@ void diag_link_read(otInstance *instance, struct diag_link *link)
 	(void)otThreadGetParentLastRssi(instance, &link->last_rssi);
 }
 
-size_t diag_format(char *payload, size_t size, const struct diag_link *link, int32_t soil_mv)
+size_t diag_format(char *payload, size_t size, const struct diag_link *link, const char *srp, int32_t soil_mv)
 {
 	size_t length = 0U;
 	int written;
@@ -192,7 +192,7 @@ size_t diag_format(char *payload, size_t size, const struct diag_link *link, int
 	{
 		APPEND(",fault=%u@%08x", (unsigned int)last_crash.reason, (unsigned int)last_crash.pc);
 	}
-	APPEND(",role=%s", link->role);
+	APPEND(",role=%s,srp=%s", link->role, srp);
 	if (link->attached)
 	{
 		APPEND(",rloc=%04x,parent=%04x,rssi=%d,last_rssi=%d,lq=%u", link->rloc16, link->parent_rloc16,

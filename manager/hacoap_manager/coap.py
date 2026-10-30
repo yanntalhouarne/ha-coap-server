@@ -306,6 +306,7 @@ class Diagnostics:
     reset: str            # why it last restarted: power, pin, soft, watchdog, lockup, crash, other
     fault: str            # after a crash: "<reason>@<address>", else ""
     role: str             # disabled, detached, child, router, leader
+    srp: str              # its name's registration: registered, pending, failed, off ("" before this field)
     rloc16: str           # "0x5c01", or "" when not attached
     parent: str
     rssi: int | None      # the parent's average RSSI (dBm)
@@ -334,7 +335,7 @@ def parse_diag(payload):
 
     soil_mv = number("soil_mv")
     return Diagnostics(number("boots") or 0, number("up") or 0, fields["reset"], fields.get("fault", ""),
-                       fields.get("role", ""), hex16("rloc"), hex16("parent"), number("rssi"), number("last_rssi"),
+                       fields.get("role", ""), fields.get("srp", ""), hex16("rloc"), hex16("parent"), number("rssi"), number("last_rssi"),
                        number("lq"), soil_mv if soil_mv is not None and soil_mv >= 0 else None)
 
 

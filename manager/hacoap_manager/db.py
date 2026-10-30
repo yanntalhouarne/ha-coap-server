@@ -41,7 +41,8 @@ CREATE TABLE IF NOT EXISTS devices (
     soil_mv       INTEGER,                    -- the soil sensor's output, for calibrating
     diag_time     REAL,                       -- when 'diag' last answered
     no_diag_fw    TEXT NOT NULL DEFAULT '',   -- the firmware that didn't answer 'diag' (not asked again)
-    pump_s        INTEGER                     -- the pump run time the board last reported (s)
+    pump_s        INTEGER,                    -- the pump run time the board last reported (s)
+    srp_state     TEXT NOT NULL DEFAULT ''    -- its name's registration with the border router ('diag')
 );
 CREATE TABLE IF NOT EXISTS images (
     hash     TEXT PRIMARY KEY,
@@ -148,7 +149,7 @@ DEVICE_FIELDS = ("name", "address", "serial_port", "fw_version", "hw_version", "
                  "soil_moisture", "battery", "air_humidity", "temperature", "last_seen", "last_error", "notes",
                  "tags", "location", "plant", "water_below", "photo", "boots", "reset_cause", "fault", "uptime_s",
                  "role", "rloc16", "parent_rloc16", "parent_rssi", "link_quality", "soil_mv", "diag_time",
-                 "no_diag_fw", "pump_s")
+                 "no_diag_fw", "pump_s", "srp_state")
 
 # Columns added after the first version: (table, column, definition), added to older databases
 ADDED_COLUMNS = [
@@ -172,6 +173,7 @@ ADDED_COLUMNS = [
     ("devices", "diag_time", "REAL"),
     ("devices", "no_diag_fw", "TEXT NOT NULL DEFAULT ''"),
     ("devices", "pump_s", "INTEGER"),
+    ("devices", "srp_state", "TEXT NOT NULL DEFAULT ''"),
 ]
 
 

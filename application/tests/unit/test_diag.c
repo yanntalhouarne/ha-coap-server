@@ -39,7 +39,7 @@ static void reset_module(void)
 
 static const char *format(const struct diag_link *link, int32_t soil_mv)
 {
-	size_t length = diag_format(payload, sizeof(payload), link, soil_mv);
+	size_t length = diag_format(payload, sizeof(payload), link, "registered", soil_mv);
 
 	payload[length] = '\0';
 	return payload;
@@ -82,7 +82,7 @@ static void test_each_boot_is_counted(void)
 	reset_module();
 	diag_init();
 	CHECK_EQ(fake_boot_counts, 1);
-	CHECK_STR(format(&detached, 1696), "boots=12,up=0,reset=power,role=detached,soil_mv=1696");
+	CHECK_STR(format(&detached, 1696), "boots=12,up=0,reset=power,role=detached,srp=registered,soil_mv=1696");
 }
 
 static void test_a_crash_is_recorded_for_the_next_boot(void)
@@ -98,7 +98,7 @@ static void test_a_crash_is_recorded_for_the_next_boot(void)
 	fake_reset_cause = RESET_SOFTWARE;
 	diag_init();
 	CHECK_EQ(diag_reset_cause(), DIAG_RESET_CRASH);
-	CHECK_STR(format(&detached, -1), "boots=12,up=0,reset=crash,fault=3@0001a2b4,role=detached,soil_mv=-1");
+	CHECK_STR(format(&detached, -1), "boots=12,up=0,reset=crash,fault=3@0001a2b4,role=detached,srp=registered,soil_mv=-1");
 
 	/* Read once: the boot after that is an ordinary one */
 	fake_reset_cause = RESET_SOFTWARE;
@@ -142,7 +142,7 @@ static void test_the_link_to_the_parent(void)
 	diag_init();
 	fake_uptime_ms = 3600500;
 	CHECK_STR(format(&link, 1696),
-		  "boots=12,up=3600,reset=power,role=child,rloc=5c01,parent=5c00,rssi=-62,last_rssi=-60,lq=3,soil_mv=1696");
+		  "boots=12,up=3600,reset=power,role=child,srp=registered,rloc=5c01,parent=5c00,rssi=-62,last_rssi=-60,lq=3,soil_mv=1696");
 
 	fake_device_role = OT_DEVICE_ROLE_DETACHED;
 	diag_link_read(&fake_ot_instance, &link);
@@ -157,13 +157,13 @@ static void test_a_small_buffer_gets_whole_fields(void)
 
 	reset_module();
 	diag_init();
-	length = diag_format(payload, 20, &detached, 1696);
+	length = diag_format(payload, 20, &detached, "off", 1696);
 	payload[length] = '\0';
 	CHECK_STR(payload, "");                      // the first field doesn't fit at all
-	length = diag_format(payload, 40, &detached, 1696);
+	length = diag_format(payload, 52, &detached, "off", 1696);
 	payload[length] = '\0';
-	CHECK_STR(payload, "boots=12,up=0,reset=power,role=detached"); // no half field
-	CHECK_EQ(diag_format(payload, 0, &detached, 0), 0);
+	CHECK_STR(payload, "boots=12,up=0,reset=power,role=detached,srp=off"); // no half field
+	CHECK_EQ(diag_format(payload, 0, &detached, "off", 0), 0);
 }
 
 int main(void)

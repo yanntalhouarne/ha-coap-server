@@ -23,6 +23,20 @@ export const BOARD_SETTINGS = [
   { name: 'soil_wet_mv', label: 'Soil sensor when wet (mV)', help: 'Its output in water: 100 %.' },
 ];
 
+// Its name's registration with the border router (SRP), which makes it findable on the LAN
+export function srpText(device) {
+  const name = `ha-coap-${device.device_id}`;
+  switch (device.srp_state) {
+    case 'registered': return `${name}, registered with the border router`;
+    case 'pending': return h('span', { class: 'text-warning' }, `${name}: registering with the border router…`);
+    case 'off': return 'not registered: not on a network yet';
+    case 'failed': return h('span', { class: 'text-danger' }, `${name}: the border router refuses it, so Home Assistant `,
+      'can\'t find it. Usually another key holds this name (for 14 days after its last registration): see the main ',
+      'README, SRP.');
+    default: return '';
+  }
+}
+
 export function resetText(cause, fault) {
   let text = RESETS[cause] || cause || 'unknown';
   if (cause === 'crash' && fault) {
@@ -62,6 +76,7 @@ export function renderDeviceHealth(device) {
     ['Its parent', device.parent_rloc16 ? [device.parent_rloc16, has(device.parent_rssi) ? `${device.parent_rssi} dBm` : null,
       has(device.link_quality) ? `quality ${device.link_quality}/3` : null].filter(Boolean).join(' · ') : (device.role || '')],
     ['Its address', device.rloc16 ? `${device.rloc16} (${device.role})` : ''],
+    ['Its name', srpText(device)],
   ]), h('div', { class: 'small fw-bold mt-3 mb-1' }, 'Restarts'),
   restarts.length ? h('ul', { class: 'list-unstyled small mb-0 restart-list' }, restarts.map((r) =>
     h('li', { class: /watchdog|lockup|crash/.test(r.message) ? 'text-danger' : '' },

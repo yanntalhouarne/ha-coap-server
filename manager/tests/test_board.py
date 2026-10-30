@@ -8,7 +8,7 @@ import time
 import httpx
 import pytest
 
-from hacoap_manager import coap, feed, fleet
+from hacoap_manager import coap, discovery, feed, fleet, simdevice
 from hacoap_manager.app import create_app, create_services
 
 from conftest import fast_settings
@@ -249,3 +249,51 @@ async def test_forgetting_the_network(client, services, start_sim):
     assert services.db.recent_activity("1a2b3c4d", "network", 5)[0]["message"].startswith("Told to forget")
     await asyncio.sleep(0.3)  # the board answers, then resets
     assert server.device.resets == 1 and server.device.boots == 2
+
+
+# ---------------------------------------------------------------- SRP: the boards' names
+
+async def test_the_name_registration_is_reported(client, services, start_sim):
+    server = await start_sim(dynamic=False)
+    device = await add_board(client, services, server)
+    assert device["srp_state"] == "registered"
+    assert server.device.srp_server.advertised("ha-coap-1a2b3c4d")
+
+
+async def test_forgetting_keeps_the_name(client, services, start_sim):
+    """The board removes its registration, keeps its SRP key, and takes its name back."""
+    srp = simdevice.SimulatedSrpServer()
+    server = await start_sim(dynamic=False, srp_server=srp)
+    key = server.device.srp_key
+    server.device.forget_network(rejoin_s=0.2)
+    assert not srp.advertised("ha-coap-1a2b3c4d")          # gone from the LAN at once
+    await asyncio.sleep(0.3)
+    assert server.device.srp_key == key and server.device.srp_state == "registered"
+    assert srp.advertised("ha-coap-1a2b3c4d")
+
+
+async def test_a_new_key_cant_take_the_name(start_sim):
+    """What happened when forgetting the network also erased the SRP key: the border router
+    keeps the name for the old key, and refuses the board's new registration for 14 days."""
+    srp = simdevice.SimulatedSrpServer()
+    server = await start_sim(dynamic=False, srp_server=srp, forget_wipes_srp_key=True)
+    server.device.forget_network(rejoin_s=0.2)
+    await asyncio.sleep(0.3)
+    assert server.device.srp_state == "failed" and not srp.advertised("ha-coap-1a2b3c4d")
+    assert "srp=failed" in server.device.diag_payload().decode()
+
+
+def test_txt_records_are_read():
+    txt = discovery.txt_records({b"id": b"1a2b3c4d", b"fw": b"f83f898", b"hw": b"v2.0", b"sim": b"1", b"flag": None})
+    assert txt == {"id": "1a2b3c4d", "fw": "f83f898", "hw": "v2.0", "sim": "1", "flag": ""}
+
+
+async def test_found_boards_say_what_they_run(services):
+    async def discover(timeout):
+        return [discovery.Found("ha-coap-1a2b3c4d", "1a2b3c4d", "fd11::1", {"fw": "f83f898", "hw": "v2.0"}),
+                discovery.Found("ha-coap-5e6f7a8b", "5e6f7a8b", "fd11::2", {})]  # older firmware: no TXT
+
+    services.inventory._discover = discover
+    await services.inventory.discover()
+    assert (services.db.device("1a2b3c4d")["fw_version"], services.db.device("1a2b3c4d")["hw_version"]) == ("f83f898", "v2.0")
+    assert services.db.device("5e6f7a8b")["fw_version"] == ""

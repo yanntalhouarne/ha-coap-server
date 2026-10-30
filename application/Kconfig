@@ -186,6 +186,17 @@ config HACOAP_SRP_SERVICE_INSTANCE
 	string "SRP service instance prefix"
 	default "ha-coap"
 
+config HACOAP_SRP_LEASE_S
+	int "SRP lease (s)"
+	range 300 86400
+	default 1800
+	help
+	  How long the border router keeps advertising the device after its
+	  last registration. The device renews it before it ends (one small
+	  message), so a board that's gone (dead battery, moved) disappears
+	  from Home Assistant's and the fleet manager's discovery within this
+	  time. OpenThread's default is 7200.
+
 config HACOAP_SRP_SERVICE_NAME
 	string "SRP service name"
 	default "_ot._udp"

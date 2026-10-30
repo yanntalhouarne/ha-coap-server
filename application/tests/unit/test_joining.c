@@ -8,9 +8,24 @@
 
 #include "../../src/joining.c"
 
+/* ---------------------------------------------------------------- fake SRP */
+
+static bool fake_registered; // srp_unregister() has something to remove
+static int unregisters;
+
+bool srp_unregister(otInstance *instance)
+{
+	(void)instance;
+	unregisters++;
+	return fake_registered;
+}
+
 static void reset_module(void)
 {
 	attempts = 0;
+	unregistering = false;
+	fake_registered = false;
+	unregisters = 0;
 	retry_work.scheduled = false;
 	retry_work.schedules = 0;
 	forget_work.scheduled = false;
@@ -82,18 +97,48 @@ static void test_a_joiner_that_cant_start_is_tried_again(void)
 	CHECK_EQ(fake_ot_api_lock_depth, 0);
 }
 
-static void test_forgetting_resets_after_the_delay(void)
+static void test_forgetting_erases_the_network_but_not_the_srp_key(void)
 {
+	static const uint16_t expected[] = {OT_SETTINGS_KEY_ACTIVE_DATASET, OT_SETTINGS_KEY_PENDING_DATASET,
+					    OT_SETTINGS_KEY_NETWORK_INFO,   OT_SETTINGS_KEY_PARENT_INFO,
+					    OT_SETTINGS_KEY_CHILD_INFO,     OT_SETTINGS_KEY_DAD_INFO,
+					    OT_SETTINGS_KEY_SRP_CLIENT_INFO};
+
 	reset_module();
-	fake_commissioned = true;
 	joining_forget(1000);
 	CHECK(forget_work.scheduled);
 	CHECK_EQ(forget_work.delay_ms, 1000);
-	CHECK_EQ(fake_factory_resets, 0); // not before the answer went out
+	CHECK_EQ(fake_reboots, 0); // not before the answer went out
+
+	fake_dwork_run(&forget_work); // not registered (S1 at boot): at once
+	CHECK(!fake_thread_enabled && !fake_ip6_enabled); // stopped first
+	CHECK_EQ(fake_ot_deleted_key_count, ARRAY_SIZE(expected));
+	CHECK(memcmp(fake_ot_deleted_keys, expected, sizeof(expected)) == 0);
+	for (int i = 0; i < fake_ot_deleted_key_count; i++)
+	{
+		CHECK(fake_ot_deleted_keys[i] != OT_SETTINGS_KEY_SRP_ECDSA_KEY);
+	}
+	CHECK_EQ(fake_factory_resets, 0);
+	CHECK_EQ(fake_reboots, 1);
+	CHECK_EQ(fake_ot_api_lock_depth, 0);
+}
+
+static void test_a_registered_board_unregisters_first(void)
+{
+	reset_module();
+	fake_registered = true;
+	joining_forget(1000);
+	fake_dwork_run(&forget_work);
+	CHECK_EQ(unregisters, 1);
+	CHECK_EQ(fake_reboots, 0); // the removal goes out first
+	CHECK(forget_work.scheduled);
+	CHECK_EQ(forget_work.delay_ms, UNREGISTER_WAIT_MS);
+	CHECK_EQ(fake_ot_api_lock_depth, 0);
 
 	fake_dwork_run(&forget_work);
-	CHECK_EQ(fake_factory_resets, 1);
-	CHECK_EQ(fake_ot_api_lock_depth, 0);
+	CHECK_EQ(unregisters, 1); // once
+	CHECK_EQ(fake_ot_deleted_key_count, 7);
+	CHECK_EQ(fake_reboots, 1);
 }
 
 int main(void)
@@ -102,6 +147,7 @@ int main(void)
 	RUN_TEST(test_it_tries_again_until_it_joins);
 	RUN_TEST(test_tries_slow_down_after_a_while);
 	RUN_TEST(test_a_joiner_that_cant_start_is_tried_again);
-	RUN_TEST(test_forgetting_resets_after_the_delay);
+	RUN_TEST(test_forgetting_erases_the_network_but_not_the_srp_key);
+	RUN_TEST(test_a_registered_board_unregisters_first);
 	return TEST_RESULT();
 }

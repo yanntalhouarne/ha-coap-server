@@ -477,7 +477,72 @@ otSrpClientBuffersServiceEntry *otSrpClientBuffersAllocateService(otInstance *in
 	memset(&srp_entry, 0, sizeof(srp_entry));
 	srp_entry.mService.mInstanceName = srp_entry.instance_name;
 	srp_entry.mService.mName = srp_entry.service_name;
+	/* Like OpenThread's buffers: one TXT entry, its value already encoded */
+	srp_entry.mService.mTxtEntries = &srp_entry.mTxtEntry;
+	srp_entry.mTxtEntry.mValue = srp_entry.txt;
 	return &srp_entry;
+}
+
+uint8_t *otSrpClientBuffersGetServiceEntryTxtBuffer(otSrpClientBuffersServiceEntry *entry, uint16_t *size)
+{
+	*size = sizeof(entry->txt);
+	return entry->txt;
+}
+
+otSrpClientHostInfo fake_srp_host_info;
+bool fake_srp_running;
+uint32_t fake_srp_lease;
+int fake_srp_removals;
+bool fake_srp_removal_kept_key;
+
+const otSrpClientHostInfo *otSrpClientGetHostInfo(otInstance *instance)
+{
+	(void)instance;
+	return &fake_srp_host_info;
+}
+
+bool otSrpClientIsRunning(otInstance *instance)
+{
+	(void)instance;
+	return fake_srp_running;
+}
+
+otError otSrpClientRemoveHostAndServices(otInstance *instance, bool remove_key_lease, bool send_unreg_to_server)
+{
+	(void)instance;
+	(void)send_unreg_to_server;
+	fake_srp_removals++;
+	fake_srp_removal_kept_key = !remove_key_lease;
+	return OT_ERROR_NONE;
+}
+
+void otSrpClientSetLeaseInterval(otInstance *instance, uint32_t interval)
+{
+	(void)instance;
+	fake_srp_lease = interval;
+}
+
+uint16_t fake_ot_deleted_keys[FAKE_MAX_DELETED_KEYS];
+int fake_ot_deleted_key_count;
+bool fake_ip6_enabled;
+bool fake_thread_enabled;
+
+otError otIp6SetEnabled(otInstance *instance, bool enabled)
+{
+	(void)instance;
+	fake_ip6_enabled = enabled;
+	return OT_ERROR_NONE;
+}
+
+otError otPlatSettingsDelete(otInstance *instance, uint16_t key, int index)
+{
+	(void)instance;
+	(void)index;
+	if (fake_ot_deleted_key_count < FAKE_MAX_DELETED_KEYS)
+	{
+		fake_ot_deleted_keys[fake_ot_deleted_key_count++] = key;
+	}
+	return OT_ERROR_NONE;
 }
 
 char *otSrpClientBuffersGetServiceEntryInstanceNameString(otSrpClientBuffersServiceEntry *entry, uint16_t *size)
@@ -620,6 +685,7 @@ otError otJoinerStart(otInstance *instance, const char *pskd, const char *provis
 otError otThreadSetEnabled(otInstance *instance, bool enabled)
 {
 	(void)instance;
+	fake_thread_enabled = enabled;
 	if (enabled)
 	{
 		fake_thread_enables++;
@@ -870,6 +936,15 @@ void fake_reset(void)
 	fake_srp_auto_host_address = false;
 	fake_srp_auto_start = false;
 	fake_srp_no_buffers = false;
+	memset(&fake_srp_host_info, 0, sizeof(fake_srp_host_info));
+	fake_srp_running = false;
+	fake_srp_lease = 0;
+	fake_srp_removals = 0;
+	fake_srp_removal_kept_key = false;
+	memset(fake_ot_deleted_keys, 0, sizeof(fake_ot_deleted_keys));
+	fake_ot_deleted_key_count = 0;
+	fake_ip6_enabled = true;
+	fake_thread_enabled = true;
 
 	fake_ot_api_lock_depth = 0;
 	fake_ot_api_locks = 0;

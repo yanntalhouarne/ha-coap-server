@@ -467,12 +467,35 @@ otDeviceRole otThreadGetDeviceRole(otInstance *instance);
 const char *otThreadErrorToString(otError error);
 
 /* SRP client */
-typedef struct otSrpClientHostInfo otSrpClientHostInfo;
+typedef enum
+{
+	OT_SRP_CLIENT_ITEM_STATE_TO_ADD,
+	OT_SRP_CLIENT_ITEM_STATE_ADDING,
+	OT_SRP_CLIENT_ITEM_STATE_TO_REFRESH,
+	OT_SRP_CLIENT_ITEM_STATE_REFRESHING,
+	OT_SRP_CLIENT_ITEM_STATE_TO_REMOVE,
+	OT_SRP_CLIENT_ITEM_STATE_REMOVING,
+	OT_SRP_CLIENT_ITEM_STATE_REGISTERED,
+	OT_SRP_CLIENT_ITEM_STATE_REMOVED,
+} otSrpClientItemState;
+
+typedef struct otSrpClientHostInfo
+{
+	otSrpClientItemState mState;
+} otSrpClientHostInfo;
+
+typedef struct otDnsTxtEntry
+{
+	const char *mKey;
+	const uint8_t *mValue;
+	uint16_t mValueLength;
+} otDnsTxtEntry;
 
 typedef struct otSrpClientService
 {
 	const char *mName;
 	const char *mInstanceName;
+	const otDnsTxtEntry *mTxtEntries;
 	uint8_t mNumTxtEntries;
 	uint16_t mPort;
 } otSrpClientService;
@@ -486,6 +509,8 @@ typedef void (*otSrpClientCallback)(otError error, const otSrpClientHostInfo *ho
 typedef struct otSrpClientBuffersServiceEntry
 {
 	otSrpClientService mService;
+	otDnsTxtEntry mTxtEntry;
+	uint8_t txt[64];
 	char instance_name[FAKE_SRP_STRING_SIZE];
 	char service_name[FAKE_SRP_STRING_SIZE];
 } otSrpClientBuffersServiceEntry;
@@ -496,6 +521,11 @@ extern const otSrpClientService *fake_srp_service; // last service added
 extern bool fake_srp_auto_host_address;
 extern bool fake_srp_auto_start;
 extern bool fake_srp_no_buffers;               // otSrpClientBuffersAllocateService() returns NULL
+extern otSrpClientHostInfo fake_srp_host_info;  // otSrpClientGetHostInfo()
+extern bool fake_srp_running;
+extern uint32_t fake_srp_lease;                 // otSrpClientSetLeaseInterval()
+extern int fake_srp_removals;
+extern bool fake_srp_removal_kept_key;
 
 void otSrpClientSetCallback(otInstance *instance, otSrpClientCallback callback, void *context);
 otError otSrpClientSetHostName(otInstance *instance, const char *name);
@@ -505,6 +535,30 @@ char *otSrpClientBuffersGetServiceEntryInstanceNameString(otSrpClientBuffersServ
 char *otSrpClientBuffersGetServiceEntryServiceNameString(otSrpClientBuffersServiceEntry *entry, uint16_t *size);
 otError otSrpClientAddService(otInstance *instance, otSrpClientService *service);
 void otSrpClientEnableAutoStartMode(otInstance *instance, void *callback, void *context);
+uint8_t *otSrpClientBuffersGetServiceEntryTxtBuffer(otSrpClientBuffersServiceEntry *entry, uint16_t *size);
+const otSrpClientHostInfo *otSrpClientGetHostInfo(otInstance *instance);
+bool otSrpClientIsRunning(otInstance *instance);
+otError otSrpClientRemoveHostAndServices(otInstance *instance, bool remove_key_lease, bool send_unreg_to_server);
+void otSrpClientSetLeaseInterval(otInstance *instance, uint32_t interval);
+
+/* IPv6, and OpenThread's own stored settings */
+#define OT_SETTINGS_KEY_ACTIVE_DATASET 0x0001
+#define OT_SETTINGS_KEY_PENDING_DATASET 0x0002
+#define OT_SETTINGS_KEY_NETWORK_INFO 0x0003
+#define OT_SETTINGS_KEY_PARENT_INFO 0x0004
+#define OT_SETTINGS_KEY_CHILD_INFO 0x0005
+#define OT_SETTINGS_KEY_DAD_INFO 0x0008
+#define OT_SETTINGS_KEY_SRP_ECDSA_KEY 0x000b
+#define OT_SETTINGS_KEY_SRP_CLIENT_INFO 0x000c
+#define FAKE_MAX_DELETED_KEYS 16
+
+extern uint16_t fake_ot_deleted_keys[FAKE_MAX_DELETED_KEYS]; // otPlatSettingsDelete(), in order
+extern int fake_ot_deleted_key_count;
+extern bool fake_ip6_enabled;
+extern bool fake_thread_enabled;
+
+otError otIp6SetEnabled(otInstance *instance, bool enabled);
+otError otPlatSettingsDelete(otInstance *instance, uint16_t key, int index);
 
 /* ---------------------------------------------------------------- Zephyr's OpenThread glue */
 

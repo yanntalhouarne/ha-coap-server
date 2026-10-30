@@ -76,7 +76,11 @@ class Inventory:
                     continue
             existing = self.db.device(device_id)
             name = existing["name"] if existing and existing["name"] else item.instance
-            devices.append(self._changed(self.db.upsert_device(device_id, address=item.address, name=name)))
+            fields = {"address": item.address, "name": name}
+            txt = item.txt or {}
+            if txt.get("fw"):  # newer firmware says what it runs: no need to ask it
+                fields.update(fw_version=txt["fw"], hw_version=txt.get("hw", ""))
+            devices.append(self._changed(self.db.upsert_device(device_id, **fields)))
         return [self.describe(d) for d in devices]
 
     async def add_by_address(self, address):
@@ -146,7 +150,7 @@ class Inventory:
             if diag.reset in BAD_RESETS and self.on_restart is not None:
                 self.on_restart(device, diag.reset, diag.fault)
         return dict(boots=diag.boots, reset_cause=diag.reset, fault=diag.fault, uptime_s=diag.uptime_s,
-                    role=diag.role, rloc16=diag.rloc16, parent_rloc16=diag.parent, parent_rssi=diag.rssi,
+                    role=diag.role, srp_state=diag.srp, rloc16=diag.rloc16, parent_rloc16=diag.parent, parent_rssi=diag.rssi,
                     link_quality=diag.link_quality, soil_mv=diag.soil_mv, diag_time=now, no_diag_fw="")
 
     async def refresh_all(self, concurrency=4):

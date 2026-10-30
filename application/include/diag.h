@@ -49,8 +49,9 @@ const char *diag_reset_name(enum diag_reset cause);
 void diag_link_read(otInstance *instance, struct diag_link *link);
 
 /* Writes the 'diag' payload, for example
- * "boots=12,up=3600,reset=crash,fault=3@0001a2b4,role=child,rloc=5c01,parent=5c00,rssi=-62,last_rssi=-60,lq=3,soil_mv=1696"
- * ('fault' only after a crash, the link only when attached). Returns its length. */
-size_t diag_format(char *payload, size_t size, const struct diag_link *link, int32_t soil_mv);
+ * "boots=12,up=3600,reset=crash,fault=3@0001a2b4,role=child,srp=registered,rloc=5c01,parent=5c00,rssi=-62,
+ *  last_rssi=-60,lq=3,soil_mv=1696"
+ * ('fault' only after a crash, the link only when attached; 'srp' is srp_state()). Returns its length. */
+size_t diag_format(char *payload, size_t size, const struct diag_link *link, const char *srp, int32_t soil_mv);
 
 #endif // DIAG_H_

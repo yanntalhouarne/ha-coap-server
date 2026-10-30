@@ -152,7 +152,7 @@ The credentials are stored in flash and survive resets and firmware updates. A b
 - **From the fleet manager:** a device's page, **Settings on the board**, **Forget its network…** (over the air or USB; the `hacoap` mcumgr group's command 2).
 - Or erase the whole chip over SWD.
 
-Only OpenThread's data is erased (its `ot/` settings): the board's own settings and boot count stay.
+Only the network is erased (OpenThread's datasets and network, parent and child info): the board's own settings, boot count and SRP key stay, so it takes back its name `ha-coap-<ID>` on the same border router (see [SRP registration](#srp-registration)). When attached, it first removes its SRP registration, so its name vanishes from the LAN at once.
 
 ## 📨 CoAP API
 
@@ -165,7 +165,7 @@ All resources are on UDP port 5683 at the device's IPv6 address. Payloads are ra
 | `pump` | GET, confirmable PUT | `'1'` start, `'0'` stop | 1 byte: 1 while the pump runs, else 0 |
 | `pumpdc` | GET, confirmable PUT | One ASCII digit: the pump run time in seconds (1 to `CONFIG_HACOAP_PUMP_MAX_DURATION`) | 1 byte: the run time in use. Out-of-range values keep the current one. Kept across resets (the board's `pump_s` setting). |
 | `ping` | PUT | `'1'` beep, `'0'` quiet | none (2.04 Changed) |
-| `diag` | GET | — | ASCII `key=value` pairs, comma-separated: `boots` (since its flash was erased), `up` (seconds), `reset` (why it last restarted: `power`, `pin`, `soft`, `watchdog`, `lockup`, `crash` or `other`), `fault` (after a crash: `<reason>@<address>`), `role`, and when attached `rloc` (its short address), `parent`, `rssi` and `last_rssi` (dBm), `lq` (0 to 3), then `soil_mv` (the soil sensor's output, -1 if not read). For example `boots=12,up=3600,reset=power,role=child,rloc=5c01,parent=5c00,rssi=-62,last_rssi=-60,lq=3,soil_mv=1696`. Older firmware doesn't answer it. See [Restarts and crashes](#restarts-and-crashes). |
+| `diag` | GET | — | ASCII `key=value` pairs, comma-separated: `boots` (since its flash was erased), `up` (seconds), `reset` (why it last restarted: `power`, `pin`, `soft`, `watchdog`, `lockup`, `crash` or `other`), `fault` (after a crash: `<reason>@<address>`), `role`, `srp` (its name's registration: `registered`, `pending`, `failed` or `off`), and when attached `rloc` (its short address), `parent`, `rssi` and `last_rssi` (dBm), `lq` (0 to 3), then `soil_mv` (the soil sensor's output, -1 if not read). For example `boots=12,up=3600,reset=power,role=child,srp=registered,rloc=5c01,parent=5c00,rssi=-62,last_rssi=-60,lq=3,soil_mv=1696`. Older firmware doesn't answer it. See [Restarts and crashes](#restarts-and-crashes). |
 | `log` | GET, with the query `from=<offset>` | — | ASCII `<boot id> <start>` and a line feed, then the log output from byte `start` (at most 512 bytes in all). Only with `CONFIG_HACOAP_REMOTE_LOG`; otherwise 4.04 Not Found. See [Logs](#logs). |
 
 `data` returns the latest readings without waiting on the sensors. They are sampled at boot and then every `CONFIG_HACOAP_SENSOR_SAMPLE_PERIOD_S` (900 s by default), so a reading can be up to one period old.
@@ -182,10 +182,15 @@ coap-client -m put -e 1 coap://[fd49:969:3c3c:1:88a2:4c28:69ec:34f7]/ping
 As a sleepy end device, the board picks up messages from its parent once per poll period (`CONFIG_OPENTHREAD_POLL_PERIOD`, 3 s), so responses can take up to 3 seconds. The integration waits 10 s for a reply, so this is within its limits. While mcumgr is in use, or someone reads `log`, the device polls every 100 ms instead (see [Keeping updates compatible](#keeping-updates-compatible)).
 
 ### SRP registration
+How Home Assistant and the fleet manager find a board. A Thread board doesn't answer mDNS itself (multicast is costly on the mesh, and a sleepy board would miss most queries). Instead, once attached, it **registers** its name and service with the SRP server on the border router (Service Registration Protocol), in one unicast message, and the border router answers mDNS on the LAN for it.
+- The registration is a **lease**: the border router advertises the board for `CONFIG_HACOAP_SRP_LEASE_S` (30 minutes) after its last registration, and the board renews it before then. A board that's gone (dead battery, moved) disappears from the LAN within that time. (OpenThread's default is 2 hours.)
+- The board signs its registrations with its own **key**, kept in flash. The border router keeps the name for that key for 14 days after the last registration (the key lease), so nothing else can take it over.
+- Its **TXT records** say what it is: `id` (device ID), `fw` (git commit), `hw` (board revision) and `ver` (image version, such as `1.0.0+0`). The fleet manager's **Find devices** reads them; Home Assistant ignores them.
+- `diag` reports the registration's state (`srp=registered`, `pending`, `failed`, or `off` before the board is on a network), and the fleet manager shows it on the board's page (Health, **Its name**).
 - The SRP host name and service instance are `ha-coap-<suffix>`, and the service is `_ot._udp`. The integration uses the part after the `-` as the device's unique ID.
 - The suffix is the factory device ID by default (`CONFIG_HACOAP_SRP_SUFFIX_DEVICE_ID`). It can instead be a random number (`_SUFFIX_RANDOM`), a fixed ID (`_SUFFIX_MANUAL` with `CONFIG_HACOAP_SRP_MANUAL_ID`) or nothing (`_SUFFIX_NONE`, one device per network only). The prefixes are `CONFIG_HACOAP_SRP_HOSTNAME` and `CONFIG_HACOAP_SRP_SERVICE_INSTANCE`.
 - The SRP server rejects duplicate host names, so every device needs a unique suffix.
-- OpenThread stores the SRP key in flash. If a board is fully erased, its new key no longer matches the server's record of that host name, and registration fails until the old entry expires or is removed on the server.
+- OpenThread stores the SRP key in flash. If a board is fully erased (SWD, **Erase everything**), its new key no longer matches the border router's record of that host name, and registration fails (`srp=failed`, blue flashes without the three beeps) until the old entry's key lease ends: up to 14 days after its last registration. **Forgetting the network** (S1 at boot, or the fleet manager) keeps the key: the board removes its registration first (its name vanishes from the LAN at once) and takes its name back when it joins again.
 
 ## 💡 LEDs and sounds
 
@@ -241,7 +246,7 @@ A `pumpdc` PUT changes `pump_s` too, so the run time Home Assistant sets is now 
 - command 0, read: `{"settings": {"<name>": [value, default, min, max], ...}, "soil_mv": <latest soil sensor output>, "samples": <samples since boot>}`
 - command 0, write: `{"set": {"<name>": value, ...}}`: all of them or none (`MGMT_ERR_EINVAL` for an unknown name, a value out of range, or dry at or below wet); answers like a read
 - command 1, write: `{}`: takes a sensor sample now (for calibrating); answers `{"samples": <the count before it>}`
-- command 2, write: `{}`: forgets the Thread network and resets a second later, to join another one (see [Joining a Thread network](#-joining-a-thread-network)); answers `{}` first
+- command 2, write: `{}`: forgets the Thread network (keeping its SRP key, and removing its registration first) and resets, to join another one (see [Joining a Thread network](#-joining-a-thread-network)); answers `{}` first
 
 A change applies at once, and is written to flash from the system work queue. Erasing the board's flash (SWD, **Erase everything**) brings back the defaults.
 
@@ -423,7 +428,7 @@ The SDK comes from forks of `sdk-nrf` and `sdk-zephyr`, pinned to exact commits 
 | `region 'FLASH' overflowed` | The image doesn't fit the 483 KB application slot. `-Og` (`overlay-debug.conf`) and logging don't fit together. |
 | The device doesn't join (red + green flashes) | Start the commissioner on the border router with the PSKd the firmware was built with, for 300 s; the board tries again within 2 minutes. Still no join: the PSKd differs, or the board already has another network (make it forget it, see [Joining a Thread network](#-joining-a-thread-network)) |
 | An update uploads fine, but the board keeps running the old firmware | The image is signed with a different key than the board's bootloader (for example, built on a PC without your key, or taken from CI). Rebuild with your key. |
-| Blue flashes, and no three beeps | SRP registration isn't succeeding: check that the border router is running, and look for a duplicate host name |
+| Blue flashes, and no three beeps | SRP registration isn't succeeding (the fleet manager shows `failed` under Health, **Its name**): check that the border router is running, and look for a duplicate host name. After a full chip erase, the board has a new SRP key and the border router keeps its name for the old one for up to 14 days (see [SRP registration](#srp-registration)) |
 | A new board doesn't boot after the first flash | Try with DC/DC disabled (see [Board notes](#board-notes)) |
 | mcumgr over UDP times out | Check the route to the Thread network from the PC (`ping -6 <device address>`), and that the device is attached |
 

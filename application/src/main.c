@@ -166,7 +166,7 @@ static size_t on_diag_get(char *payload, size_t size)
 	struct diag_link link;
 
 	diag_link_read(openthread_get_default_instance(), &link);
-	return diag_format(payload, size, &link, sensors_get().soil_mv);
+	return diag_format(payload, size, &link, srp_state(openthread_get_default_instance()), sensors_get().soil_mv);
 }
 
 #ifdef CONFIG_HACOAP_REMOTE_LOG

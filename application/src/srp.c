@@ -3,7 +3,9 @@
  *
  * srp.c
  *
- * SRP client: advertises the CoAP service as "<instance>._ot._udp" on host "<hostname>".
+ * SRP client: advertises the CoAP service as "<instance>._ot._udp" on host "<hostname>",
+ * with TXT records saying what it is: "id=<device ID>", "fw=<git commit>", "hw=<board
+ * revision>" and "ver=<image version>". The border router answers mDNS for it on the LAN.
  */
 
 #include <openthread/srp_client.h>
@@ -13,6 +15,8 @@
 #include <zephyr/logging/log.h>
 #include <zephyr/random/rand32.h>
 #include <stdio.h>
+#include <string.h>
+#include <version.h>
 
 #include "coap_resources.h"
 #include "srp.h"
@@ -26,6 +30,8 @@ static char host_name[SRP_NAME_MAX_SIZE];
 static char instance_name[SRP_NAME_MAX_SIZE];
 
 static srp_registered_cb_t registered_cb;
+static bool started;
+static otError last_error; // of the last registration or refresh (OT_ERROR_NONE: fine, or none yet)
 
 /* Builds "<prefix>-<suffix>" (or just "<prefix>" without a suffix) into 'buf'. */
 static void name_build(char *buf, size_t size, const char *prefix, const char *suffix)
@@ -86,6 +92,7 @@ static void on_srp_client_updated(otError aError, const otSrpClientHostInfo *aHo
 	ARG_UNUSED(aContext);
 
 	LOG_INF("SRP callback: %s", otThreadErrorToString(aError));
+	last_error = aError;
 
 	if ((aError == OT_ERROR_NONE) && (registered_cb != NULL))
 	{
@@ -93,11 +100,69 @@ static void on_srp_client_updated(otError aError, const otSrpClientHostInfo *aHo
 	}
 }
 
+/* Encodes the TXT records into 'buf' (each: a length byte, then "key=value"). Returns the length.
+ * A record that doesn't fit is left out. */
+static uint16_t txt_build(uint8_t *buf, uint16_t size, const char *device_id)
+{
+	const char *const keys[] = {"id", "fw", "hw", "ver"};
+	const char *const values[] = {
+		device_id,
+		GIT_COMMIT_HASH,
+		CONFIG_HACOAP_HW_VERSION,
+#ifdef CONFIG_MCUBOOT_IMAGE_VERSION
+		CONFIG_MCUBOOT_IMAGE_VERSION,
+#else
+		"",
+#endif
+	};
+	char record[64];
+	uint16_t length = 0U;
+	int written;
+
+	for (size_t i = 0U; i < ARRAY_SIZE(keys); i++)
+	{
+		written = snprintf(record, sizeof(record), "%s=%s", keys[i], values[i]);
+		if ((written <= 0) || ((size_t)written >= sizeof(record)) || (length + 1U + (uint16_t)written > size))
+		{
+			LOG_WRN("SRP TXT record '%s' left out", keys[i]);
+			continue;
+		}
+		buf[length++] = (uint8_t)written;
+		memcpy(&buf[length], record, (size_t)written);
+		length += (uint16_t)written;
+	}
+	return length;
+}
+
+const char *srp_state(otInstance *instance)
+{
+	if (!started)
+	{
+		return "off";
+	}
+	if (otSrpClientGetHostInfo(instance)->mState == OT_SRP_CLIENT_ITEM_STATE_REGISTERED)
+	{
+		return "registered";
+	}
+	return (last_error != OT_ERROR_NONE) ? "failed" : "pending";
+}
+
+bool srp_unregister(otInstance *instance)
+{
+	if (!started || !otSrpClientIsRunning(instance))
+	{
+		return false;
+	}
+	/* Keep the key lease: the name stays this device's, for when it registers again. */
+	return otSrpClientRemoveHostAndServices(instance, false, true) == OT_ERROR_NONE;
+}
+
 void srp_start(otInstance *instance, const char *device_id, srp_registered_cb_t on_registered)
 {
 	otSrpClientBuffersServiceEntry *entry;
 	uint16_t size;
 	char *string;
+	uint8_t *txt;
 
 	registered_cb = on_registered;
 	names_init(device_id);
@@ -123,7 +188,9 @@ void srp_start(otInstance *instance, const char *device_id, srp_registered_cb_t 
 	snprintf(string, size, "%s", instance_name);
 	string = otSrpClientBuffersGetServiceEntryServiceNameString(entry, &size);
 	snprintf(string, size, "%s", CONFIG_HACOAP_SRP_SERVICE_NAME);
-	entry->mService.mNumTxtEntries = 0;
+	txt = otSrpClientBuffersGetServiceEntryTxtBuffer(entry, &size);
+	entry->mTxtEntry.mValueLength = txt_build(txt, size, device_id);
+	entry->mService.mNumTxtEntries = 1;
 	entry->mService.mPort = COAP_PORT;
 
 	if (otSrpClientAddService(instance, &entry->mService) != OT_ERROR_NONE)
@@ -135,6 +202,10 @@ void srp_start(otInstance *instance, const char *device_id, srp_registered_cb_t 
 		LOG_INF("Adding SRP client service...");
 	}
 
+	/* A short lease, so a board that's gone disappears from the LAN within this time. */
+	otSrpClientSetLeaseInterval(instance, CONFIG_HACOAP_SRP_LEASE_S);
+
 	/* The client then (re)registers on its own whenever a server is available. */
 	otSrpClientEnableAutoStartMode(instance, NULL, NULL);
+	started = true;
 }

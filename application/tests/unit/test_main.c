@@ -238,9 +238,15 @@ void diag_link_read(otInstance *instance, struct diag_link *link)
 	*link = (struct diag_link){.role = "child", .attached = true, .rloc16 = 0x5c01};
 }
 
-size_t diag_format(char *payload, size_t size, const struct diag_link *link, int32_t soil_mv)
+size_t diag_format(char *payload, size_t size, const struct diag_link *link, const char *srp, int32_t soil_mv)
 {
-	return (size_t)snprintf(payload, size, "rloc=%04x,soil_mv=%d", link->rloc16, (int)soil_mv);
+	return (size_t)snprintf(payload, size, "srp=%s,rloc=%04x,soil_mv=%d", srp, link->rloc16, (int)soil_mv);
+}
+
+const char *srp_state(otInstance *instance)
+{
+	(void)instance;
+	return "registered";
 }
 
 int coap_resources_init(const struct coap_resources_handlers *handlers)
@@ -386,8 +392,8 @@ static void test_diag_reports_the_link_and_the_soil_voltage(void)
 	reset_module();
 	fake_mod.sensors.soil_mv = 1696;
 	length = on_diag_get(payload, sizeof(payload));
-	CHECK_EQ(length, 22);
-	CHECK(memcmp(payload, "rloc=5c01,soil_mv=1696", 22) == 0);
+	CHECK_EQ(length, 37);
+	CHECK(memcmp(payload, "srp=registered,rloc=5c01,soil_mv=1696", 37) == 0);
 }
 
 static void test_pump_put_only_acts_on_a_change(void)

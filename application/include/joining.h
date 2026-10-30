@@ -21,9 +21,10 @@ void joining_start(void);
 /* True once the device has network credentials (it joined, now or earlier). */
 bool joining_has_network(void);
 
-/* Forgets the Thread network (only OpenThread's own data: the device's settings stay) and
- * resets, after 'delay_ms' (so that an answer to the request can go out first). The device
- * then boots without a network, and joins again. Callable from any thread. */
+/* Forgets the Thread network and resets, after 'delay_ms' (so that an answer to the request
+ * can go out first), and after removing its SRP registration when attached. Only the network
+ * is erased: the device's settings and its SRP key stay. It then boots without a network, and
+ * joins again. Callable from any thread. */
 void joining_forget(int delay_ms);
 
 #endif // JOINING_H_

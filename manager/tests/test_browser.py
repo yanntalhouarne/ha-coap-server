@@ -71,7 +71,7 @@ def page(tmp_path_factory):
     services.db.add_activity("1a2b3c4d", "pump", "Pump started from the app (3 s)", when=now - 12 * 3600)
     # What the board reports about itself ('diag'): a watchdog restart 6 hours ago
     services.db.upsert_device("1a2b3c4d", boots=5, reset_cause="watchdog", uptime_s=6 * 3600, role="child",
-                              rloc16="0x5c01", parent_rloc16="0x6800", parent_rssi=-64, link_quality=3, soil_mv=1650,
+                              rloc16="0x5c01", parent_rloc16="0x6800", parent_rssi=-64, link_quality=3, soil_mv=1650, srp_state="failed",
                               diag_time=now)
     services.db.add_activity("1a2b3c4d", "restart", "Restarted: the watchdog: it stopped responding",
                              when=now - 6 * 3600)
@@ -196,6 +196,7 @@ def test_device_page(page):
     assert "chart-event event-restart" in dom                         # the restart on the charts
     assert "Read from the board" in dom                               # its settings
     assert "Forget its network…" in dom
+    assert "the border router refuses it" in dom                     # its name isn't registered
 
 
 def test_floorplan_view(page):

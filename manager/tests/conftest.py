@@ -6,7 +6,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from hacoap_manager import mcuboot  # noqa: E402
-from hacoap_manager.simdevice import SimulatedDevice, SimulatorServer  # noqa: E402
+from hacoap_manager.simdevice import SimulatedDevice, SimulatedSrpServer, SimulatorServer  # noqa: E402
 
 OLD_IMAGE = mcuboot.build_image(b"old firmware " * 500, (1, 0, 0, 0))
 NEW_IMAGE = mcuboot.build_image(b"new firmware " * 3000, (1, 1, 0, 0))
@@ -20,6 +20,8 @@ async def start_sim():
     servers = []
 
     async def start(host="127.0.0.1", smp_port=0, coap_port=0, **fields):
+        # Each test's own border router: the boards of different tests share names, not keys
+        fields.setdefault("srp_server", SimulatedSrpServer())
         device = SimulatedDevice.with_image(OLD_IMAGE, **fields)
         server = await SimulatorServer(device, host, smp_port, coap_port).start()
         servers.append(server)

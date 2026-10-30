@@ -1,5 +1,6 @@
 """Finds ha-coap devices on the network: the border router publishes their SRP
-registrations (service _ot._udp, instances ha-coap-<device ID>) over mDNS/DNS-SD."""
+registrations (service _ot._udp, instances ha-coap-<device ID>) over mDNS/DNS-SD, with the
+TXT records newer firmware registers: id, fw (git commit), hw (board revision), ver (image)."""
 
 import asyncio
 import ipaddress
@@ -14,6 +15,13 @@ class Found:
     instance: str   # ha-coap-1a2b3c4d
     device_id: str  # 1a2b3c4d, or "" without a suffix
     address: str    # the device's IPv6 address
+    txt: dict = None  # its TXT records, as text: {"fw": "f83f898", "hw": "v2.0", ...}
+
+
+def txt_records(properties):
+    """The TXT records as text (zeroconf gives bytes, and None for a flag without a value)."""
+    return {key.decode(errors="replace"): (value or b"").decode(errors="replace")
+            for key, value in (properties or {}).items() if isinstance(key, bytes)}
 
 
 def device_id_from_instance(instance):
@@ -77,7 +85,8 @@ async def discover(timeout=4.0):
                 continue
             address = pick_address(info.parsed_addresses(IPVersion.All), info.properties)
             if address:
-                found.append(Found(instance, device_id_from_instance(instance), address))
+                txt = txt_records(info.properties)
+                found.append(Found(instance, txt.get("id") or device_id_from_instance(instance), address, txt))
         return found
     finally:
         await aiozc.async_close()

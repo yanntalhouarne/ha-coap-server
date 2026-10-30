@@ -22,7 +22,32 @@ static void on_registered(void)
 static void start(const char *device_id)
 {
 	registrations = 0;
+	started = false;
+	last_error = OT_ERROR_NONE;
 	srp_start(&fake_ot_instance, device_id, on_registered);
+}
+
+/* The TXT records, decoded: "k=v;k=v" */
+static const char *txt_records(void)
+{
+	static char text[128];
+	const otDnsTxtEntry *entry = fake_srp_service->mTxtEntries;
+	size_t out = 0U;
+
+	for (uint16_t i = 0U; i < entry->mValueLength;)
+	{
+		uint8_t length = entry->mValue[i++];
+
+		if (out > 0U)
+		{
+			text[out++] = ';';
+		}
+		memcpy(&text[out], &entry->mValue[i], length);
+		out += length;
+		i += length;
+	}
+	text[out] = '\0';
+	return text;
 }
 
 static void test_names_end_with_the_device_id(void)
@@ -44,8 +69,45 @@ static void test_service_advertises_the_coap_port(void)
 	if (fake_srp_service != NULL)
 	{
 		CHECK_EQ(fake_srp_service->mPort, 5683);
-		CHECK_EQ(fake_srp_service->mNumTxtEntries, 0);
+		CHECK_EQ(fake_srp_service->mNumTxtEntries, 1);
 	}
+}
+
+static void test_txt_records_say_what_it_is(void)
+{
+	start("1a2b3c4d");
+	CHECK_STR(txt_records(), "id=1a2b3c4d;fw=" GIT_COMMIT_HASH ";hw=" CONFIG_HACOAP_HW_VERSION ";ver=");
+}
+
+static void test_a_short_lease(void)
+{
+	start("1a2b3c4d");
+	CHECK_EQ(fake_srp_lease, CONFIG_HACOAP_SRP_LEASE_S);
+}
+
+static void test_registration_state(void)
+{
+	started = false;
+	CHECK_STR(srp_state(&fake_ot_instance), "off"); // not attached yet
+	start("1a2b3c4d");
+	CHECK_STR(srp_state(&fake_ot_instance), "pending");
+	fake_srp_callback(OT_ERROR_FAILED, NULL, NULL, NULL, NULL);
+	CHECK_STR(srp_state(&fake_ot_instance), "failed");
+	fake_srp_host_info.mState = OT_SRP_CLIENT_ITEM_STATE_REGISTERED;
+	fake_srp_callback(OT_ERROR_NONE, NULL, NULL, NULL, NULL);
+	CHECK_STR(srp_state(&fake_ot_instance), "registered");
+}
+
+static void test_unregistering_keeps_the_key(void)
+{
+	started = false;
+	CHECK(!srp_unregister(&fake_ot_instance)); // never registered
+	start("1a2b3c4d");
+	CHECK(!srp_unregister(&fake_ot_instance)); // client not running
+	fake_srp_running = true;
+	CHECK(srp_unregister(&fake_ot_instance));
+	CHECK_EQ(fake_srp_removals, 1);
+	CHECK(fake_srp_removal_kept_key);
 }
 
 static void test_client_registers_on_its_own(void)
@@ -91,6 +153,10 @@ static void test_no_service_buffers_means_no_service(void)
 
 int main(void)
 {
+	RUN_TEST(test_txt_records_say_what_it_is);
+	RUN_TEST(test_a_short_lease);
+	RUN_TEST(test_registration_state);
+	RUN_TEST(test_unregistering_keeps_the_key);
 	RUN_TEST(test_names_end_with_the_device_id);
 	RUN_TEST(test_service_advertises_the_coap_port);
 	RUN_TEST(test_client_registers_on_its_own);

@@ -21,6 +21,7 @@ import argparse
 import asyncio
 import hashlib
 import math
+import os
 import random
 import struct
 import time
@@ -43,6 +44,8 @@ RC_OK, RC_EUNKNOWN, RC_EINVAL, RC_ENOTSUP, RC_EBADSTATE = 0, 1, 3, 8, 6
 LOG_KEEP = 4096
 LOG_PAYLOAD_MAX = coap.LOG_PAYLOAD_MAX
 SIM_SAMPLE_S = 20      # the sensors are sampled every 15 min on a board; faster here
+SRP_LEASE_S = 1800     # CONFIG_HACOAP_SRP_LEASE_S
+SRP_KEY_LEASE_S = 14 * 86400  # OpenThread's default: a name stays its key's this long
 SIM_FAST_POLL_S = 30   # CONFIG_HACOAP_MCUMGR_POLL_TIMEOUT_S
 
 # The firmware's settings (application/src/device_settings.c): name: (default, min, max)
@@ -65,6 +68,36 @@ class Slot:
     @property
     def info(self):
         return mcuboot.parse_image(self.image) if self.image else None
+
+
+class SimulatedSrpServer:
+    """The border router's SRP server, for the simulated boards: it advertises a host name for
+    its lease, and keeps the name for the key that registered it for the key lease (14 days),
+    so a registration of the same name with another key is refused."""
+
+    def __init__(self):
+        self.hosts = {}  # name: {"key", "expires", "key_expires", "txt"}
+
+    def register(self, name, key, txt):
+        now = time.time()
+        host = self.hosts.get(name)
+        if host is not None and host["key"] != key and now < host["key_expires"]:
+            return False
+        self.hosts[name] = {"key": key, "expires": now + SRP_LEASE_S, "key_expires": now + SRP_KEY_LEASE_S, "txt": txt}
+        return True
+
+    def unregister(self, name, key):
+        """Removes the name from the LAN at once; the key keeps it (the firmware keeps its key lease)."""
+        host = self.hosts.get(name)
+        if host is not None and host["key"] == key:
+            host["expires"] = 0
+
+    def advertised(self, name):
+        host = self.hosts.get(name)
+        return host is not None and time.time() < host["expires"]
+
+
+SRP_SERVER = SimulatedSrpServer()  # the simulated network's border router
 
 
 @dataclass
@@ -94,6 +127,11 @@ class SimulatedDevice:
     fault: str = ""
     samples: int = 1
     settings: dict = field(default_factory=lambda: {name: values[0] for name, values in SETTINGS.items()})
+    srp_server: SimulatedSrpServer = None   # SRP_SERVER unless given
+    srp_key: str = field(default_factory=lambda: os.urandom(8).hex())  # kept when it forgets its network
+    srp_state: str = "off"
+    forget_wipes_srp_key: bool = False      # as the firmware did before: a new key after forgetting
+    on_srp_change: object = None            # called with (device, advertised) when it (un)registers
     _upload: bytearray = None
     _upload_size: int = 0
     _rebooting_until: float = 0.0
@@ -106,12 +144,45 @@ class SimulatedDevice:
     _last_log_read: float = 0.0
 
     def __post_init__(self):
+        if self.srp_server is None:
+            self.srp_server = SRP_SERVER
         self._boot_log()
+        self.srp_register()
+
+    # ------------------------------------------------------------ SRP (application/src/srp.c)
+
+    @property
+    def srp_name(self):
+        return f"ha-coap-{self.device_id}"
+
+    def txt(self):
+        """The TXT records the firmware registers."""
+        return {"id": self.device_id, "fw": self.fw_version, "hw": self.hw_version, "ver": self.image_version()}
+
+    def image_version(self):
+        info = self.slots[0].info
+        return info.version if info else ""
+
+    def srp_register(self):
+        ok = self.srp_server.register(self.srp_name, self.srp_key, self.txt())
+        self.srp_state = "registered" if ok else "failed"
+        self.log("SRP callback: OK" if ok else "SRP callback: Duplicated")
+        if self.on_srp_change is not None:
+            self.on_srp_change(self, ok)
+
+    def srp_unregister(self):
+        self.srp_server.unregister(self.srp_name, self.srp_key)
+        self.srp_state = "off"
+        if self.on_srp_change is not None:
+            self.on_srp_change(self, False)
 
     @classmethod
     def with_image(cls, image, **kwargs):
         device = cls(**kwargs)
         device.slots[0] = Slot(image=image, confirmed=True, permanent=True)
+        host = device.srp_server.hosts.get(device.srp_name)
+        if host is not None and host["key"] == device.srp_key:
+            host["txt"] = device.txt()  # registered at creation, before it had its image
         return device
 
     @property
@@ -166,7 +237,7 @@ class SimulatedDevice:
             self.slots = [Slot(image=secondary.image, confirmed=True, permanent=True),
                           Slot(image=primary.image)]
 
-    def reset(self, cause="soft", fault=""):
+    def reset(self, cause="soft", fault="", register=True):
         self.resets += 1
         self.boot()
         self._rebooting_until = asyncio.get_running_loop().time() + self.reboot_s
@@ -174,13 +245,21 @@ class SimulatedDevice:
         self.reset_cause, self.fault = cause, fault
         self.samples = 1
         self._boot_log()
+        if register:
+            self.srp_register()  # with the same key: its name again
 
     def forget_network(self, rejoin_s=3.0):
-        """Forgets its network and resets; it answers again once it 'joined' again (as if a
-        commissioner accepted it at once)."""
+        """Forgets its network and resets (application/src/joining.c): it removes its SRP
+        registration first, keeps its SRP key, and answers again once it 'joined' again (as if a
+        commissioner accepted it at once), registering its name again."""
+        self.log("Forgetting the Thread network: removing the SRP registration first")
+        self.srp_unregister()
+        if self.forget_wipes_srp_key:
+            self.srp_key = os.urandom(8).hex()
         self.log("Forgetting the Thread network, then resetting", level="wrn")
-        self.reset()
+        self.reset(register=False)
         self._rebooting_until = asyncio.get_running_loop().time() + rejoin_s
+        asyncio.get_running_loop().call_later(rejoin_s, self.srp_register)
 
     def crash(self, reason=3, address=0x0001A2B4):
         """A fatal error: the board records it and resets (application/src/diag.c)."""
@@ -193,7 +272,8 @@ class SimulatedDevice:
         text = f"boots={self.boots},up={int(time.time() - self._booted)},reset={self.reset_cause}"
         if self.fault:
             text += f",fault={self.fault}"
-        text += f",role=child,rloc={self.rloc16:04x},parent={self.parent_rloc16:04x},rssi=-62,last_rssi=-60,lq=3"
+        text += (f",role=child,srp={self.srp_state},rloc={self.rloc16:04x},parent={self.parent_rloc16:04x},"
+                 f"rssi=-62,last_rssi=-60,lq=3")
         return (text + f",soil_mv={self.soil_mv()}").encode()
 
     def _settings_response(self):
@@ -247,7 +327,6 @@ class SimulatedDevice:
         self.log(f"hostname is: ha-coap-{self.device_id}")
         self.log(f"service instance is: ha-coap-{self.device_id}")
         self.log("Adding SRP client service...")
-        self.log("SRP callback: OK")
         self._sample_log()
 
     def _sample_log(self):
@@ -502,32 +581,52 @@ class SimulatorServer:
         await self.stop()
 
 
-async def announce(device_id, host, coap_port):
+async def announce(device_id, host, coap_port, txt=None):
     """Announces the device over mDNS as ha-coap-<id>._ot._udp, like a real board's border
-    router does, with a TXT flag that lets discovery accept a loopback address."""
-    aiozc = await announce_all([(device_id, host, coap_port)])
+    router does, with its TXT records and a TXT flag that lets discovery accept a loopback address."""
+    aiozc = await announce_all([(device_id, host, coap_port, txt)])
     print(f"Announced over mDNS as ha-coap-{device_id}._ot._udp.local.")
     return aiozc
 
 
-async def announce_all(devices):
-    """Announces several devices, given as (device_id, host, coap_port). Returns the
-    AsyncZeroconf to close when done."""
+def service_info(device_id, host, coap_port, txt=None):
     import socket
 
     from zeroconf import ServiceInfo
+
+    family = socket.AF_INET6 if ":" in host else socket.AF_INET
+    return ServiceInfo("_ot._udp.local.", f"ha-coap-{device_id}._ot._udp.local.",
+                       addresses=[socket.inet_pton(family, host)], port=coap_port,
+                       properties={**(txt or {}), "sim": "1"}, server=f"ha-coap-{device_id}.local.")
+
+
+async def announce_all(devices):
+    """Announces several devices, given as (device_id, host, coap_port[, txt]). Returns the
+    AsyncZeroconf to close when done."""
     from zeroconf.asyncio import AsyncZeroconf
 
     aiozc = AsyncZeroconf()
     registrations = []
-    for device_id, host, coap_port in devices:
-        family = socket.AF_INET6 if ":" in host else socket.AF_INET
-        info = ServiceInfo("_ot._udp.local.", f"ha-coap-{device_id}._ot._udp.local.",
-                           addresses=[socket.inet_pton(family, host)], port=coap_port,
-                           properties={"sim": "1"}, server=f"ha-coap-{device_id}.local.")
+    for device_id, host, coap_port, *txt in devices:
+        info = service_info(device_id, host, coap_port, txt[0] if txt else None)
         registrations.append(await aiozc.async_register_service(info))
     await asyncio.gather(*registrations)  # registered together: each one probes for about a second
     return aiozc
+
+
+def follow_srp(aiozc, server):
+    """Keeps a simulated device's mDNS announcement in step with its SRP registration, as the
+    border router does: gone when it unregisters (or is refused), back when it registers."""
+    def changed(device, advertised):
+        info = service_info(device.device_id, server.host, server.coap_port, device.txt())
+        if advertised:
+            asyncio.ensure_future(aiozc.async_update_service(info) if changed.shown
+                                  else aiozc.async_register_service(info))
+        elif changed.shown:
+            asyncio.ensure_future(aiozc.async_unregister_service(info))
+        changed.shown = advertised
+    changed.shown = server.device.srp_state == "registered"
+    server.device.on_srp_change = changed
 
 
 def fleet(count):
@@ -589,10 +688,14 @@ def main():
             announcement = None
             if not args.no_mdns:
                 if len(servers) == 1:
-                    announcement = await announce(first.device.device_id, first.host, first.coap_port)
+                    announcement = await announce(first.device.device_id, first.host, first.coap_port,
+                                                  first.device.txt())
                 else:
-                    announcement = await announce_all([(s.device.device_id, s.host, s.coap_port) for s in servers])
+                    announcement = await announce_all([(s.device.device_id, s.host, s.coap_port, s.device.txt())
+                                                       for s in servers])
                     print("Announced over mDNS as ha-coap-<ID>._ot._udp.local., for each device.")
+                for server in servers:
+                    follow_srp(announcement, server)
             border = None
             if args.border_router:
                 from .simborder import SimulatedBorderRouter, scenario
