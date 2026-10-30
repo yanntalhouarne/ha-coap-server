@@ -46,7 +46,8 @@ export function renderWall() {
   document.getElementById('wall-grid').replaceChildren(...plants.map((p) => {
     const soil = p.soil_moisture;
     const fill = soil === null || soil === undefined ? 0 : Math.max(0, Math.min(100, soil));
-    return h('div', { class: `wall-card${p.needs_water ? ' thirsty' : ''}${p.online ? '' : ' offline'}` },
+    return h('a', { class: `wall-card${p.needs_water ? ' thirsty' : ''}${p.online ? '' : ' offline'}`,
+      href: `#device/${encodeURIComponent(p.device_id)}`, title: `Open ${p.name}` },
       p.photo ? h('img', { class: 'wall-photo', src: photoUrl(p), alt: '' })
         : h('div', { class: 'wall-photo empty' }, svg('svg', { viewBox: '0 0 512 512' }, svg('use', { href: '#hacoap-glyph' }))),
       h('div', { class: 'wall-body' },
