@@ -225,3 +225,16 @@ async def test_removing_the_simulated_boards(client, services):
     assert sorted(removed) == ["aaaa0001", "aaaa0002"]
     assert [d["device_id"] for d in services.db.devices()] == ["bbbb0001"]
     assert services.db.readings("aaaa0001", 0) == [] and services.db.recent_activity("aaaa0001", "restart", 5) == []
+
+
+async def test_the_pump_run_time_is_remembered(client, services, start_sim):
+    server = await start_sim(dynamic=False)
+    device = await add_board(client, services, server)
+    assert device["pump_s"] is None  # not read yet
+    state = (await client.post("/api/devices/1a2b3c4d/pump", json={"seconds": 5}, headers=CHANGE)).json()
+    assert state["duration"] == 5 and server.device.pump_duration == 5
+    assert (await client.get("/api/devices/1a2b3c4d/details")).json()["device"]["pump_s"] == 5
+
+    # Changed as a setting: the record follows
+    await client.put("/api/devices/1a2b3c4d/board-settings", json={"values": {"pump_s": 7}}, headers=CHANGE)
+    assert services.db.device("1a2b3c4d")["pump_s"] == 7

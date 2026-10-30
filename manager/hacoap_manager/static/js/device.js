@@ -149,16 +149,23 @@ export function renderDeviceFirmware(details) {
 export function renderDeviceControls(device) {
   const id = encodeURIComponent(device.device_id);
   const result = h('div', { class: 'small text-body-secondary mt-2' });
+  const known = device.pump_s !== null && device.pump_s !== undefined;
   const show = (state) => { result.textContent = `Pump ${state.running ? 'running' : 'off'} · run time ${state.duration} s`; };
-  const seconds = h('select', { class: 'form-select form-select-sm w-auto' },
-    [1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) => h('option', { value: n }, `${n} s`)));
+  // The run time the board last reported (it keeps it), or a blank until it's known
+  const seconds = h('select', { class: 'form-select form-select-sm w-auto', 'aria-label': 'Pump run time' },
+    known ? null : h('option', { value: '', selected: true, disabled: true }, '? s'),
+    [1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) => h('option', { value: n, selected: known && n === device.pump_s }, `${n} s`)));
+  if (!known) result.textContent = 'The run time isn\'t known yet: set it, or run the pump, to read it from the board.';
   const call = (body) => (e) => busy(e.target, async () => show(await api('POST', `/api/devices/${id}/pump`, body)));
   document.getElementById('device-controls').replaceChildren(
     h('div', { class: 'd-flex flex-wrap gap-2 align-items-center' },
       h('button', { class: 'btn btn-sm btn-primary', onclick: call({ on: true }) }, 'Run the pump'),
       h('button', { class: 'btn btn-sm btn-outline-danger', onclick: call({ on: false }) }, 'Stop'),
       h('span', { class: 'small text-body-secondary ms-2' }, 'run time'), seconds,
-      h('button', { class: 'btn btn-sm btn-outline-secondary', onclick: (e) => call({ seconds: Number(seconds.value) })(e) }, 'Set'),
+      h('button', { class: 'btn btn-sm btn-outline-secondary', onclick: (e) => {
+        if (!seconds.value) return notify('Choose a run time', 'warning');
+        call({ seconds: Number(seconds.value) })(e);
+      } }, 'Set'),
       h('button', { class: 'btn btn-sm btn-outline-secondary ms-auto', onclick: () => pingDevice(device) }, 'Beep')),
     result,
     h('div', { class: 'form-text' }, 'Commands reach a sleeping board at its next poll: up to 3 s.'));

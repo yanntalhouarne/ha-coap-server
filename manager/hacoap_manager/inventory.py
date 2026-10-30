@@ -194,8 +194,16 @@ class Inventory:
                 result = await link.board_settings()
         except McumgrError as exc:
             raise self._settings_error(exc) from exc
-        self._changed(self.db.upsert_device(device_id, soil_mv=result["soil_mv"], last_seen=time.time()))
+        self._changed(self.db.upsert_device(device_id, **self._known(result), last_seen=time.time()))
         return result
+
+    @staticmethod
+    def _known(result):
+        """What a settings answer tells about the board, for its record."""
+        fields = {"soil_mv": result["soil_mv"]}
+        if "pump_s" in result["settings"]:
+            fields["pump_s"] = result["settings"]["pump_s"]["value"]
+        return fields
 
     async def set_board_settings(self, device_id, values, transport="udp", serial_port=""):
         """Changes some of the board's settings ({name: value}): all of them, or none."""
@@ -213,7 +221,7 @@ class Inventory:
                    for name in values if name in before and before[name]["value"] != result["settings"][name]["value"]]
         if changes:
             self.db.add_activity(device_id, "settings", "Settings changed: " + ", ".join(changes))
-        self._changed(self.db.upsert_device(device_id, last_seen=time.time()))
+        self._changed(self.db.upsert_device(device_id, **self._known(result), last_seen=time.time()))
         return result
 
     async def sample_soil(self, device_id, transport="udp", serial_port="", timeout_s=15.0):
@@ -232,7 +240,7 @@ class Inventory:
             raise self._settings_error(exc) from exc
         if result["samples"] <= before:
             raise InventoryError("The board didn't take a new sample")
-        self._changed(self.db.upsert_device(device_id, soil_mv=result["soil_mv"], last_seen=time.time()))
+        self._changed(self.db.upsert_device(device_id, **self._known(result), last_seen=time.time()))
         return result
 
     async def set_fleet_settings(self, device_ids, values):
@@ -301,7 +309,7 @@ class Inventory:
             raise InventoryError(str(exc)) from exc
         except (coap.CoapError, TimeoutError, OSError) as exc:
             raise InventoryError(f"No answer: {exc}") from exc
-        self._changed(self.db.upsert_device(device_id, last_seen=time.time()))
+        self._changed(self.db.upsert_device(device_id, pump_s=duration, last_seen=time.time()))
         return {"running": running, "duration": duration}
 
     async def ping(self, device_id):
