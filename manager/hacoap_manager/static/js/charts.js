@@ -22,20 +22,24 @@ function nearest(data, t) {
 // - overlays [{name, points, color}]: other lines to compare, drawn dashed.
 // - range [t0, t1]: the period shown (else all of it); onZoom(t0, t1): called when a period is
 //   dragged across the chart.
+// - series [{name, points, color, dashed}]: instead of 'points' and 'overlays', lines that are all
+//   alike (every board on one chart): no shaded area, a taller chart ('tall'), and each line
+//   marked with its name (data-name) so the page can highlight one.
 export function lineChart(title, points, { unit = '', min = null, max = null, color = 'var(--t-brand)', step = false, events = [],
-  overlays = [], range = null, onZoom = null, name = '' } = {}) {
-  const all = [{ name, color, data: clean(points) },
-    ...overlays.map((o) => ({ name: o.name, color: o.color, data: clean(o.points), dashed: true }))];
-  const primary = all[0].data;
+  overlays = [], range = null, onZoom = null, name = '', series: equal = null, tall = false } = {}) {
+  const all = equal ? equal.map((s) => ({ name: s.name, color: s.color, data: clean(s.points), dashed: !!s.dashed }))
+    : [{ name, color, data: clean(points) },
+      ...overlays.map((o) => ({ name: o.name, color: o.color, data: clean(o.points), dashed: true }))];
+  const primary = equal ? [] : all[0].data;
   const head = h('div', { class: 'chart-head' }, h('span', {}, title),
     primary.length ? h('b', {}, `${primary[primary.length - 1].v}${unit}`) : null);
   const firsts = all.filter((s) => s.data.length).map((s) => s.data[0].t);
   const lasts = all.filter((s) => s.data.length).map((s) => s.data[s.data.length - 1].t);
-  if (primary.length < 2 && !overlays.some((o) => clean(o.points).length >= 2)) {
+  if (!all.some((s) => s.data.length >= 2)) {
     return h('div', { class: 'chart' }, head, h('div', { class: 'chart-empty' },
       'Not enough readings yet. One is stored at each refresh (every 15 minutes while the app runs).'));
   }
-  const W = 600, H = 110, padX = 34, padY = 10;
+  const W = 600, H = tall ? 260 : 110, padX = 34, padY = 10;
   // The time axis runs to the latest event too (a pump run since the last reading), not before the first reading.
   let [t0, t1] = range || [Math.min(...firsts), Math.max(...lasts)];
   if (!range) t1 = Math.max(t1, ...events.map((e) => e.t).filter((t) => t >= t0));
@@ -50,10 +54,11 @@ export function lineChart(title, points, { unit = '', min = null, max = null, co
   const y = (v) => H - padY - ((v - lo) / span) * (H - 2 * padY);
   const pathOf = (data) => data.map((p, i) => (i === 0 ? `M${x(p.t)},${y(p.v)}` : step ? `H${x(p.t)}V${y(p.v)}` : `L${x(p.t)},${y(p.v)}`)).join('');
   const lines = series.filter((s) => s.data.length > 1).map((s, i) => svg('path', { d: pathOf(s.data),
-    style: `stroke: ${s.color}; fill: none`, 'stroke-width': i === 0 && !s.dashed ? 2 : 1.6, 'vector-effect': 'non-scaling-stroke',
-    'stroke-dasharray': s.dashed ? '5 4' : null }));
+    style: `stroke: ${s.color}; fill: none`, 'stroke-width': equal ? 1.8 : i === 0 && !s.dashed ? 2 : 1.6,
+    'vector-effect': 'non-scaling-stroke', 'stroke-dasharray': s.dashed ? '5 4' : null, 'data-name': equal ? s.name : null,
+    class: 'chart-line' }));
   const main = series[0].data;
-  const area = main.length > 1 ? svg('path', { d: `${pathOf(main)}L${x(main[main.length - 1].t)},${H - padY}L${x(main[0].t)},${H - padY}Z`,
+  const area = !equal && main.length > 1 ? svg('path', { d: `${pathOf(main)}L${x(main[main.length - 1].t)},${H - padY}L${x(main[0].t)},${H - padY}Z`,
     style: `fill: ${color}; opacity: .12` }) : null;
   const short = t1 - t0 < 2 * 86400;
   const date = (t) => new Date(t * 1000).toLocaleString([], short ? { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }
@@ -78,10 +83,10 @@ export function lineChart(title, points, { unit = '', min = null, max = null, co
     const { frac, t } = timeAt(event);
     cross.classList.remove('d-none');
     cross.style.left = `${frac * 100}%`;
-    const rows = series.filter((s) => s.data.length).map((s) => {
-      const p = nearest(s.data, t);
-      return h('div', {}, h('i', { style: `background: ${s.color}` }), s.name ? `${s.name}: ` : '', h('b', {}, `${p.v}${unit}`));
-    });
+    const values = series.filter((s) => s.data.length).map((s) => ({ s, p: nearest(s.data, t) }));
+    if (equal) values.sort((a, b) => b.p.v - a.p.v); // every board: the highest first
+    const rows = values.map(({ s, p }) => h('div', {}, h('i', { style: `background: ${s.color}` }), s.name ? `${s.name}: ` : '',
+      h('b', {}, `${p.v}${unit}`)));
     tip.replaceChildren(h('div', { class: 'chart-tip-time' }, when(t)), ...rows);
     tip.classList.remove('d-none');
     tip.style.left = frac > 0.6 ? '' : `calc(${frac * 100}% + 10px)`;
@@ -108,7 +113,7 @@ export function lineChart(title, points, { unit = '', min = null, max = null, co
     });
   }
   // The drawing stretches to its box; the labels stay as text beside it, so they don't stretch.
-  return h('div', { class: 'chart' }, head,
+  return h('div', { class: `chart${tall ? ' chart-tall' : ''}` }, head,
     h('div', { class: 'chart-body' },
       h('div', { class: 'chart-y' }, h('span', {}, `${hi}${unit}`), h('span', {}, `${lo}${unit}`)),
       h('div', { class: 'chart-plot' },

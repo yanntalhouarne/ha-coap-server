@@ -41,7 +41,7 @@ export function h(tag, attrs = {}, ...children) {
 }
 
 export async function api(method, path, body, options = {}) {
-  const init = { method, headers: {} };
+  const init = { method, headers: {}, keepalive: !!options.keepalive };
   if (method !== 'GET') init.headers['X-HACoap'] = '1';
   if (body instanceof Blob || body instanceof ArrayBuffer) {
     init.body = body;
@@ -66,6 +66,25 @@ export function notify(message, kind = 'info', timeout = 6000) {
   document.getElementById('alerts').append(alert);
   if (timeout) setTimeout(() => alert.remove(), timeout);
 }
+
+// An action done after a few seconds, with Undo meanwhile: removing a board from the list,
+// dismissing an alert. Done at once if the page closes (its request kept alive).
+const pendingUndos = new Set();
+
+export function undoable(message, commit, undo, seconds = 8) {
+  let done = false;
+  const close = () => { done = true; pendingUndos.delete(finish); clearTimeout(timer); notice.remove(); };
+  const finish = () => { if (done) return; close(); commit(); };
+  const notice = h('div', { class: 'alert alert-info undo-alert', role: 'status' },
+    h('span', {}, message),
+    h('button', { type: 'button', class: 'btn btn-sm btn-outline-primary ms-3', onclick: () => { if (done) return; close(); undo(); } }, 'Undo'),
+    h('span', { class: 'undo-bar', style: `animation-duration: ${seconds}s` }));
+  document.getElementById('alerts').append(notice);
+  const timer = setTimeout(finish, seconds * 1000);
+  pendingUndos.add(finish);
+}
+
+window.addEventListener('pagehide', () => { for (const finish of [...pendingUndos]) finish(); });
 
 export async function busy(button, work) {
   const label = button.textContent;

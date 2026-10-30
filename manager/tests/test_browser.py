@@ -191,12 +191,19 @@ def test_device_page(page):
     assert "Soil moisture" in dom and "<svg" in dom                   # the charts
     assert "chart-event event-pump" in dom                            # a pump run marked on them
     assert "Battery drain by firmware" in dom                         # its drain (48 h of readings)
-    assert "Updated and confirmed" in dom                             # its update history
+    assert "Updated and confirmed" in dom                             # its update history, in the timeline
+    assert 'class="tl-entry tl-update"' in dom and 'class="tl-entry tl-restart bad"' in dom
     assert "the watchdog: it stopped responding" in dom and "0x6800 · -64 dBm" in dom   # its health
     assert "chart-event event-restart" in dom                         # the restart on the charts
     assert "Read from the board" in dom                               # its settings
     assert "Forget its network…" in dom
     assert "the border router refuses it" in dom                     # its name isn't registered
+
+
+def test_charts_tab(page):
+    dom = page("charts")
+    assert 'class="chart-line"' in dom and 'data-name="basil"' in dom   # every board on one chart
+    assert 'class="graph-key"' in dom
 
 
 def test_floorplan_view(page):

@@ -146,10 +146,22 @@ function ring(progress) {
 
 const stepIcon = { done: 'check', failed: 'x', skipped: 'minus', waiting: 'circle', active: 'loader-circle' };
 
+// The updates seen finished, so that the last step's checkmark draws itself once
+const finishedSeen = new Set();
+
 function targetTimeline(job, t) {
   const states = stepStates(t);
   const key = `${job.id}:${t.label}`;
-  return h('ol', { class: 'steps' }, STEPS.map(([step, label], i) => {
+  const justFinished = t.status === 'updated' && !finishedSeen.has(key);
+  if (t.status === 'updated') finishedSeen.add(key);
+  return h('ol', { class: `steps${justFinished ? ' just-finished' : ''}` }, STEPS.map(([step, label], i) => {
+    if (justFinished && i === STEPS.length - 1) {
+      // Drawn as a path, so that its stroke can be drawn in
+      return h('li', { class: 'step done' },
+        h('span', { class: 'step-mark' }, svg('svg', { class: 'icon check-draw', viewBox: '0 0 24 24', 'aria-hidden': 'true' },
+          svg('path', { d: 'M5 12.5l4.5 4.5L19 7.5', pathLength: 1 }))),
+        h('span', { class: 'step-label' }, label));
+    }
     const uploading = states[i] === 'active' && step === 'uploading';
     return h('li', { class: `step ${states[i]}` },
       h('span', { class: 'step-mark' }, uploading ? ring(t.progress)

@@ -297,3 +297,52 @@ async def test_found_boards_say_what_they_run(services):
     await services.inventory.discover()
     assert (services.db.device("1a2b3c4d")["fw_version"], services.db.device("1a2b3c4d")["hw_version"]) == ("f83f898", "v2.0")
     assert services.db.device("5e6f7a8b")["fw_version"] == ""
+
+
+# ---------------------------------------------------------------- the page's data: timeline, graph, fleet health
+
+async def test_a_boards_timeline(client, services):
+    services.db.upsert_device("1a2b3c4d", name="basil")
+    now = time.time()
+    services.db.add_update("job", "1a2b3c4d", "udp", "ab" * 32, "1.1.0", now - 300, now - 200, "updated", "Updated and confirmed")
+    services.db.add_activity("1a2b3c4d", "restart", "Restarted: a software reset", when=now - 190)
+    services.db.add_activity("1a2b3c4d", "pump", "Pump started from the app (3 s)", when=now - 100)
+    services.db.add_network_event("1a2b3c4d", "basil: parent changed from 0x5000 to 0x6800")
+    entries = (await client.get("/api/devices/1a2b3c4d/timeline")).json()
+    assert [e["kind"] for e in entries][:3] == ["parent", "pump", "restart"]          # newest first
+    update = next(e for e in entries if e["kind"] == "update")
+    assert update["detail"]["result"] == "updated" and update["detail"]["message"] == "Updated and confirmed"
+    assert next(e for e in entries if e["kind"] == "parent")["text"] == "parent changed from 0x5000 to 0x6800"
+    assert (await client.get("/api/devices/nope/timeline")).status_code == 404
+
+
+async def test_every_board_on_one_chart(client, services):
+    now = time.time()
+    for device_id, name in (("aaaa0001", "basil"), ("aaaa0002", "fern")):
+        services.db.upsert_device(device_id, name=name)
+        for i in range(600):  # more than a chart's points: averaged
+            services.db.add_reading(device_id, 80, 40 + i % 5, 50, 20, when=now - (600 - i) * 600)
+    series = (await client.get("/api/graph?metric=soil_moisture&days=7")).json()
+    assert [s["name"] for s in series] == ["basil", "fern"]
+    assert 0 < len(series[0]["points"]) <= fleet.GRAPH_POINTS
+    assert all(40 <= v <= 44 for _, v in series[0]["points"])
+    only = (await client.get("/api/graph?metric=battery&days=1&device_ids=aaaa0002")).json()
+    assert [s["name"] for s in only] == ["fern"] and only[0]["points"][0][1] == 80
+    assert (await client.get("/api/graph?metric=nope")).status_code == 400
+
+
+async def test_fleet_health(client, services):
+    services.db.upsert_device("aaaa0001", name="basil")
+    services.db.add_activity("aaaa0001", "restart", "Restarted: the watchdog: it stopped responding")
+    services.db.add_activity("aaaa0001", "restart", "Restarted: a software reset")
+    rows = {r["device_id"]: r for r in (await client.get("/api/fleet-health")).json()}
+    assert (rows["aaaa0001"]["restarts"], rows["aaaa0001"]["bad_restarts"]) == (2, 1)
+    assert rows["aaaa0001"]["image_status"] == "no-release"
+
+
+async def test_the_page_can_be_installed(client):
+    assert 'rel="manifest"' in (await client.get("/")).text
+    manifest = (await client.get("/static/manifest.json")).json()
+    assert manifest["display"] == "standalone" and manifest["start_url"] == "/"
+    for icon in manifest["icons"]:
+        assert (await client.get(icon["src"])).headers["content-type"] == "image/png"

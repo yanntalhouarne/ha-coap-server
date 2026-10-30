@@ -892,3 +892,144 @@ button.net-figure:hover { border-color: var(--t-brand); }
   outline: 2px solid var(--t-brand); outline-offset: 2px; box-shadow: none; }
 .node:focus { outline: none; }
 .node:focus-visible .select-ring { opacity: 1; stroke: var(--t-brand); stroke-width: 3; }
+
+/* ------------------------------------------------------------------ motion (motion.js) */
+
+/* A value that just changed */
+.just-changed { animation: just-changed 1.4s ease-out; border-radius: .3rem; }
+@keyframes just-changed {
+  0% { background: color-mix(in srgb, var(--t-brand) 35%, transparent); }
+  100% { background: transparent; }
+}
+.soil-gauge .gauge { transition: stroke-dasharray .8s cubic-bezier(.2, .8, .2, 1); }
+.soil-gauge.just-changed { background: none; animation: gauge-glow 1.4s ease-out; border-radius: 50%; }
+@keyframes gauge-glow {
+  0% { filter: drop-shadow(0 0 6px var(--t-cyan)); }
+  100% { filter: none; }
+}
+
+/* A board answered: a ring around its card, its row, its page's top */
+[data-board].answered { animation: answered 1.2s ease-out; }
+tr[data-board].answered { animation: answered-row 1.2s ease-out; }
+@keyframes answered {
+  0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--t-brand) 70%, transparent); }
+  100% { box-shadow: 0 0 0 14px transparent; }
+}
+@keyframes answered-row {
+  0% { background: color-mix(in srgb, var(--t-brand) 18%, transparent); }
+  100% { background: transparent; }
+}
+
+/* A button waiting for a sleepy board: a ring that fills over its poll period */
+.btn.waiting { display: inline-flex; align-items: center; gap: .35rem; opacity: 1; }
+.wait-ring { width: 1em; height: 1em; flex: none; }
+.wait-ring circle { fill: none; stroke-width: 2.4; }
+.wait-track { stroke: color-mix(in srgb, currentColor 25%, transparent); }
+.wait-fill { stroke: currentColor; stroke-dasharray: 37.7 37.7; stroke-dashoffset: 37.7; stroke-linecap: round;
+  animation: wait-fill var(--poll, 3s) linear forwards, wait-spin 1.2s linear var(--poll, 3s) infinite; transform-origin: center; }
+@keyframes wait-fill { to { stroke-dashoffset: 0; } }
+@keyframes wait-spin { from { transform: rotate(-90deg); } to { transform: rotate(270deg); } }
+.btn.answered-button { border-color: var(--t-green); color: var(--t-green); }
+
+/* The pump running: drops falling over the plant's photo, and the seconds left */
+.card-photo, .hero-photo { position: relative; overflow: hidden; }
+.pump-overlay { position: absolute; inset: 0; pointer-events: none; background: color-mix(in srgb, var(--t-cyan) 14%, transparent); }
+.pump-overlay i { position: absolute; top: -12%; width: .35rem; height: .6rem; border-radius: 50% 50% 50% 50% / 60% 60% 40% 40%;
+  background: var(--t-cyan); opacity: .9; animation: drop 1.1s linear infinite; }
+.pump-overlay i:nth-child(1) { left: 18%; animation-delay: 0s; }
+.pump-overlay i:nth-child(2) { left: 38%; animation-delay: .35s; }
+.pump-overlay i:nth-child(3) { left: 55%; animation-delay: .15s; }
+.pump-overlay i:nth-child(4) { left: 72%; animation-delay: .6s; }
+.pump-overlay i:nth-child(5) { left: 86%; animation-delay: .85s; }
+@keyframes drop { to { transform: translateY(1100%); opacity: .2; } }
+.pump-left { position: absolute; left: 50%; bottom: .35rem; transform: translateX(-50%); font-size: .7rem; font-weight: 600;
+  padding: .05rem .45rem; border-radius: 1rem; background: var(--t-surface); color: var(--t-cyan); white-space: nowrap; }
+.pumping .soil-gauge .gauge { stroke: var(--t-cyan); animation: gauge-fill 1.2s ease-in-out infinite; }
+@keyframes gauge-fill { 50% { opacity: .45; } }
+
+/* A finished update: the last step's check draws itself; a firmware that just changed flips in */
+.check-draw path { fill: none; stroke: currentColor; stroke-width: 3; stroke-linecap: round; stroke-linejoin: round;
+  stroke-dasharray: 1; stroke-dashoffset: 1; animation: check-draw .6s ease-out .2s forwards; }
+@keyframes check-draw { to { stroke-dashoffset: 0; } }
+.steps.just-finished .step:last-child .step-mark { animation: pop .5s cubic-bezier(.2, 1.6, .4, 1); }
+@keyframes pop { 0% { transform: scale(.4); } 100% { transform: scale(1); } }
+.flip { animation: flip .7s ease-out; display: inline-block; }
+td.flip { display: table-cell; animation: flip-cell 1.4s ease-out; }
+@keyframes flip { 0% { transform: rotateX(90deg); opacity: 0; } 100% { transform: none; opacity: 1; } }
+@keyframes flip-cell { 0% { background: color-mix(in srgb, var(--t-green) 25%, transparent); } 100% { background: transparent; } }
+
+/* Undo: a notice with a bar that runs out */
+.undo-alert { display: flex; align-items: center; position: relative; overflow: hidden; }
+.undo-bar { position: absolute; left: 0; bottom: 0; height: 3px; width: 100%; background: var(--t-brand);
+  transform-origin: left; animation: undo-bar linear forwards; }
+@keyframes undo-bar { to { transform: scaleX(0); } }
+
+@media (prefers-reduced-motion: reduce) {
+  .just-changed, .soil-gauge.just-changed, [data-board].answered, tr[data-board].answered, .flip, td.flip,
+  .steps.just-finished .step:last-child .step-mark, .pump-overlay i, .pumping .soil-gauge .gauge { animation: none; }
+  .pump-overlay i { display: none; }
+  .soil-gauge .gauge { transition: none; }
+  .check-draw path { animation: none; stroke-dashoffset: 0; }
+  .wait-fill { animation: none; stroke-dashoffset: 9; }
+}
+
+/* ------------------------------------------------------------------ a board's timeline (timeline.js) */
+
+.tl-count { margin-left: .35rem; opacity: .7; font-size: .85em; }
+.tl-day { font-size: .72rem; text-transform: uppercase; letter-spacing: .06em; color: var(--t-text-muted); margin: .9rem 0 .4rem; }
+.timeline section:first-child .tl-day { margin-top: 0; }
+.tl-entry { display: grid; grid-template-columns: 1.6rem 4.6rem 1fr; gap: .4rem; align-items: start; padding: .3rem 0;
+  border-left: 2px solid var(--t-border-subtle); padding-left: .6rem; margin-left: .7rem; position: relative; font-size: .85rem; }
+.tl-icon { width: 1.5rem; height: 1.5rem; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center;
+  background: var(--t-surface-2); color: var(--t-text-muted); margin-left: -1.45rem; border: 1px solid var(--t-border-subtle); }
+.tl-time { color: var(--t-text-muted); font-size: .78rem; padding-top: .15rem; white-space: nowrap; }
+.tl-detail { font-size: .78rem; margin-top: .15rem; }
+.tl-update .tl-icon { color: var(--t-green); }
+.tl-restart .tl-icon { color: var(--t-orange); }
+.tl-pump .tl-icon { color: var(--t-cyan); }
+.tl-settings .tl-icon { color: var(--t-blue); }
+.tl-network .tl-icon { color: var(--t-magenta); }
+.tl-photo .tl-icon { color: var(--t-brand); }
+.tl-alert .tl-icon { color: var(--t-yellow); }
+.tl-entry.bad .tl-icon { color: var(--t-red); border-color: var(--t-red); }
+
+/* ------------------------------------------------------------------ the health view (devices.js) */
+
+.health-table th.sortable { cursor: pointer; white-space: nowrap; user-select: none; }
+.health-table th.sortable:hover { color: var(--t-text); }
+.health-table th.sorted { color: var(--t-brand); }
+.health-table th.sorted::after { content: " ▾"; }
+
+/* ------------------------------------------------------------------ the charts tab (graphs.js) */
+
+.chart-tall .chart-body svg { height: 18rem; }
+.chart.highlighting .chart-line { opacity: .15; transition: opacity .15s; }
+.chart.highlighting .chart-line.hot { opacity: 1; stroke-width: 3; }
+.graph-skeleton { height: 20rem; border-radius: .4rem; }
+.graph-legend { display: flex; flex-wrap: wrap; gap: .3rem .9rem; margin-top: .8rem; align-items: center; }
+.graph-key { display: inline-flex; align-items: center; gap: .35rem; background: none; border: 0; padding: .15rem .3rem;
+  border-radius: .3rem; color: var(--t-text); font-size: .82rem; }
+.graph-key:hover, .graph-key:focus-visible { background: var(--t-surface-2); }
+.graph-key.off { opacity: .4; text-decoration: line-through; }
+.graph-swatch { width: 1.2rem; height: .5rem; }
+.graph-swatch line { stroke-width: 3; stroke-linecap: round; }
+.graph-key-value { color: var(--t-text-muted); font-size: .75rem; }
+.graph-legend-actions { margin-left: auto; }
+
+/* Nine tabs on one line: the key numbers go first, then the icons, as the window narrows */
+.tabs a, .palette-button { white-space: nowrap; }
+@media (min-width: 768px) and (max-width: 1699.98px) {
+  .tabs a kbd { display: none; }
+  .tabs a { padding: .3rem .5rem; }
+}
+@media (min-width: 768px) and (max-width: 1399.98px) {
+  .tabs a .icon { display: none; }
+  .palette-button kbd { display: none; }
+}
+/* Narrower still: one row that scrolls sideways, as on a phone */
+@media (min-width: 768px) and (max-width: 1199.98px) {
+  .topbar .tabs { flex-wrap: nowrap; overflow-x: auto; min-width: 0; flex: 1 1 auto; scrollbar-width: none; }
+  .topbar .tabs::-webkit-scrollbar { display: none; }
+}
+#graph-metrics { flex-wrap: nowrap; overflow-x: auto; max-width: 100%; scrollbar-width: none; }
+#graph-metrics button { white-space: nowrap; }

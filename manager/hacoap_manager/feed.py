@@ -48,3 +48,32 @@ def build(db, inventory, photos, before=None, limit=30):
                     for t in taken if t < before]
     entries.sort(key=lambda e: -e["time"])
     return entries[:limit]
+
+
+def device_timeline(db, device, photos, limit=300):
+    """Everything that happened to one board, newest first: [{time, kind, text, detail}]. The
+    kinds: update (and failed), restart, pump, settings, network (its parent, or its network
+    forgotten), photo, alert."""
+    device_id = device["device_id"]
+    name = device["name"] or device_id
+    entries = []
+    for row in db.updates(device_id, limit=limit):
+        if not row["finished"]:
+            continue
+        entries.append({"time": row["finished"], "kind": "update", "text": _text("update", row, name),
+                        "detail": {"result": row["result"], "transport": row["transport"],
+                                   "version": row["image_version"], "hash": row["image_hash"], "message": row["message"]}})
+    for row in db.device_activity(device_id, limit):
+        entries.append({"time": row["time"], "kind": row["kind"], "text": row["message"], "detail": None})
+    for row in db.network_events_for(device_id, limit):
+        entries.append({"time": row["time"], "kind": "parent", "text": row["message"].replace(f"{name}: ", ""), "detail": None})
+    for row in db.device_alerts(device_id, limit):
+        entries.append({"time": row["raised"], "kind": "alert", "text": row["message"].replace(NAME, name),
+                        "detail": {"cleared": row["cleared"], "alert_kind": row["kind"]}})
+    try:
+        entries += [{"time": t, "kind": "photo", "text": "A photo of the plant", "detail": None}
+                    for t in photos.timeline(device_id)]
+    except Exception:  # noqa: BLE001 - an unusual ID: no photos
+        pass
+    entries.sort(key=lambda e: -e["time"])
+    return entries[:limit]

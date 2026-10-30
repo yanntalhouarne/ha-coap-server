@@ -4,6 +4,7 @@
 import { api, busy, h, notify, state, when } from './core.js';
 import { deviceName } from './devices.js';
 import { detailsTable } from './network.js';
+import { countTo, waitForBoard } from './motion.js';
 import { devicePage } from './device.js';
 
 // As inventory.py's RESET_CAUSES says them
@@ -78,7 +79,7 @@ export function renderDeviceHealth(device) {
     ['Its address', device.rloc16 ? `${device.rloc16} (${device.role})` : ''],
     ['Its name', srpText(device)],
   ]), h('div', { class: 'small fw-bold mt-3 mb-1' }, 'Restarts'),
-  restarts.length ? h('ul', { class: 'list-unstyled small mb-0 restart-list' }, restarts.map((r) =>
+  restarts.length ? h('ul', { class: 'list-unstyled small mb-0 restart-list' }, restarts.slice(0, 5).map((r) =>
     h('li', { class: /watchdog|lockup|crash/.test(r.message) ? 'text-danger' : '' },
       h('span', { class: 'text-body-secondary' }, `${when(r.time)} `), r.message.replace(/^Restarted: /, ''))))
     : h('p', { class: 'small text-body-secondary mb-0' }, 'None since the app started following it.'));
@@ -92,10 +93,10 @@ export function renderBoardSettings(device) {
   const transport = h('select', { class: 'form-select form-select-sm w-auto', 'aria-label': 'How' },
     h('option', { value: 'udp' }, 'over the air'),
     device.serial_port ? h('option', { value: 'serial' }, `USB (${device.serial_port})`) : null);
-  const read = h('button', { class: 'btn btn-sm btn-outline-primary', type: 'button', onclick: (e) => busy(e.target, async () => {
+  const read = h('button', { class: 'btn btn-sm btn-outline-primary', type: 'button', onclick: (e) => waitForBoard(e.currentTarget, async () => {
     const how = { transport: transport.value, serial_port: device.serial_port };
     renderSettingsForm(device, await api('POST', `/api/devices/${encodeURIComponent(device.device_id)}/board-settings/read`, how), how);
-  }) }, 'Read from the board');
+  }, device.device_id) }, 'Read from the board');
   const forget = h('button', { class: 'btn btn-sm btn-outline-danger ms-auto', type: 'button',
     title: 'To move it to another Thread network', onclick: (e) => {
       if (!confirm(`${device.name || device.device_id} forgets its Thread network and restarts. It drops off the network ` +
@@ -130,11 +131,11 @@ function renderSettingsForm(device, result, how) {
   // Calibrating the soil sensor: its output now, in dry soil, then in water
   const soil = h('span', { class: 'fw-bold' }, result.soil_mv !== null ? `${result.soil_mv} mV` : 'not read');
   let soilMv = result.soil_mv;
-  const measure = h('button', { class: 'btn btn-sm btn-outline-secondary', type: 'button', onclick: (e) => busy(e.target, async () => {
+  const measure = h('button', { class: 'btn btn-sm btn-outline-secondary', type: 'button', onclick: (e) => waitForBoard(e.currentTarget, async () => {
     const fresh = await api('POST', `${path}/sample`, how);
     soilMv = fresh.soil_mv;
-    soil.textContent = soilMv !== null ? `${soilMv} mV` : 'not read';
-  }) }, 'Measure now');
+    countTo(soil, `calibrate:${device.device_id}`, soilMv, (v) => `${v} mV`);
+  }, device.device_id) }, 'Measure now');
   const use = (name) => h('button', { class: 'btn btn-sm btn-outline-secondary', type: 'button', onclick: () => {
     if (soilMv === null) return notify('Measure the soil sensor first', 'warning');
     inputs[name].value = soilMv;
@@ -158,11 +159,11 @@ function renderSettingsForm(device, result, how) {
       if (input.value !== '' && Number(input.value) !== result.settings[name].value) values[name] = Number(input.value);
     }
     if (!Object.keys(values).length) return notify('Nothing changed', 'info', 2000);
-    busy(save, async () => {
+    waitForBoard(save, async () => {
       const saved = await api('PUT', path, { values, ...how });
       notify('Saved on the board', 'success', 2500);
       renderSettingsForm(device, saved, how);
-    });
+    }, device.device_id);
   });
   box.replaceChildren(form);
 }

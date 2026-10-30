@@ -6,6 +6,7 @@ import { ago, api, busy, h, notify, pct, photoUrl, state, svg, when } from './co
 import { currentRoute } from './tabs.js';
 import { daysText } from './dashboard.js';
 import { deviceName, devicePath, pingDevice } from './devices.js';
+import { startPumping, waitForBoard } from './motion.js';
 import { renderChannelScan, renderFloorplan } from './floorplan.js';
 import { renderNetFrame, renderNetworkEvents } from './netframe.js';
 import { renderTree } from './tree.js';
@@ -683,8 +684,11 @@ export function boardCard(device) {
     h('div', { class: 'd-flex flex-wrap gap-2 mt-2' },
       h('a', { class: 'btn btn-sm btn-primary', href: `#device/${encodeURIComponent(device.device_id)}` }, 'Open its page'),
       device.needs_water ? h('button', { class: 'btn btn-sm btn-outline-primary', type: 'button',
-        onclick: (e) => busy(e.target, () => api('POST', devicePath(device, '/pump'), { on: true })) }, 'Run the pump') : null,
-      h('button', { class: 'btn btn-sm btn-outline-secondary', type: 'button', onclick: () => pingDevice(device) }, 'Beep')));
+        onclick: (e) => waitForBoard(e.currentTarget, async () => {
+          const result = await api('POST', devicePath(device, '/pump'), { on: true });
+          startPumping(device.device_id, result.duration || 1);
+        }, device.device_id) }, 'Run the pump') : null,
+      h('button', { class: 'btn btn-sm btn-outline-secondary', type: 'button', onclick: (e) => pingDevice(device, e.currentTarget) }, 'Beep')));
   deviceHealth(device).then((health) => {
     if (has(device.battery)) forecast.textContent = daysText(health.battery_forecast);
     if (!device.needs_water && health.water_forecast) water.textContent = `water ${waterIn(health.water_forecast)}`;

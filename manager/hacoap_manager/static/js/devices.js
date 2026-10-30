@@ -1,6 +1,7 @@
 // The Devices tab: the list, groups, actions on the ticked devices, labels, the connection check.
 
-import { ago, api, busy, h, notify, pct, photoUrl, shortHash, state, svg, when } from './core.js';
+import { ago, api, busy, h, notify, pct, photoUrl, shortHash, state, svg, undoable, when } from './core.js';
+import { changedFrom, countTo, pulse, reducedMotion, showPumping, slide, waitForBoard } from './motion.js';
 import { currentRoute, showTab } from './tabs.js';
 import { net, redrawNetwork } from './network.js';
 import { renderStatusDevices } from './live.js';
@@ -14,7 +15,7 @@ export async function loadDevices() {
   const [devices, images] = await Promise.all([api('GET', '/api/devices'), api('GET', '/api/images')]);
   state.images = images;
   state.release = images.find((i) => i.release) || null;
-  state.devices = new Map(devices.map((d) => [d.device_id, d]));
+  state.devices = new Map(devices.filter((d) => !removing.has(d.device_id)).map((d) => [d.device_id, d]));
   for (const id of [...state.selected]) if (!state.devices.has(id)) state.selected.delete(id);
   renderDevices();
   // The map's boards show their photo and soil: draw it again once the devices are known
@@ -25,6 +26,9 @@ export async function loadDevices() {
 }
 
 export function deviceName(device) { return device.name || device.device_id; }
+
+// Boards removed from the list, during the seconds their removal can be undone
+export const removing = new Set();
 
 export const deviceTags = (device) => (device.tags || '').split(',').filter(Boolean);
 
@@ -86,15 +90,35 @@ function sortDevices(list) {
   return [...list].sort((a, b) => by(a, b) || deviceName(a).localeCompare(deviceName(b)));
 }
 
-// A ring gauge: the soil moisture, with the watering target marked
-export function soilGauge(soil, target, size = 64) {
+// A ring gauge: the soil moisture, with the watering target marked. With a 'key', a new value
+// sweeps from the one shown before under that key, and its number counts to it.
+export function soilGauge(soil, target, size = 64, key = null) {
   const r = size / 2 - 5, around = 2 * Math.PI * r;
   const at = (v) => (Math.max(0, Math.min(100, v)) / 100) * around;
-  return svg('svg', { class: 'soil-gauge', viewBox: `${-size / 2} ${-size / 2} ${size} ${size}`, width: size, height: size, 'aria-hidden': 'true' },
-    svg('circle', { r, class: 'gauge-track' }),
-    missing(soil) ? null : svg('circle', { r, class: 'gauge', transform: 'rotate(-90)', 'stroke-dasharray': `${at(soil)} ${around}` }),
+  const before = key ? changedFrom(key, soil) : null;
+  const arc = missing(soil) ? null : svg('circle', { r, class: 'gauge', transform: 'rotate(-90)',
+    'stroke-dasharray': `${at(before ?? soil)} ${around}` });
+  const value = svg('text', { x: 0, y: 2, 'text-anchor': 'middle', 'dominant-baseline': 'middle', class: 'gauge-value' },
+    missing(soil) ? '–' : `${soil}%`);
+  const gauge = svg('svg', { class: 'soil-gauge', viewBox: `${-size / 2} ${-size / 2} ${size} ${size}`, width: size, height: size, 'aria-hidden': 'true' },
+    svg('circle', { r, class: 'gauge-track' }), arc,
     target ? svg('line', { x1: 0, y1: -r - 4, x2: 0, y2: -r + 4, class: 'gauge-target', transform: `rotate(${(target / 100) * 360})` }) : null,
-    svg('text', { x: 0, y: 2, 'text-anchor': 'middle', 'dominant-baseline': 'middle', class: 'gauge-value' }, missing(soil) ? '–' : `${soil}%`));
+    value);
+  if (before !== null && arc) {
+    // Drawn at the old value, then (once on the page) swept to the new one
+    requestAnimationFrame(() => requestAnimationFrame(() => arc.setAttribute('stroke-dasharray', `${at(soil)} ${around}`)));
+    if (!reducedMotion()) {
+      const from = before, start = performance.now();
+      const step = (now) => {
+        const k = Math.min(1, (now - start) / 700);
+        value.textContent = `${Math.round(from + (soil - from) * (1 - (1 - k) ** 3))}%`;
+        if (k < 1) requestAnimationFrame(step);
+      };
+      requestAnimationFrame(step);
+    }
+    gauge.classList.add('just-changed');
+  }
+  return gauge;
 }
 
 function deviceCard(device) {
@@ -104,7 +128,11 @@ function deviceCard(device) {
   const status = imageStatus(device);
   const water = device.needs_water ? 'needs water now'
     : forecast && forecast.days !== null && forecast.days !== undefined ? `water ${waterWhen(forecast.days)}` : '';
-  return h('article', { class: `device-card${state.selected.has(id) ? ' selected' : ''}${device.needs_water ? ' dry' : ''}${device.online ? '' : ' offline'}` },
+  const battery = h('b', {});
+  countTo(battery, `card:${id}:battery`, device.battery, (v) => `${v} %`);
+  const fwChanged = changedFrom(`card:${id}:image`, device.image_hash || null) !== null;
+  return h('article', { class: `device-card${state.selected.has(id) ? ' selected' : ''}${device.needs_water ? ' dry' : ''}${device.online ? '' : ' offline'}`,
+    'data-id': id, 'data-board': id },
     h('input', { class: 'form-check-input card-check', type: 'checkbox', checked: state.selected.has(id), 'aria-label': `Select ${deviceName(device)}`,
       onchange: (e) => { e.target.checked ? state.selected.add(id) : state.selected.delete(id); renderDevices(); } }),
     h('button', { class: 'card-photo', type: 'button', onclick: open, 'aria-label': `Open ${deviceName(device)}` },
@@ -114,14 +142,15 @@ function deviceCard(device) {
       h('a', { class: 'card-name', href: `#device/${encodeURIComponent(id)}` }, deviceName(device)),
       h('div', { class: 'card-sub' }, [device.plant && device.plant.toLowerCase() !== deviceName(device).toLowerCase() ? device.plant : null,
         device.location].filter(Boolean).join(' · ') || '\u00a0'),
-      h('div', { class: 'card-stats' }, soilGauge(device.soil_moisture, device.water_target),
+      h('div', { class: 'card-stats' }, soilGauge(device.soil_moisture, device.water_target, 64, `card:${id}:soil`),
         h('div', { class: 'card-figures' },
-          h('div', {}, h('span', { class: 'card-label' }, 'battery'), h('b', {}, pct(device.battery))),
+          h('div', {}, h('span', { class: 'card-label' }, 'battery'), battery),
           h('div', { class: 'card-bar' }, h('i', { style: `width: ${missing(device.battery) ? 0 : device.battery}%`,
             class: !missing(device.battery) && device.battery <= 20 ? 'low' : '' })),
           h('div', { class: `card-water${device.needs_water ? ' now' : ''}` }, water))),
       h('div', { class: 'card-foot' }, h('span', { class: `online-dot ${device.online ? 'on' : 'off'}` }), ago(device.last_seen),
-        status === 'outdated' ? h('span', { class: 'badge text-bg-warning ms-auto' }, 'behind') : null)));
+        status === 'outdated' ? h('span', { class: 'badge text-bg-warning ms-auto' }, 'behind') : null,
+        fwChanged && status === 'current' ? h('span', { class: 'badge text-bg-success ms-auto flip' }, 'updated') : null)));
 }
 
 const waterWhen = (days) => (days === 0 ? 'now' : days < 0.5 ? 'within hours' : days < 1.5 ? 'in about a day' : `in about ${Math.round(days)} days`);
@@ -134,6 +163,7 @@ export function setDeviceView(mode) {
 
 document.getElementById('view-table').addEventListener('click', () => setDeviceView('table'));
 document.getElementById('view-cards').addEventListener('click', () => setDeviceView('cards'));
+document.getElementById('view-health').addEventListener('click', () => setDeviceView('health'));
 document.getElementById('device-sort').value = deviceView.sort;
 document.getElementById('device-sort').addEventListener('change', (event) => {
   deviceView.sort = event.target.value;
@@ -144,14 +174,21 @@ document.getElementById('device-sort').addEventListener('change', (event) => {
 export function renderDevices() {
   const body = document.querySelector('#devices-table tbody');
   const visible = sortDevices(visibleDevices());
-  const cards = deviceView.mode === 'cards';
+  const mode = ['cards', 'health'].includes(deviceView.mode) ? deviceView.mode : 'table';
+  const cards = mode === 'cards';
   if (cards || deviceView.sort === 'water') loadForecasts().catch(() => {});
-  document.getElementById('view-table').classList.toggle('active', !cards);
-  document.getElementById('view-cards').classList.toggle('active', cards);
-  document.getElementById('devices-table-wrap').classList.toggle('d-none', cards);
+  if (mode === 'health') loadFleetHealth().catch(() => {});
+  for (const view of ['table', 'cards', 'health']) document.getElementById(`view-${view}`).classList.toggle('active', mode === view);
+  document.getElementById('devices-table-wrap').classList.toggle('d-none', mode !== 'table');
   document.getElementById('device-cards').classList.toggle('d-none', !cards);
+  document.getElementById('device-health-wrap').classList.toggle('d-none', mode !== 'health');
   body.replaceChildren(...visible.map(deviceRow));
-  if (cards) document.getElementById('device-cards').replaceChildren(...visible.map(deviceCard));
+  if (cards) {
+    const container = document.getElementById('device-cards');
+    slide(container, () => container.replaceChildren(...visible.map(deviceCard)));
+  }
+  if (mode === 'health') renderFleetHealth(visible);
+  showPumping();
   document.getElementById('devices-empty').classList.toggle('d-none', state.devices.size > 0);
   document.querySelector('.empty-logo').classList.toggle('d-none', state.devices.size > 0);
   const count = state.selected.size;
@@ -181,14 +218,14 @@ export async function showDeviceHistory(device) {
 export function deviceRow(device) {
   const id = device.device_id;
   const status = imageStatus(device);
-  const firmware = h('td', {},
+  const firmware = h('td', { class: changedFrom(`row:${id}:image`, device.image_hash || null) !== null ? 'flip' : null },
     h('span', { class: 'mono', title: 'Git commit of the firmware' }, device.fw_version || '–'),
     status ? h('span', { class: `badge text-bg-${imageStatusClass[status]} ms-2`,
       title: 'Compared with the release image (Images tab)' }, status) : null,
     device.image_version ? h('div', { class: 'small text-body-secondary', title: `Image ${device.image_hash}` },
       `v${device.image_version} · ${shortHash(device.image_hash)}`) : null);
   const action = (label, handler) => h('li', {}, h('a', { class: 'dropdown-item', href: '#', onclick: (e) => { e.preventDefault(); handler(device); } }, label));
-  return h('tr', { 'data-id': id },
+  return h('tr', { 'data-id': id, 'data-board': id },
     h('td', {}, h('input', { class: 'form-check-input', type: 'checkbox', checked: state.selected.has(id),
       onchange: (e) => { e.target.checked ? state.selected.add(id) : state.selected.delete(id); renderDevices(); } })),
     h('td', {}, h('div', { class: 'd-flex align-items-center gap-2' },
@@ -222,14 +259,25 @@ export function deviceRow(device) {
         action('Remove from the list', removeDevice)))));
 }
 
-export async function refreshDevice(device) {
-  const updated = await api('POST', `/api/devices/${encodeURIComponent(device.device_id)}/refresh`).catch(() => null);
+// Asks the board for its status. With a button, it waits for the board on it (see motion.js).
+export async function refreshDevice(device, button = null) {
+  const ask = () => api('POST', `/api/devices/${encodeURIComponent(device.device_id)}/refresh`);
+  const updated = button ? await waitForBoard(button, ask, device.device_id) : await ask().catch(() => null);
+  if (updated && !button) pulse(device.device_id);
   if (updated && updated.last_error) notify(`${deviceName(device)}: ${updated.last_error}`, 'warning');
+  return updated;
 }
 
-export async function pingDevice(device) {
-  await api('POST', `/api/devices/${encodeURIComponent(device.device_id)}/ping`).then(
-    () => notify(`${deviceName(device)} beeped`, 'success', 3000), () => {});
+export async function pingDevice(device, button = null) {
+  const ask = () => api('POST', `/api/devices/${encodeURIComponent(device.device_id)}/ping`);
+  if (button) {
+    await waitForBoard(button, ask, device.device_id);
+    return;
+  }
+  await ask().then(() => {
+    pulse(device.device_id);
+    notify(`${deviceName(device)} beeped`, 'success', 3000);
+  }, () => {});
 }
 
 export async function renameDevice(device) {
@@ -245,10 +293,88 @@ export async function editNotes(device) {
 }
 
 export async function removeDevice(device) {
-  if (!confirm(`Remove ${deviceName(device)} from the list? It stays on the network and comes back with Find devices.`)) return;
-  await api('DELETE', `/api/devices/${encodeURIComponent(device.device_id)}`).catch(() => {});
-  state.selected.delete(device.device_id);
-  await loadDevices();
+  removeDevices([device]);
+}
+
+// Takes boards off the list at once, and removes them for good after a few seconds, unless
+// undone. They stay on the network, and come back with Find devices.
+export function removeDevices(devices) {
+  const removed = devices.filter(Boolean);
+  if (!removed.length) return;
+  for (const device of removed) {
+    removing.add(device.device_id);
+    state.devices.delete(device.device_id);
+    state.selected.delete(device.device_id);
+  }
+  renderDevices();
+  undoable(removed.length === 1 ? `${deviceName(removed[0])} is off the list.` : `${removed.length} devices are off the list.`,
+    async () => {
+      for (const device of removed) {
+        await api('DELETE', devicePath(device), undefined, { quiet: true, keepalive: true }).catch(() => {});
+        removing.delete(device.device_id);
+      }
+      loadDevices().catch(() => {});
+    },
+    () => {
+      for (const device of removed) {
+        removing.delete(device.device_id);
+        state.devices.set(device.device_id, device);
+      }
+      renderDevices();
+    });
+}
+
+// ------------------------------------------------------------------ the health view: one row per board, to spot the one that struggles
+
+const health = { rows: new Map(), fetched: 0, sort: remembered('hacoap-health-sort', 'restarts') };
+
+async function loadFleetHealth() {
+  if (Date.now() - health.fetched < 30000) return;
+  health.fetched = Date.now();
+  const rows = await api('GET', '/api/fleet-health', undefined, { quiet: true });
+  health.rows = new Map(rows.map((r) => [r.device_id, r]));
+  if (deviceView.mode === 'health') renderFleetHealth(sortDevices(visibleDevices()));
+}
+
+const HEALTH_COLUMNS = [
+  ['name', 'board', null],
+  ['restarts', 'restarts (7 days)', (d, r) => -((r.bad_restarts || 0) * 1000 + (r.restarts || 0))],
+  ['srp', 'name on the LAN', (d) => ({ failed: 0, pending: 1, off: 2, registered: 3 }[d.srp_state] ?? 4)],
+  ['signal', 'signal', (d) => (missing(d.parent_rssi) ? Infinity : d.parent_rssi)],
+  ['battery', 'battery', (d) => lastly(d.battery)],
+  ['drain', 'drain', (d, r) => -(r.drain_per_day ?? -Infinity)],
+  ['firmware', 'firmware', (d, r) => ({ outdated: 0, unknown: 1, 'no-release': 2, current: 3 }[r.image_status] ?? 4)],
+  ['seen', 'last seen', (d) => -(d.last_seen || 0)],
+];
+
+export function renderFleetHealth(visible) {
+  const column = HEALTH_COLUMNS.find(([key]) => key === health.sort) || HEALTH_COLUMNS[1];
+  const rowOf = (d) => health.rows.get(d.device_id) || {};
+  const rows = column[2] ? [...visible].sort((a, b) => (column[2](a, rowOf(a)) - column[2](b, rowOf(b))) ||
+    deviceName(a).localeCompare(deviceName(b))) : visible;
+  const signal = (d) => missing(d.parent_rssi) ? '–'
+    : `${d.parent_rssi} dBm${missing(d.link_quality) ? '' : ` · ${d.link_quality}/3`}`;
+  const srp = { registered: ['registered', 'text-success'], pending: ['registering…', 'text-warning'],
+    failed: ['refused', 'text-danger'], off: ['not on a network', 'text-body-secondary'] };
+  const firmware = { current: ['release', 'success'], outdated: ['behind', 'warning'], unknown: ['not read', 'secondary'],
+    'no-release': ['no release', 'secondary'] };
+  const head = h('tr', {}, HEALTH_COLUMNS.map(([key, label]) => h('th', { class: `sortable${key === health.sort ? ' sorted' : ''}`,
+    scope: 'col', onclick: () => { health.sort = key; remember('hacoap-health-sort', key); renderFleetHealth(visible); } }, label)));
+  document.getElementById('device-health-table').replaceChildren(h('thead', {}, head), h('tbody', {}, rows.map((d) => {
+    const r = rowOf(d);
+    const [srpText, srpClass] = srp[d.srp_state] || ['–', 'text-body-secondary'];
+    const [fwText, fwClass] = firmware[r.image_status] || ['–', 'secondary'];
+    return h('tr', { 'data-board': d.device_id },
+      h('td', {}, h('a', { href: `#device/${encodeURIComponent(d.device_id)}`, class: 'device-link' }, deviceName(d))),
+      h('td', { class: r.bad_restarts ? 'text-danger' : '' }, r.restarts ? `${r.restarts}${r.bad_restarts ? ` (${r.bad_restarts} bad)` : ''}` : '0',
+        d.reset_cause ? h('div', { class: 'small text-body-secondary' }, `last: ${d.reset_cause}`) : null),
+      h('td', { class: srpClass }, srpText),
+      h('td', { class: 'text-nowrap' }, signal(d)),
+      h('td', { class: !missing(d.battery) && d.battery <= 20 ? 'text-danger' : '' }, pct(d.battery)),
+      h('td', { class: 'text-nowrap' }, missing(r.drain_per_day) ? '–' : `${r.drain_per_day.toFixed(2)} %/day`),
+      h('td', {}, h('span', { class: `badge text-bg-${fwClass}` }, fwText), d.image_version ? h('span', { class: 'small text-body-secondary ms-1' }, `v${d.image_version}`) : null),
+      h('td', { class: 'text-nowrap' }, h('span', { class: `online-dot ${d.online ? 'on' : 'off'}` }), ago(d.last_seen)));
+  })));
 }
 
 export async function showSlots(device) {
@@ -361,13 +487,7 @@ export const bulkActions = [
     if (value !== null) forSelected('Watering target set', (d) => patchDevice(d, { water_below: value.trim() }));
   }],
   null,
-  ['Remove from the list', () => {
-    if (!confirm(`Remove ${state.selected.size} device(s) from the list? They stay on the network and come back with Find devices.`)) return;
-    forSelected('Removed', async (d) => {
-      await api('DELETE', devicePath(d), undefined, { quiet: true });
-      state.selected.delete(d.device_id);
-    });
-  }],
+  ['Remove from the list', () => removeDevices([...state.selected].map((id) => state.devices.get(id)))],
 ];
 
 document.getElementById('bulk-menu').replaceChildren(...bulkActions.map((action) => action

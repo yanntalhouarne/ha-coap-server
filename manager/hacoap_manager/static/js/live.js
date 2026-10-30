@@ -3,7 +3,8 @@
 import { api, notify, state } from './core.js';
 import { currentRoute } from './tabs.js';
 import { loadAlerts, loadDashboard, onAlert } from './dashboard.js';
-import { loadDevices, renderDevices } from './devices.js';
+import { loadDevices, removing, renderDevices } from './devices.js';
+import { pulse } from './motion.js';
 import { loadHistory, loadJobs, renderJobs } from './updates.js';
 import { loadNetwork, net, pulseBoard, showNodeDetails } from './network.js';
 import { loadWallSoon } from './pages.js';
@@ -31,7 +32,9 @@ export function connectEvents(delay = 1000) {
     const event = JSON.parse(message.data);
     if (event.type === 'device') {
       const before = state.devices.get(event.device.device_id);
-      if (before && event.device.last_seen && event.device.last_seen !== before.last_seen) pulseBoard(event.device.device_id);
+      if (removing.has(event.device.device_id)) return; // off the list, for now (undo)
+      const answered = before && event.device.last_seen && event.device.last_seen !== before.last_seen;
+      if (answered) pulseBoard(event.device.device_id);
       state.devices.set(event.device.device_id, event.device);
       if (currentRoute() === 'wall') loadWallSoon();
       renderDevices();
@@ -40,6 +43,7 @@ export function connectEvents(delay = 1000) {
         renderDevicePhoto(event.device);
       }
       if (net.selectedNode && net.selectedNode.device_id === event.device.device_id) showNodeDetails(net.selectedNode);
+      if (answered) pulse(event.device.device_id); // its card, row and page, once drawn again
     } else if (event.type === 'devices') {
       loadDevices().catch(() => {});
     } else if (event.type === 'network') {

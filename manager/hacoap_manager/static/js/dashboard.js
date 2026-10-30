@@ -1,11 +1,12 @@
 // The dashboard: tiles, lists, battery drain, alerts and notifications, app updates, getting started.
 
-import { ago, api, busy, h, notify, pct, photoUrl, shortHash, state, svg, when } from './core.js';
+import { ago, api, busy, h, notify, pct, photoUrl, shortHash, state, svg, undoable, when } from './core.js';
 import { deviceName, runDoctor } from './devices.js';
 import { loadStatus } from './live.js';
 import { prepareUpdate, statusClass } from './updates.js';
 import { runOnTab } from './palette.js';
 import { waterIn } from './network.js';
+import { countTo, startPumping, waitForBoard } from './motion.js';
 
 // ------------------------------------------------------------------ dashboard
 
@@ -25,6 +26,17 @@ export function linkText(link) {
 export const deviceLink = (entry) => h('a', { href: `#device/${encodeURIComponent(entry.device_id)}` }, entry.name || entry.device_id);
 
 // A number with its label, an icon, and (with 'series') a small chart of the last 7 days.
+// A tile's number counts to a new value ("7/9": the first number)
+function tileValue(label, value) {
+  const el = h('div', { class: 'tile-value' });
+  const match = /^(\d+)(\/\d+)?$/.exec(String(value));
+  if (!match) {
+    el.textContent = value;
+    return el;
+  }
+  return countTo(el, `tile:${label}`, Number(match[1]), (v) => `${v}${match[2] || ''}`);
+}
+
 export function tile(label, value, kind, hint, icon, series) {
   let spark = null;
   if (series && series.some((v) => v > 0)) {
@@ -36,7 +48,7 @@ export function tile(label, value, kind, hint, icon, series) {
   }
   return h('div', { class: `tile tile-${kind}`, title: hint ? `${hint}${series ? ' (the chart: the last 7 days)' : ''}` : null },
     icon ? svg('svg', { class: 'icon tile-icon', 'aria-hidden': 'true' }, svg('use', { href: `#i-${icon}` })) : null,
-    h('div', { class: 'tile-value' }, value), h('div', { class: 'tile-label' }, label), spark);
+    tileValue(label, value), h('div', { class: 'tile-label' }, label), spark);
 }
 
 export async function loadDashboard() {
@@ -92,10 +104,11 @@ export async function loadDashboard() {
     h('td', {}, deviceLink(e), e.plant ? h('div', { class: 'small text-body-secondary' }, e.plant) : null),
     h('td', { class: 'text-end text-warning text-nowrap' }, pct(e.soil_moisture)),
     h('td', { class: 'small text-body-secondary text-nowrap' }, `under ${e.water_target} %`),
-    h('td', { class: 'text-end' }, h('button', { class: 'btn btn-sm btn-outline-primary text-nowrap', onclick: (event) => busy(event.target, async () => {
-      await api('POST', `/api/devices/${encodeURIComponent(e.device_id)}/pump`, { on: true });
+    h('td', { class: 'text-end' }, h('button', { class: 'btn btn-sm btn-outline-primary text-nowrap', onclick: (event) => waitForBoard(event.currentTarget, async () => {
+      const result = await api('POST', `/api/devices/${encodeURIComponent(e.device_id)}/pump`, { on: true });
+      startPumping(e.device_id, result.duration || 1);
       notify(`Watering ${e.name}`, 'success', 3000);
-    }) }, 'Run the pump')))),
+    }, e.device_id) }, 'Run the pump')))),
   'Every plant has enough water. Set a target per plant on its page, or the default in Settings.'),
   d.water_soon.length ? h('div', { class: 'small fw-bold mt-3 mb-1' }, 'Soon') : null,
   d.water_soon.length ? table(d.water_soon.map((e) => h('tr', {},
@@ -187,9 +200,26 @@ export async function loadDrain() {
 
 // ------------------------------------------------------------------ alerts and notifications
 
+// Alerts dismissed in the last seconds, which can still be undone
+const dismissing = new Set();
+
 export async function loadAlerts() {
-  state.alerts = (await api('GET', '/api/alerts', undefined, { quiet: true })).open;
+  state.alerts = (await api('GET', '/api/alerts', undefined, { quiet: true })).open.filter((a) => !dismissing.has(a.id));
   renderAlerts();
+}
+
+function dismissAlert(alert) {
+  dismissing.add(alert.id);
+  state.alerts = state.alerts.filter((a) => a.id !== alert.id);
+  renderAlerts();
+  undoable('Alert dismissed.', async () => {
+    await api('POST', `/api/alerts/${alert.id}/dismiss`, undefined, { quiet: true, keepalive: true }).catch(() => {});
+    dismissing.delete(alert.id);
+    loadAlerts().catch(() => {});
+  }, () => {
+    dismissing.delete(alert.id);
+    loadAlerts().catch(() => {});
+  });
 }
 
 export function renderAlerts() {
@@ -201,7 +231,7 @@ export function renderAlerts() {
       h('span', { class: 'small text-body-secondary text-nowrap' }, ago(a.raised)),
       a.device_id ? h('a', { href: `#device/${encodeURIComponent(a.device_id)}` }, a.message) : h('span', {}, a.message),
       h('button', { class: 'btn-close ms-auto', title: 'Dismiss', 'aria-label': 'Dismiss',
-        onclick: () => api('POST', `/api/alerts/${a.id}/dismiss`).then(loadAlerts, () => {}) }))))
+        onclick: () => dismissAlert(a) }))))
     : h('p', { class: 'text-body-secondary mb-0' }, 'Nothing needs attention.'));
 }
 

@@ -6,6 +6,7 @@ import { loadBuildsTab } from './builds.js';
 import { loadConsole } from './console.js';
 import { loadDashboard } from './dashboard.js';
 import { loadDevicePage } from './device.js';
+import { loadGraph } from './graphs.js';
 import { loadHistory, renderUpdateForm } from './updates.js';
 import { loadNetwork, net } from './network.js';
 import { loadSummary, loadWall, stopWall } from './pages.js';
@@ -13,7 +14,7 @@ import { setNetworkView } from './floorplan.js';
 
 // ------------------------------------------------------------------ tabs
 
-export const TABS = ['dashboard', 'devices', 'network', 'updates', 'images', 'builds', 'console', 'settings'];
+export const TABS = ['dashboard', 'devices', 'network', 'charts', 'updates', 'images', 'builds', 'console', 'settings'];
 export const PAGES = ['wall', 'summary'];  // pages without a tab
 
 // A route is a tab name, or "device/<id>" for one device's page.
@@ -30,6 +31,7 @@ export function showTab(route) {
   if (tab === 'summary') loadSummary().catch(() => {});
   if (tab === 'dashboard') loadDashboard().catch(() => {});
   if (tab === 'device') loadDevicePage(decodeURIComponent(rest.join('/'))).catch(() => {});
+  if (tab === 'charts') loadGraph().catch(() => {});
   if (tab === 'console') loadConsole(rest.length ? decodeURIComponent(rest.join('/')) : null).catch(() => {});
   if (tab === 'updates') { renderUpdateForm(); loadHistory(); }
   if (name === 'images') { loadImages(); loadBuilds(); }

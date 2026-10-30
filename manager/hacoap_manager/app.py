@@ -372,6 +372,25 @@ def create_app(services, background_tasks=True, on_quit=None):
         except (ValueError, TypeError) as exc:
             raise _bad_request(exc)
 
+    @app.get("/api/devices/{device_id}/timeline")
+    async def device_timeline(device_id: str, limit: int = 300):
+        device = s.db.device(device_id)
+        if device is None:
+            raise HTTPException(404, "Unknown device")
+        return feed.device_timeline(s.db, device, s.photos, max(1, min(limit, 1000)))
+
+    @app.get("/api/graph")
+    async def graph(metric: str = "soil_moisture", days: int = 7, device_ids: str = ""):
+        try:
+            return await asyncio.to_thread(fleet.graph, s.db, s.inventory, metric, max(1, min(days, 365)),
+                                           [d for d in device_ids.split(",") if d])
+        except ValueError as exc:
+            raise _bad_request(exc)
+
+    @app.get("/api/fleet-health")
+    async def fleet_health():
+        return await asyncio.to_thread(fleet.fleet_health, s.db, s.inventory)
+
     @app.get("/api/devices/{device_id}/details")
     async def device_details(device_id: str, days: int = 30):
         device = s.db.device(device_id)

@@ -7,6 +7,8 @@ import { deviceName, devicePath, deviceTags, pingDevice, refreshDevice, removeDe
 import { lineChart } from './charts.js';
 import { prepareUpdate, statusClass } from './updates.js';
 import { renderBoardSettings, renderDeviceHealth } from './board.js';
+import { loadDeviceTimeline } from './timeline.js';
+import { countTo, pumping, showPumping, startPumping, waitForBoard } from './motion.js';
 
 // ------------------------------------------------------------------ one device
 
@@ -47,17 +49,7 @@ export async function loadDevicePage(id) {
   }
   renderDeviceForm(details.device);
   renderDeviceCharts(details);
-  const updates = details.updates;
-  document.getElementById('device-updates').replaceChildren(updates.length ? h('table', { class: 'table table-sm mb-0' },
-    h('tbody', {}, updates.map((r) => h('tr', {}, h('td', { class: 'small' }, when(r.finished)),
-      h('td', {}, r.transport === 'serial' ? 'USB' : 'air'), h('td', {}, `v${r.image_version} · ${shortHash(r.image_hash)}`),
-      h('td', {}, h('span', { class: `badge text-bg-${statusClass[r.result] || 'secondary'}` }, r.result)),
-      h('td', { class: 'small' }, r.message)))))
-    : h('p', { class: 'text-body-secondary mb-0' }, 'No updates yet.'));
-  const events = details.network_events;
-  document.getElementById('device-events').replaceChildren(events.length ? h('ul', { class: 'list-unstyled small mb-0' },
-    events.map((e) => h('li', {}, h('span', { class: 'text-body-secondary' }, `${when(e.time)} `), e.message)))
-    : h('p', { class: 'text-body-secondary mb-0' }, 'No parent changes seen. Read the network now and then (Network tab) to follow them.'));
+  loadDeviceTimeline(id).catch(() => {});
 }
 
 export function renderDeviceStatus(device) {
@@ -77,10 +69,9 @@ export function renderDeviceStatus(device) {
     ['Address', device.address],
     ['Problem', device.last_error],
   ]), h('div', { class: 'd-flex flex-wrap gap-2 mt-2' },
-    h('button', { class: 'btn btn-sm btn-outline-secondary', onclick: (e) => busy(e.target, async () => {
-      await refreshDevice(device);
-      await loadDevicePage(device.device_id);
-    }) }, 'Refresh'),
+    h('button', { class: 'btn btn-sm btn-outline-secondary', onclick: async (e) => {
+      if (await refreshDevice(device, e.currentTarget)) await loadDevicePage(device.device_id);
+    } }, 'Refresh'),
     h('button', { class: 'btn btn-sm btn-outline-secondary', title: 'Each step from this computer to this board, and how fast it answers',
       onclick: () => runDoctor(device) }, 'Check the connection')));
   renderDeviceHero(device);
@@ -101,33 +92,40 @@ export function renderDeviceHero(device) {
   const figure = (icon, label, value, note, cls = '') => h('div', { class: `hero-figure ${cls}` },
     svg('svg', { class: 'icon', 'aria-hidden': 'true' }, svg('use', { href: `#i-${icon}` })),
     h('div', {}, h('div', { class: 'hero-label' }, label), h('div', { class: 'hero-value' }, value), note ? h('div', { class: 'hero-note' }, note) : null));
-  const pump = (e) => busy(e.target, async () => {
-    await api('POST', devicePath(device, '/pump'), { on: true });
-    notify(`Watering ${deviceName(device)}`, 'success', 3000);
-  });
-  document.getElementById('device-hero').replaceChildren(
+  const id = device.device_id;
+  const pump = (e) => waitForBoard(e.currentTarget, async () => {
+    const result = await api('POST', devicePath(device, '/pump'), { on: true });
+    startPumping(id, result.duration || 1);
+    return result;
+  }, id);
+  // The numbers that change with a reading count to their new value
+  const battery = countTo(h('span', {}), `hero:${id}:battery`, device.battery, (v) => `${v} %`);
+  const air = countTo(h('span', {}), `hero:${id}:air`, device.temperature, (v) => `${v} °C`);
+  const hero = document.getElementById('device-hero');
+  hero.dataset.board = id;
+  hero.replaceChildren(
     h('div', { class: 'hero-photo' }, device.photo ? h('img', { src: shownPhoto(device), alt: device.plant ? `The ${device.plant}` : '' })
       : svg('svg', { viewBox: '0 0 512 512', class: 'card-glyph' }, svg('use', { href: '#hacoap-glyph' }))),
-    h('div', { class: 'hero-gauge' }, soilGauge(device.soil_moisture, device.water_target, 112),
+    h('div', { class: 'hero-gauge' }, soilGauge(device.soil_moisture, device.water_target, 112, `hero:${id}:soil`),
       h('div', { class: 'hero-label text-center' }, device.water_target ? `soil · water under ${device.water_target} %` : 'soil')),
     h('div', { class: 'hero-figures' },
       figure('droplet', 'needs water', water, device.plant || '', device.needs_water ? 'warn' : ''),
-      figure('battery-medium', 'battery', pct(device.battery), has(device.battery) ? daysText(health.battery_forecast) : '',
+      figure('battery-medium', 'battery', battery, has(device.battery) ? daysText(health.battery_forecast) : '',
         has(device.battery) && device.battery <= 20 ? 'bad' : ''),
       figure('signal-low', 'signal', signal, link ? `to its parent ${link.parent}` : 'read the network to see it'),
-      figure('thermometer', 'air', has(device.temperature) ? `${device.temperature} °C` : '–', `humidity ${pct(device.air_humidity)}`)),
+      figure('thermometer', 'air', air, `humidity ${pct(device.air_humidity)}`)),
     h('div', { class: 'hero-actions' },
       h('button', { class: `btn btn-sm ${device.needs_water ? 'btn-primary' : 'btn-outline-primary'}`, type: 'button', onclick: pump },
         svg('svg', { class: 'icon', 'aria-hidden': 'true' }, svg('use', { href: '#i-droplets' })), ' Run the pump'),
-      h('button', { class: 'btn btn-sm btn-outline-secondary', type: 'button', onclick: () => pingDevice(device) },
+      h('button', { class: 'btn btn-sm btn-outline-secondary', type: 'button', onclick: (e) => pingDevice(device, e.currentTarget) },
         svg('svg', { class: 'icon', 'aria-hidden': 'true' }, svg('use', { href: '#i-bell-ring' })), ' Beep'),
       h('a', { class: 'btn btn-sm btn-outline-secondary', href: `#console/${encodeURIComponent(device.device_id)}`,
         title: 'Its log over the air, in the console' },
         svg('svg', { class: 'icon', 'aria-hidden': 'true' }, svg('use', { href: '#i-terminal' })), ' Log'),
-      h('button', { class: 'btn btn-sm btn-outline-secondary', type: 'button', onclick: (e) => busy(e.target, async () => {
-        await refreshDevice(device);
-        await loadDevicePage(device.device_id);
-      }) }, svg('svg', { class: 'icon', 'aria-hidden': 'true' }, svg('use', { href: '#i-refresh-cw' })), ' Refresh')));
+      h('button', { class: 'btn btn-sm btn-outline-secondary', type: 'button', onclick: async (e) => {
+        if (await refreshDevice(device, e.currentTarget)) await loadDevicePage(device.device_id);
+      } }, svg('svg', { class: 'icon', 'aria-hidden': 'true' }, svg('use', { href: '#i-refresh-cw' })), ' Refresh')));
+  showPumping();
 }
 
 export function renderDeviceFirmware(details) {
@@ -156,7 +154,16 @@ export function renderDeviceControls(device) {
     known ? null : h('option', { value: '', selected: true, disabled: true }, '? s'),
     [1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) => h('option', { value: n, selected: known && n === device.pump_s }, `${n} s`)));
   if (!known) result.textContent = 'The run time isn\'t known yet: set it, or run the pump, to read it from the board.';
-  const call = (body) => (e) => busy(e.target, async () => show(await api('POST', `/api/devices/${id}/pump`, body)));
+  const call = (body) => (e) => waitForBoard(e.currentTarget, async () => {
+    const state = await api('POST', `/api/devices/${id}/pump`, body);
+    show(state);
+    if (body.on === true) startPumping(device.device_id, state.duration || 1);
+    if (body.on === false) {
+      pumping.delete(device.device_id);
+      showPumping();
+    }
+    return state;
+  }, device.device_id);
   document.getElementById('device-controls').replaceChildren(
     h('div', { class: 'd-flex flex-wrap gap-2 align-items-center' },
       h('button', { class: 'btn btn-sm btn-primary', onclick: call({ on: true }) }, 'Run the pump'),
@@ -166,7 +173,7 @@ export function renderDeviceControls(device) {
         if (!seconds.value) return notify('Choose a run time', 'warning');
         call({ seconds: Number(seconds.value) })(e);
       } }, 'Set'),
-      h('button', { class: 'btn btn-sm btn-outline-secondary ms-auto', onclick: () => pingDevice(device) }, 'Beep')),
+      h('button', { class: 'btn btn-sm btn-outline-secondary ms-auto', onclick: (e) => pingDevice(device, e.currentTarget) }, 'Beep')),
     result,
     h('div', { class: 'form-text' }, 'Commands reach a sleeping board at its next poll: up to 3 s.'));
 }

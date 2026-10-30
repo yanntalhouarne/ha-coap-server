@@ -427,6 +427,14 @@ class Database:
         return self._query("SELECT time, kind, message FROM activity WHERE device_id = ? AND time >= ? ORDER BY time",
                            (device_id, since))
 
+    def device_activity(self, device_id, limit):
+        """A device's newest activity, newest first."""
+        return self._query("SELECT time, kind, message FROM activity WHERE device_id = ? ORDER BY time DESC LIMIT ?",
+                           (device_id, limit))
+
+    def device_alerts(self, device_id, limit):
+        return self._query("SELECT * FROM alerts WHERE device_id = ? ORDER BY id DESC LIMIT ?", (device_id, limit))
+
     def recent_activity(self, device_id, kind, limit):
         """A device's newest activity of one kind, newest first."""
         return self._query("SELECT time, kind, message FROM activity WHERE device_id = ? AND kind = ? "

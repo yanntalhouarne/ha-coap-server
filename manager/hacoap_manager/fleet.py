@@ -346,3 +346,60 @@ def dashboard(db, inventory, topology):
         "network_read": topology.get("fetched") if topology else None,
         "trends": trends(db, inventory),
     }
+
+
+# ---------------------------------------------------------------- every board on one chart
+
+GRAPH_METRICS = ("soil_moisture", "battery", "air_humidity", "temperature", "link_margin", "parent_rssi")
+GRAPH_POINTS = 400  # per board, at most: longer histories are averaged into this many points
+
+
+def downsample(points, limit=GRAPH_POINTS):
+    """[(t, v)] averaged into at most 'limit' points, by equal time slices."""
+    if len(points) <= limit:
+        return points
+    t0, t1 = points[0][0], points[-1][0]
+    width = (t1 - t0) / limit or 1
+    buckets = {}
+    for t, v in points:
+        buckets.setdefault(min(int((t - t0) / width), limit - 1), []).append((t, v))
+    return [(sum(t for t, _ in b) / len(b), round(sum(v for _, v in b) / len(b), 1))
+            for _, b in sorted(buckets.items())]
+
+
+def graph(db, inventory, metric, days, device_ids=None):
+    """One metric for every board (or the given ones): [{device_id, name, plant, points: [[t, v]]}]."""
+    if metric not in GRAPH_METRICS:
+        raise ValueError(f"unknown metric {metric}")
+    since = time.time() - days * DAY
+    result = []
+    for device in inventory.devices():
+        if device_ids and device["device_id"] not in device_ids:
+            continue
+        if metric in ("link_margin", "parent_rssi"):
+            key = "link_margin" if metric == "link_margin" else "average_rssi"
+            rows = db.link_samples(device["device_id"], since)
+            points = [(r["time"], r[key]) for r in rows if r[key] is not None]
+        else:
+            points = [(r["time"], r[metric]) for r in db.readings(device["device_id"], since) if r[metric] is not None]
+        result.append({"device_id": device["device_id"], "name": device["name"] or device["device_id"],
+                       "plant": device["plant"], "tags": device["tags"],
+                       "points": [list(p) for p in downsample(points)]})
+    return result
+
+
+def fleet_health(db, inventory):
+    """A row per board for the devices list's health view: restarts this week, its name's
+    registration, its signal, its battery drain under the image it runs, its firmware."""
+    now = time.time()
+    release = db.release_image()
+    this_week = {r["device_id"]: r for r in restarts(db, {}, days=7)}
+    rows = []
+    for device in inventory.devices():
+        periods = [p for p in battery_drain(db, device, now) if p["rate"]]
+        current = periods[-1] if periods else None
+        week = this_week.get(device["device_id"], {})
+        rows.append({"device_id": device["device_id"], "restarts": week.get("count", 0), "bad_restarts": week.get("bad", 0),
+                     "drain_per_day": current["rate"]["per_day"] if current else None,
+                     "image_status": image_status(device, release)})
+    return rows
