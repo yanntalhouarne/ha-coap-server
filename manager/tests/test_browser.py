@@ -176,7 +176,9 @@ def test_device_page(page):
     dom = page("device/1a2b3c4d")
     assert "Last seen" in dom and "-5 °C" in dom
     assert "Run the pump" in dom                                      # the controls
-    assert "Add a photo of the plant" in dom and "it needs water" in dom
+    assert "Add a photo" in dom and "it needs water" in dom
+    assert "plant-photo" not in dom                                   # one photo: the one at the top
+    assert "</div>null" not in dom                                    # nothing missing printed as "null"
     assert "Soil moisture" in dom and "<svg" in dom                   # the charts
     assert "chart-event event-pump" in dom                            # a pump run marked on them
     assert "Battery drain by firmware" in dom                         # its drain (48 h of readings)

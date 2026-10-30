@@ -99,7 +99,7 @@ export function renderDeviceHero(device) {
     notify(`Watering ${deviceName(device)}`, 'success', 3000);
   });
   document.getElementById('device-hero').replaceChildren(
-    h('div', { class: 'hero-photo' }, device.photo ? h('img', { src: photoUrl(device), alt: device.plant ? `The ${device.plant}` : '' })
+    h('div', { class: 'hero-photo' }, device.photo ? h('img', { src: shownPhoto(device), alt: device.plant ? `The ${device.plant}` : '' })
       : svg('svg', { viewBox: '0 0 512 512', class: 'card-glyph' }, svg('use', { href: '#hacoap-glyph' }))),
     h('div', { class: 'hero-gauge' }, soilGauge(device.soil_moisture, device.water_target, 112),
       h('div', { class: 'hero-label text-center' }, device.water_target ? `soil · water under ${device.water_target} %` : 'soil')),
@@ -269,8 +269,8 @@ export function renderDeviceCharts(details) {
     h('span', { class: 'legend-line' }), `${name} (solid) `, ...devicePage.compare.flatMap((c, i) =>
       [h('span', { class: 'legend-line dashed', style: `--line: ${COMPARE_COLORS[i]}` }), `${c.name} `])) : null;
   const help = h('div', { class: 'small text-body-secondary mt-1' }, 'Point at a chart to read its values; drag across one to zoom into a period.');
-  document.getElementById('device-charts').replaceChildren(h('div', { class: 'charts' }, charts), legend, compared, help,
-    parents.length ? h('div', { class: 'small text-body-secondary mt-1' }, `Parents in this period: ${parents.join(', ')}`) : null);
+  document.getElementById('device-charts').replaceChildren(...[h('div', { class: 'charts' }, charts), legend, compared, help,
+    parents.length ? h('div', { class: 'small text-body-secondary mt-1' }, `Parents in this period: ${parents.join(', ')}`) : null].filter(Boolean));
   renderDeviceDrain(details.drain || []);
 }
 
@@ -330,9 +330,16 @@ export async function shrinkPhoto(file) {
   return new Promise((resolve) => canvas.toBlob((blob) => resolve(blob || file), 'image/jpeg', 0.85));
 }
 
-// The plant card: its photos over time (a slider steps through them, with the soil at each
-// date), whether it needs water, when it will, and what a pump run does.
+// The plant card: its photos over time (a slider steps through them in the photo at the top of
+// the page, with the soil at each date), whether it needs water, when it will, and what a pump
+// run does.
 export const timeline = { device: null, photo: null, taken: [], index: -1 };
+
+// The photo at the top of the page: the one the slider is on, or the newest.
+function shownPhoto(device) {
+  const taken = timeline.device === device.device_id ? timeline.taken[timeline.index] : null;
+  return taken ? devicePath(device, `/photos/${taken}`) : photoUrl(device);
+}
 
 export async function loadTimeline(device) {
   timeline.taken = (await api('GET', devicePath(device, '/photos'), undefined, { quiet: true })).map((p) => p.taken);
@@ -356,11 +363,6 @@ export function renderDevicePhoto(device) {
     if (file) busy(choose, async () => api('POST', devicePath(device, `/photo?taken=${Math.round(file.lastModified / 1000)}`), await shrinkPhoto(file)));
   });
   const taken = timeline.taken[timeline.index];
-  const alt = device.plant ? `The ${device.plant}` : `The plant of ${deviceName(device)}`;
-  const picture = taken
-    ? h('img', { class: 'plant-photo', src: `${devicePath(device, `/photos/${taken}`)}`, alt })
-    : h('button', { class: 'plant-photo-empty', type: 'button', onclick: () => input.click() },
-      'Add a photo of the plant this device looks after');
 
   // The slider, with the soil at that date and a chart marking it
   let steps = null;
@@ -372,7 +374,7 @@ export function renderDevicePhoto(device) {
       'aria-label': 'Photo date' });
     slider.addEventListener('input', () => { timeline.index = Number(slider.value); renderDevicePhoto(device); });
     const soil = readings.map((r) => ({ t: r.time, v: r.soil_moisture }));
-    steps = h('div', { class: 'mt-2' }, slider,
+    steps = h('div', { class: 'mb-2' }, slider,
       h('div', { class: 'small d-flex justify-content-between' },
         h('span', {}, new Date(taken * 1000).toLocaleDateString([], { year: 'numeric', month: 'short', day: 'numeric' })),
         h('span', { class: 'text-body-secondary' }, `photo ${timeline.index + 1} of ${timeline.taken.length}` +
@@ -391,8 +393,8 @@ export function renderDevicePhoto(device) {
   const health = devicePage.details && devicePage.details.device.device_id === device.device_id ? devicePage.details.health : {};
   const forecast = health.water_forecast;
   const effect = health.pump_effect;
-  document.getElementById('device-photo').replaceChildren(...[picture, steps,
-    device.plant ? h('div', { class: 'fw-bold mt-2' }, device.plant) : null,
+  document.getElementById('device-photo').replaceChildren(...[steps,
+    device.plant ? h('div', { class: 'fw-bold' }, device.plant) : null,
     h('div', { class: `small mt-1 ${device.needs_water ? 'text-warning' : 'text-body-secondary'}` }, water),
     forecast && !device.needs_water && forecast.days !== null ? h('div', { class: 'small text-body-secondary' },
       `It dries about ${forecast.per_day.toFixed(1)} % a day: it will need water ${waterIn(forecast)}.`) : null,
@@ -401,6 +403,7 @@ export function renderDevicePhoto(device) {
     h('div', { class: 'd-flex flex-wrap gap-2 mt-2' }, choose,
       taken ? h('button', { class: 'btn btn-sm btn-outline-danger', type: 'button', onclick: async () => {
         if (confirm('Remove this photo?')) await api('DELETE', devicePath(device, `/photos/${taken}`)).catch(() => {});
-      } }, timeline.taken.length > 1 ? 'Remove this one' : 'Remove') : null),
+      } }, timeline.taken.length > 1 ? 'Remove this one' : 'Remove photo') : null),
     input].filter(Boolean));
+  renderDeviceHero(device);
 }
