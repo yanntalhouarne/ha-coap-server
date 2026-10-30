@@ -11,6 +11,9 @@ from pathlib import Path
 from .otbr import BorderRouter, BorderRouterError
 from .pictures import PictureError, picture_type
 
+# How recent a board's own report ('diag') must be to name it on the map by its short address
+BOARD_REPORT_FRESH_S = 2 * 3600
+
 MESHCOP_SERVICE = "_meshcop._udp.local."  # every Thread border router advertises it
 REST_PORT = 8081
 
@@ -126,15 +129,42 @@ class NetworkService:
         return json.loads(zlib.decompress(row["topology"])) if row else None
 
     def _name_boards(self, topology):
-        """Names the nodes that are boards in the inventory, by their IPv6 address."""
-        by_address = {d["address"].lower(): d for d in self.db.devices() if d["address"]}
+        """Names the nodes that are boards in the inventory: by their IPv6 address, else by the
+        short address the board itself reported in 'diag' lately (an older border router gives
+        no addresses for children). A board's own measure of its parent fills in a link the
+        border router gave no signal for."""
+        devices = self.db.devices()
+        by_address = {d["address"].lower(): d for d in devices if d["address"]}
+        recent = time.time() - BOARD_REPORT_FRESH_S
+        by_rloc16 = {d["rloc16"].lower(): d for d in devices if d["rloc16"] and (d["diag_time"] or 0) > recent}
+        boards = {}
         for node in topology["nodes"]:
             for address in node["ipv6"]:
                 device = by_address.get(address.lower())
                 if device is not None:
-                    node["device_id"] = device["device_id"]
-                    node["name"] = device["name"] or device["device_id"]
+                    boards[node["id"]] = device
                     break
+        named = {d["device_id"] for d in boards.values()}
+        for node in topology["nodes"]:
+            device = by_rloc16.get((node.get("rloc16_hex") or "").lower())
+            if node["id"] not in boards and device is not None and device["device_id"] not in named:
+                boards[node["id"]] = device
+                named.add(device["device_id"])
+                node["named_by"] = "rloc16"
+        nodes = {n["id"]: n for n in topology["nodes"]}
+        for node_id, device in boards.items():
+            node = nodes[node_id]
+            node["device_id"] = device["device_id"]
+            node["name"] = device["name"] or device["device_id"]
+            parent = nodes.get(node.get("parent"), {})
+            if device["parent_rssi"] is None or device["parent_rloc16"] != parent.get("rloc16_hex"):
+                continue
+            link = next((l for l in topology["links"] if {l["a"], l["b"]} == {node_id, parent["id"]}), None)
+            if link is not None and link["average_rssi"] is None and link["link_margin"] is None:
+                link["average_rssi"] = device["parent_rssi"]
+                if link["link_quality_in"] is None:
+                    link["link_quality_in"] = device["link_quality"]
+                link["from_board"] = True
 
     def _record_links(self, topology):
         """Each board's link to its parent, for the link history."""

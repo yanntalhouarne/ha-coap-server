@@ -140,6 +140,8 @@ static inline void k_spin_unlock(struct k_spinlock *lock, k_spinlock_key_t key)
 
 typedef long atomic_t;
 
+#define ATOMIC_INIT(i) (i)
+
 static inline long atomic_set(atomic_t *target, long value)
 {
 	long old = *target;
@@ -547,6 +549,89 @@ extern struct mgmt_callback *fake_mgmt_callback; // last callback registered
 void mgmt_callback_register(struct mgmt_callback *callback);
 /* Delivers an mcumgr event to the registered callback, as mcumgr would. */
 int32_t fake_mgmt_notify(uint32_t event);
+
+/* ---------------------------------------------------------------- OpenThread parent */
+
+typedef struct otRouterInfo
+{
+	uint16_t mRloc16;
+	uint8_t mLinkQualityIn;
+} otRouterInfo;
+
+extern uint16_t fake_rloc16;
+extern otRouterInfo fake_parent;
+extern int8_t fake_parent_rssi;
+extern int8_t fake_parent_last_rssi;
+
+uint16_t otThreadGetRloc16(otInstance *instance);
+otError otThreadGetParentInfo(otInstance *instance, otRouterInfo *parent);
+otError otThreadGetParentAverageRssi(otInstance *instance, int8_t *rssi);
+otError otThreadGetParentLastRssi(otInstance *instance, int8_t *rssi);
+
+/* ---------------------------------------------------------------- settings */
+
+typedef long (*settings_read_cb)(void *cb_arg, void *data, size_t len);
+
+/* The handler's set function becomes fake_settings_set_<name>; the tests hand it to
+ * fake_settings_handler before settings_load_subtree(), which feeds it the stored values. */
+#define SETTINGS_STATIC_HANDLER_DEFINE(_hname, _tree, _get, _set, _commit, _export) \
+	int (*const fake_settings_set_##_hname)(const char *, size_t, settings_read_cb, void *) = _set
+
+#define FAKE_SETTINGS_MAX 16
+#define FAKE_SETTING_SIZE 8
+
+struct fake_setting
+{
+	char name[32];
+	uint8_t value[FAKE_SETTING_SIZE];
+	size_t length;
+};
+
+extern struct fake_setting fake_settings[FAKE_SETTINGS_MAX]; // the "flash"
+extern int fake_settings_count;
+extern int fake_settings_saves;
+extern int fake_settings_load_err;
+extern int (*fake_settings_handler)(const char *name, size_t len, settings_read_cb read_cb, void *cb_arg);
+
+int settings_subsys_init(void);
+int settings_load_subtree(const char *subtree);
+int settings_save_one(const char *name, const void *value, size_t val_len);
+/* The stored value of 'name' as an int32 (or 'missing') */
+int32_t fake_setting_int(const char *name, int32_t missing);
+void fake_setting_store(const char *name, const void *value, size_t length);
+
+/* ---------------------------------------------------------------- reset cause, fatal errors, reboot */
+
+#define RESET_PIN BIT(0)
+#define RESET_SOFTWARE BIT(1)
+#define RESET_BROWNOUT BIT(2)
+#define RESET_POR BIT(3)
+#define RESET_WATCHDOG BIT(4)
+#define RESET_DEBUG BIT(5)
+#define RESET_LOW_POWER_WAKE BIT(7)
+#define RESET_CPU_LOCKUP BIT(8)
+
+extern uint32_t fake_reset_cause;
+extern int fake_reset_cause_clears;
+
+int hwinfo_get_reset_cause(uint32_t *cause);
+int hwinfo_clear_reset_cause(void);
+
+typedef struct
+{
+	struct
+	{
+		uint32_t pc;
+	} basic;
+} z_arch_esf_t;
+
+#define __noinit
+#define LOG_PANIC() ((void)0)
+#define SYS_REBOOT_COLD 1
+
+extern int fake_reboots;
+
+void sys_reboot(int type);
 
 /* ---------------------------------------------------------------- nRF, USB, random */
 

@@ -6,6 +6,8 @@
 
 #include "fake.h"
 
+#include <stdio.h>
+
 /* ---------------------------------------------------------------- kernel */
 
 int64_t fake_uptime_ms;
@@ -564,6 +566,150 @@ int32_t fake_mgmt_notify(uint32_t event)
 	return fake_mgmt_callback->callback(event, MGMT_ERR_EOK, &abort_more, NULL, 0);
 }
 
+/* ---------------------------------------------------------------- OpenThread parent */
+
+uint16_t fake_rloc16;
+otRouterInfo fake_parent;
+int8_t fake_parent_rssi;
+int8_t fake_parent_last_rssi;
+
+uint16_t otThreadGetRloc16(otInstance *instance)
+{
+	(void)instance;
+	return fake_rloc16;
+}
+
+otError otThreadGetParentInfo(otInstance *instance, otRouterInfo *parent)
+{
+	(void)instance;
+	*parent = fake_parent;
+	return OT_ERROR_NONE;
+}
+
+otError otThreadGetParentAverageRssi(otInstance *instance, int8_t *rssi)
+{
+	(void)instance;
+	*rssi = fake_parent_rssi;
+	return OT_ERROR_NONE;
+}
+
+otError otThreadGetParentLastRssi(otInstance *instance, int8_t *rssi)
+{
+	(void)instance;
+	*rssi = fake_parent_last_rssi;
+	return OT_ERROR_NONE;
+}
+
+/* ---------------------------------------------------------------- settings */
+
+struct fake_setting fake_settings[FAKE_SETTINGS_MAX];
+int fake_settings_count;
+int fake_settings_saves;
+int fake_settings_load_err;
+int (*fake_settings_handler)(const char *name, size_t len, settings_read_cb read_cb, void *cb_arg);
+
+int settings_subsys_init(void)
+{
+	return 0;
+}
+
+static long read_setting(void *cb_arg, void *data, size_t len)
+{
+	const struct fake_setting *setting = cb_arg;
+	size_t count = MIN(len, setting->length);
+
+	memcpy(data, setting->value, count);
+	return (long)count;
+}
+
+int settings_load_subtree(const char *subtree)
+{
+	size_t prefix = strlen(subtree);
+
+	if (fake_settings_load_err != 0)
+	{
+		return fake_settings_load_err;
+	}
+	for (int i = 0; (i < fake_settings_count) && (fake_settings_handler != NULL); i++)
+	{
+		if ((strncmp(fake_settings[i].name, subtree, prefix) == 0) && (fake_settings[i].name[prefix] == '/'))
+		{
+			fake_settings_handler(&fake_settings[i].name[prefix + 1], fake_settings[i].length, read_setting,
+					      &fake_settings[i]);
+		}
+	}
+	return 0;
+}
+
+void fake_setting_store(const char *name, const void *value, size_t length)
+{
+	struct fake_setting *setting = NULL;
+
+	for (int i = 0; i < fake_settings_count; i++)
+	{
+		if (strcmp(fake_settings[i].name, name) == 0)
+		{
+			setting = &fake_settings[i];
+		}
+	}
+	if ((setting == NULL) && (fake_settings_count < FAKE_SETTINGS_MAX))
+	{
+		setting = &fake_settings[fake_settings_count++];
+		snprintf(setting->name, sizeof(setting->name), "%s", name);
+	}
+	if (setting != NULL)
+	{
+		setting->length = MIN(length, (size_t)FAKE_SETTING_SIZE);
+		memcpy(setting->value, value, setting->length);
+	}
+}
+
+int settings_save_one(const char *name, const void *value, size_t val_len)
+{
+	fake_settings_saves++;
+	fake_setting_store(name, value, val_len);
+	return 0;
+}
+
+int32_t fake_setting_int(const char *name, int32_t missing)
+{
+	int32_t value = missing;
+
+	for (int i = 0; i < fake_settings_count; i++)
+	{
+		if ((strcmp(fake_settings[i].name, name) == 0) && (fake_settings[i].length == sizeof(value)))
+		{
+			memcpy(&value, fake_settings[i].value, sizeof(value));
+		}
+	}
+	return value;
+}
+
+/* ---------------------------------------------------------------- reset cause, reboot */
+
+uint32_t fake_reset_cause;
+int fake_reset_cause_clears;
+int fake_reboots;
+
+int hwinfo_get_reset_cause(uint32_t *cause)
+{
+	*cause = fake_reset_cause;
+	return 0;
+}
+
+int hwinfo_clear_reset_cause(void)
+{
+	fake_reset_cause = 0;
+	fake_reset_cause_clears++;
+	return 0;
+}
+
+void sys_reboot(int type)
+{
+	(void)type;
+	fake_reboots++;
+}
+
 /* ---------------------------------------------------------------- nRF, USB, random */
 
 int fake_leds[FAKE_LED_COUNT];
@@ -670,4 +816,19 @@ void fake_reset(void)
 	memset(&fake_ficr, 0, sizeof(fake_ficr));
 	fake_usb_enable_ret = 0;
 	fake_random = 0;
+
+	fake_rloc16 = 0;
+	memset(&fake_parent, 0, sizeof(fake_parent));
+	fake_parent_rssi = 0;
+	fake_parent_last_rssi = 0;
+
+	memset(fake_settings, 0, sizeof(fake_settings));
+	fake_settings_count = 0;
+	fake_settings_saves = 0;
+	fake_settings_load_err = 0;
+	fake_settings_handler = NULL;
+
+	fake_reset_cause = 0;
+	fake_reset_cause_clears = 0;
+	fake_reboots = 0;
 }

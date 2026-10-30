@@ -274,6 +274,23 @@ def wall(db, inventory, now=None):
     return plants
 
 
+# Restarts that are a problem (application/src/diag.c: the watchdog, a CPU lockup, a crash)
+BAD_RESTART = ("watchdog", "lockup", "crash")
+
+
+def restarts(db, names, days=7):
+    """The boards that restarted in the last 'days', most first: {device_id, name, count, bad, last}."""
+    now = time.time()
+    by_device = {}
+    for row in db.activity_kind_between("restart", now - days * 86400, now + 1):
+        entry = by_device.setdefault(row["device_id"], {"device_id": row["device_id"], "count": 0, "bad": 0,
+                                                        "name": names.get(row["device_id"], row["device_id"])})
+        entry["count"] += 1
+        entry["bad"] += any(word in row["message"] for word in BAD_RESTART)
+        entry["last"] = {"time": row["time"], "message": row["message"]}
+    return sorted(by_device.values(), key=lambda e: (-e["bad"], -e["count"]))
+
+
 def dashboard(db, inventory, topology):
     devices = inventory.devices()
     release = db.release_image()
@@ -325,6 +342,7 @@ def dashboard(db, inventory, topology):
         "water_soon": soon,
         "weak_links": weak_links(topology)[:10],
         "recent_updates": [{**u, "name": names.get(u["device_id"], u["device_id"])} for u in db.updates(limit=8)],
+        "restarts": restarts(db, names),
         "network_read": topology.get("fetched") if topology else None,
         "trends": trends(db, inventory),
     }

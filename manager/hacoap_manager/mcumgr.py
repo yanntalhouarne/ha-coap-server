@@ -1,5 +1,5 @@
 """mcumgr (SMP) over USB serial or UDP, through smpclient: image slots, upload, test,
-confirm and reset.
+confirm and reset, and the board's settings (the firmware's own 'hacoap' group, 64).
 
 The upload resumes from the device's offset after a timeout, instead of starting over:
 over Thread, a lost packet is not unusual.
@@ -10,6 +10,8 @@ import hashlib
 import logging
 from dataclasses import dataclass
 
+from smp import error as smperror
+from smp import message as smpmessage
 from smpclient import SMPClient
 from smpclient.generics import error, success
 from smpclient.requests.image_management import ImageStatesRead, ImageStatesWrite, ImageUploadWrite
@@ -20,6 +22,7 @@ from smpclient.transport.udp import SMPUDPTransport
 log = logging.getLogger(__name__)
 
 MCUMGR_UDP_PORT = 1337
+HACOAP_GROUP = 64  # application/src/hacoap_mgmt.c
 
 
 class McumgrError(Exception):
@@ -60,6 +63,71 @@ class _UDPTransport(SMPUDPTransport):
 
     async def connect(self, address, timeout_s, port=None):
         await super().connect(address, timeout_s, port if port is not None else self._port)
+
+
+# ---------------------------------------------------------------- the 'hacoap' group (64)
+
+class _HacoapErrorV1(smperror.ErrorV1):
+    _GROUP_ID = HACOAP_GROUP
+
+
+class _HacoapErrorV2(smperror.ErrorV2[smperror.MGMT_ERR]):
+    _GROUP_ID = HACOAP_GROUP
+
+
+class HacoapSettingsReadResponse(smpmessage.ReadResponse):
+    _GROUP_ID = HACOAP_GROUP
+    _COMMAND_ID = 0
+    settings: dict[str, list[int]]  # name: [value, default, min, max]
+    soil_mv: int
+    samples: int
+
+
+class HacoapSettingsWriteResponse(smpmessage.WriteResponse):
+    _GROUP_ID = HACOAP_GROUP
+    _COMMAND_ID = 0
+    settings: dict[str, list[int]]
+    soil_mv: int
+    samples: int
+
+
+class HacoapSettingsRead(smpmessage.ReadRequest):
+    _GROUP_ID = HACOAP_GROUP
+    _COMMAND_ID = 0
+    _Response = HacoapSettingsReadResponse
+    _ErrorV1 = _HacoapErrorV1
+    _ErrorV2 = _HacoapErrorV2
+
+
+class HacoapSettingsWrite(smpmessage.WriteRequest):
+    _GROUP_ID = HACOAP_GROUP
+    _COMMAND_ID = 0
+    _Response = HacoapSettingsWriteResponse
+    _ErrorV1 = _HacoapErrorV1
+    _ErrorV2 = _HacoapErrorV2
+    set: dict[str, int]
+
+
+class HacoapSampleResponse(smpmessage.WriteResponse):
+    _GROUP_ID = HACOAP_GROUP
+    _COMMAND_ID = 1
+    samples: int
+
+
+class HacoapSample(smpmessage.WriteRequest):
+    _GROUP_ID = HACOAP_GROUP
+    _COMMAND_ID = 1
+    _Response = HacoapSampleResponse
+    _ErrorV1 = _HacoapErrorV1
+    _ErrorV2 = _HacoapErrorV2
+
+
+def _board_settings(response):
+    """{"settings": {name: {value, default, min, max}}, "soil_mv": mV or None, "samples": n}"""
+    return {"settings": {name: dict(zip(("value", "default", "min", "max"), values))
+                         for name, values in response.settings.items() if len(values) == 4},
+            "soil_mv": response.soil_mv if response.soil_mv >= 0 else None,
+            "samples": response.samples}
 
 
 def _failed(response):
@@ -159,6 +227,18 @@ class DeviceLink:
         """Makes the running image permanent."""
         response = await self._request(ImageStatesWrite(confirm=True))
         return [_slot_state(image) for image in response.images]
+
+    async def board_settings(self):
+        """The board's settings (see _board_settings)."""
+        return _board_settings(await self._request(HacoapSettingsRead()))
+
+    async def set_board_settings(self, values):
+        """Changes settings ({name: value}): all of them, or none (an error). Returns them all."""
+        return _board_settings(await self._request(HacoapSettingsWrite(set={k: int(v) for k, v in values.items()})))
+
+    async def sample(self):
+        """Takes a sensor sample now. Returns the sample count before it."""
+        return (await self._request(HacoapSample())).samples
 
     async def reset(self):
         """Resets the device. A lost answer is ignored: whether the device reset (and which

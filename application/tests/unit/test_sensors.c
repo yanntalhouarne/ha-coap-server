@@ -11,8 +11,22 @@
 #define DRY CONFIG_HACOAP_SOIL_DRY_MV
 #define WET CONFIG_HACOAP_SOIL_WET_MV
 
+/* ---------------------------------------------------------------- fake settings */
+
+static int32_t fake_setting_values[SETTING_COUNT];
+
+int32_t device_setting_get(enum device_setting id)
+{
+	return fake_setting_values[id];
+}
+
+/* ---------------------------------------------------------------- tests */
+
 static void reset_module(void)
 {
+	fake_setting_values[SETTING_SAMPLE_S] = CONFIG_HACOAP_SENSOR_SAMPLE_PERIOD_S;
+	fake_setting_values[SETTING_SOIL_DRY_MV] = DRY;
+	fake_setting_values[SETTING_SOIL_WET_MV] = WET;
 	missing = 0;
 	memset(&latest, 0, sizeof(latest));
 	props_fuel_gauge_valid = false;
@@ -30,6 +44,7 @@ static void set_readings(int16_t soil_mv, uint8_t soc, int32_t humidity, int32_t
 
 static void test_soil_conversion(void)
 {
+	reset_module();
 	CHECK_EQ(soil_mv_to_percent(DRY), 0);
 	CHECK_EQ(soil_mv_to_percent(WET), 100);
 	CHECK_EQ(soil_mv_to_percent((DRY + WET) / 2), 50);
@@ -157,6 +172,54 @@ static void test_missing_sensors_are_not_read(void)
 	CHECK_EQ(sensors_get().battery_soc, 87);
 }
 
+static void test_the_calibration_comes_from_the_settings(void)
+{
+	reset_module();
+	fake_setting_values[SETTING_SOIL_DRY_MV] = 2000;
+	fake_setting_values[SETTING_SOIL_WET_MV] = 1000;
+	CHECK_EQ(soil_mv_to_percent(2000), 0);
+	CHECK_EQ(soil_mv_to_percent(1500), 50);
+	CHECK_EQ(soil_mv_to_percent(1000), 100);
+}
+
+static void test_samples_report_the_soil_voltage_and_count(void)
+{
+	reset_module();
+	CHECK_EQ(sensors_init(), 0);
+	set_readings(1696, 87, 55, 21);
+	sensors_start();
+	CHECK_EQ(sensors_get().soil_mv, 1696);
+	CHECK_EQ(sensors_get().samples, 1);
+
+	fake_adc_read_err = -EIO;
+	fake_dwork_run(&sample_work);
+	CHECK_EQ(sensors_get().soil_mv, -1); // not read
+	CHECK_EQ(sensors_get().samples, 2);
+}
+
+static void test_sampling_follows_the_period_setting(void)
+{
+	reset_module();
+	CHECK_EQ(sensors_init(), 0);
+	fake_setting_values[SETTING_SAMPLE_S] = 60;
+	sensors_start();
+	CHECK_EQ(sample_work.delay_ms, 60000);
+
+	/* A new period counts from now */
+	fake_setting_values[SETTING_SAMPLE_S] = 120;
+	sensors_reschedule();
+	CHECK_EQ(sample_work.delay_ms, 120000);
+	fake_dwork_run(&sample_work);
+	CHECK_EQ(sample_work.delay_ms, 120000);
+
+	/* A sample now, then the period again */
+	sensors_sample_now();
+	CHECK_EQ(sample_work.delay_ms, 0);
+	fake_dwork_run(&sample_work);
+	CHECK_EQ(sensors_get().samples, 3);
+	CHECK_EQ(sample_work.delay_ms, 120000);
+}
+
 static void test_lock_is_released(void)
 {
 	reset_module();
@@ -176,6 +239,9 @@ int main(void)
 	RUN_TEST(test_negative_temperatures_and_clamping);
 	RUN_TEST(test_failed_readings_read_zero);
 	RUN_TEST(test_missing_sensors_are_not_read);
+	RUN_TEST(test_the_calibration_comes_from_the_settings);
+	RUN_TEST(test_samples_report_the_soil_voltage_and_count);
+	RUN_TEST(test_sampling_follows_the_period_setting);
 	RUN_TEST(test_lock_is_released);
 	return TEST_RESULT();
 }

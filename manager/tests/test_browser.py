@@ -69,6 +69,12 @@ def page(tmp_path_factory):
         services.db.add_reading("1a2b3c4d", 90 - (48 - hours) / 16, 40, 55, -5, when=now - hours * 3600)
         services.db.add_link_sample("1a2b3c4d", "0x6800", link_margin=40, when=now - hours * 3600)
     services.db.add_activity("1a2b3c4d", "pump", "Pump started from the app (3 s)", when=now - 12 * 3600)
+    # What the board reports about itself ('diag'): a watchdog restart 6 hours ago
+    services.db.upsert_device("1a2b3c4d", boots=5, reset_cause="watchdog", uptime_s=6 * 3600, role="child",
+                              rloc16="0x5c01", parent_rloc16="0x6800", parent_rssi=-64, link_quality=3, soil_mv=1650,
+                              diag_time=now)
+    services.db.add_activity("1a2b3c4d", "restart", "Restarted: the watchdog: it stopped responding",
+                             when=now - 6 * 3600)
     # A checkout with nothing set up, so the Builds tab offers its setup buttons.
     empty_checkout = tmp / "checkout"
     (empty_checkout / "application").mkdir(parents=True)
@@ -149,6 +155,7 @@ def test_builds_tab(page):
 
 def test_settings_tab(page):
     dom = page("settings")
+    assert "Remove the simulated boards" in dom
     assert "Data folder" in dom and "Border router REST API" in dom
     assert "Check GitHub for app updates" in dom and "Download a problem report" in dom
     assert "Keep readings (days)" in dom and "home_assistant_url" not in dom          # its own card
@@ -164,6 +171,7 @@ def test_dark_by_default(page):
 
 def test_dashboard_tab(page):
     dom = page("dashboard")
+    assert re.search(r'id="dash-restarts".*basil.*1×.*\(1 bad\)', dom)        # restarts this week
     assert "behind the release" in dom and "low battery" in dom      # the tiles
     assert "★ release" in dom or "Release:" in dom
     assert "basil needs water" in dom                                 # the alert
@@ -184,6 +192,9 @@ def test_device_page(page):
     assert "chart-event event-pump" in dom                            # a pump run marked on them
     assert "Battery drain by firmware" in dom                         # its drain (48 h of readings)
     assert "Updated and confirmed" in dom                             # its update history
+    assert "the watchdog: it stopped responding" in dom and "0x6800 · -64 dBm" in dom   # its health
+    assert "chart-event event-restart" in dom                         # the restart on the charts
+    assert "Read from the board" in dom                               # its settings
 
 
 def test_floorplan_view(page):

@@ -5,6 +5,7 @@ import { currentRoute, showTab } from './tabs.js';
 import { net, redrawNetwork } from './network.js';
 import { renderStatusDevices } from './live.js';
 import { renderConsoleBoards } from './console.js';
+import { openFleetSettings } from './board.js';
 import { statusClass } from './updates.js';
 
 // ------------------------------------------------------------------ devices
@@ -354,6 +355,7 @@ export const bulkActions = [
     const location_ = prompt('Location (for example kitchen window)');
     if (location_ !== null) forSelected('Location set', (d) => patchDevice(d, { location: location_ }));
   }],
+  ['Change the boards\' settings…', () => openFleetSettings([...state.selected])],
   ['Set the watering target…', () => {
     const value = prompt('They need water below this soil moisture (%). Leave it empty for the default (Settings).', '');
     if (value !== null) forSelected('Watering target set', (d) => patchDevice(d, { water_below: value.trim() }));

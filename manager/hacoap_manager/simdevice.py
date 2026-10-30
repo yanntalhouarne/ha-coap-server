@@ -1,8 +1,9 @@
 """A simulated ha-coap device, for tests and for trying the app without a board.
 
-It answers mcumgr (SMP) over UDP and CoAP ('info', 'data', 'ping', 'log') like the firmware, and
-models MCUboot's two slots: upload to slot 1, test, reset (swap), confirm, and revert
-when a tested image isn't confirmed before the next reset.
+It answers mcumgr (SMP) over UDP and CoAP ('info', 'data', 'ping', 'diag', 'log') like the
+firmware, and models MCUboot's two slots: upload to slot 1, test, reset (swap), confirm, and
+revert when a tested image isn't confirmed before the next reset. It has the firmware's
+settings (the 'hacoap' mcumgr group), counts its boots, and can crash (crash()).
 
 Run one from the command line:
     python -m hacoap_manager.simdevice [--host 127.0.0.1] [--smp-port 1337] [--coap-port 5683]
@@ -32,7 +33,7 @@ from . import coap, mcuboot
 # SMP header: op, flags, length, group, sequence, command
 SMP_HEADER = struct.Struct(">BBHHBB")
 OP_READ, OP_READ_RSP, OP_WRITE, OP_WRITE_RSP = 0, 1, 2, 3
-GROUP_OS, GROUP_IMAGE = 0, 1
+GROUP_OS, GROUP_IMAGE, GROUP_HACOAP = 0, 1, 64
 OS_ECHO, OS_RESET, OS_MCUMGR_PARAMS = 0, 5, 6
 IMAGE_STATE, IMAGE_UPLOAD, IMAGE_ERASE = 0, 1, 5
 RC_OK, RC_EUNKNOWN, RC_EINVAL, RC_ENOTSUP, RC_EBADSTATE = 0, 1, 3, 8, 6
@@ -43,6 +44,15 @@ LOG_KEEP = 4096
 LOG_PAYLOAD_MAX = coap.LOG_PAYLOAD_MAX
 SIM_SAMPLE_S = 20      # the sensors are sampled every 15 min on a board; faster here
 SIM_FAST_POLL_S = 30   # CONFIG_HACOAP_MCUMGR_POLL_TIMEOUT_S
+
+# The firmware's settings (application/src/device_settings.c): name: (default, min, max)
+SETTINGS = {
+    "sample_s": (900, 10, 86400),
+    "soil_dry_mv": (2200, 1, 3600),
+    "soil_wet_mv": (980, 0, 3599),
+    "pump_s": (1, 1, 9),
+    "poll_ms": (3000, 101, 600000),
+}
 
 
 @dataclass
@@ -72,11 +82,18 @@ class SimulatedDevice:
     battery_start: float = 87
     phase: float = 0.0               # shifts the dynamic readings, so a fleet's devices differ
     pump_running: bool = False
-    pump_duration: int = 1
     pings: int = 0
     resets: int = 0
     smp_requests: int = 0
     remote_log: bool = True          # the 'log' resource (firmware built with HACOAP_REMOTE_LOG)
+    diag: bool = True                # the 'diag' resource and the 'hacoap' mcumgr group (newer firmware)
+    rloc16: int = 0x5001             # its short address on the Thread network, reported in 'diag'
+    parent_rloc16: int = 0x5000
+    boots: int = 1
+    reset_cause: str = "power"
+    fault: str = ""
+    samples: int = 1
+    settings: dict = field(default_factory=lambda: {name: values[0] for name, values in SETTINGS.items()})
     _upload: bytearray = None
     _upload_size: int = 0
     _rebooting_until: float = 0.0
@@ -97,13 +114,29 @@ class SimulatedDevice:
         device.slots[0] = Slot(image=image, confirmed=True, permanent=True)
         return device
 
+    @property
+    def pump_duration(self):
+        return self.settings["pump_s"]
+
+    def soil_mv(self):
+        """The soil sensor's output: the soil the readings model, as a sensor calibrated with the
+        firmware's defaults would see it."""
+        soil = self.data[0] if not self.dynamic else 45 + 20 * math.sin(self._hours() / 6 + self.phase)
+        dry, wet = SETTINGS["soil_dry_mv"][0], SETTINGS["soil_wet_mv"][0]
+        return round(dry - soil * (dry - wet) / 100)
+
+    def _hours(self):
+        return (time.time() - self._started) / 3600
+
     def readings(self):
-        """The 'data' payload: fixed, or (dynamic) a slowly draining battery and drifting readings."""
+        """The 'data' payload: fixed, or (dynamic) a slowly draining battery and drifting readings.
+        The soil goes through the board's calibration, like on a board."""
+        dry, wet = self.settings["soil_dry_mv"], self.settings["soil_wet_mv"]
+        soil = round(min(max((dry - self.soil_mv()) / (dry - wet) * 100, 0), 100))
         if not self.dynamic:
-            return self.data
-        hours = (time.time() - self._started) / 3600
+            return bytes([soil]) + self.data[1:]
+        hours = self._hours()
         battery = max(3, round(self.battery_start - hours * self.battery_drain_per_hour))
-        soil = round(45 + 20 * math.sin(hours / 6 + self.phase))
         humidity = round(55 + 10 * math.sin(hours / 9 + 1 + self.phase))
         temperature = round(18 + 6 * math.sin(hours / 4 + self.phase))
         return bytes([soil, battery, humidity, temperature & 0xFF])
@@ -133,11 +166,53 @@ class SimulatedDevice:
             self.slots = [Slot(image=secondary.image, confirmed=True, permanent=True),
                           Slot(image=primary.image)]
 
-    def reset(self):
+    def reset(self, cause="soft", fault=""):
         self.resets += 1
         self.boot()
         self._rebooting_until = asyncio.get_running_loop().time() + self.reboot_s
+        self.boots += 1
+        self.reset_cause, self.fault = cause, fault
+        self.samples = 1
         self._boot_log()
+
+    def crash(self, reason=3, address=0x0001A2B4):
+        """A fatal error: the board records it and resets (application/src/diag.c)."""
+        self.log(f"Fatal error {reason} at 0x{address:08x}: resetting", level="err")
+        self.reset("crash", f"{reason}@{address:08x}")
+
+    # ------------------------------------------------------------ diagnostics and settings
+
+    def diag_payload(self):
+        text = f"boots={self.boots},up={int(time.time() - self._booted)},reset={self.reset_cause}"
+        if self.fault:
+            text += f",fault={self.fault}"
+        text += f",role=child,rloc={self.rloc16:04x},parent={self.parent_rloc16:04x},rssi=-62,last_rssi=-60,lq=3"
+        return (text + f",soil_mv={self.soil_mv()}").encode()
+
+    def _settings_response(self):
+        return {"settings": {name: [self.settings[name], *values] for name, values in SETTINGS.items()},
+                "soil_mv": self.soil_mv(), "samples": self.samples}
+
+    def _settings_write(self, request):
+        change = request.get("set")
+        if not isinstance(change, dict) or any(name not in SETTINGS or not isinstance(value, int)
+                                                for name, value in change.items()):
+            return {"rc": RC_EINVAL}
+        new = {**self.settings, **change}
+        if any(not SETTINGS[name][1] <= value <= SETTINGS[name][2] for name, value in new.items()) or \
+                new["soil_dry_mv"] <= new["soil_wet_mv"]:
+            return {"rc": RC_EINVAL}
+        for name, value in change.items():
+            if self.settings[name] != value:
+                self.log(f"Setting {name} = {value}")
+        self.settings = new
+        return self._settings_response()
+
+    def _sample_now(self):
+        before = self.samples
+        self.samples += 1
+        self._sample_log()
+        return {"samples": before}
 
     # ------------------------------------------------------------ the log over the air
 
@@ -225,6 +300,13 @@ class SimulatedDevice:
         return header + payload, after
 
     def _dispatch(self, op, group, command, request):
+        if group == GROUP_HACOAP and self.diag:
+            if command == 0 and op == OP_READ:
+                return self._settings_response(), None
+            if command == 0 and op == OP_WRITE:
+                return self._settings_write(request), None
+            if command == 1 and op == OP_WRITE:
+                return self._sample_now(), None
         if group == GROUP_OS and command == OS_ECHO:
             return {"r": request.get("d", "")}, None
         if group == GROUP_OS and command == OS_RESET:
@@ -312,6 +394,10 @@ class SimulatedDevice:
         if message.path == "data" and message.code == coap.GET:
             self.log("Received 'data' GET request", module="coap_resources")
             return reply(coap.CONTENT, self.readings())
+        if message.path == "diag" and message.code == coap.GET:
+            if not self.diag:
+                return None  # older firmware: no answer to an unknown resource
+            return reply(coap.CONTENT, self.diag_payload())
         if message.path == "log" and message.code == coap.GET:
             if not self.remote_log:
                 return reply(coap.NOT_FOUND)
@@ -330,7 +416,7 @@ class SimulatedDevice:
             if message.code == coap.PUT and message.payload[:1].isdigit():
                 seconds = int(message.payload[:1])
                 if 1 <= seconds <= 9:
-                    self.pump_duration = seconds
+                    self.settings["pump_s"] = seconds
             return reply(coap.CONTENT, bytes([self.pump_duration]))
         if message.path == "ping" and message.code == coap.PUT:
             self.log("Received 'ping' PUT request", module="coap_resources")
@@ -502,8 +588,12 @@ def main():
             if args.border_router:
                 from .simborder import SimulatedBorderRouter, scenario
                 addresses = [s.host for s in servers] if len(servers) > 1 else [first.host, "fd11:22::2"]
-                border = SimulatedBorderRouter(args.border_router, first.host, args.border_router_port,
-                                               scenario(addresses)).start()
+                net = scenario(addresses)
+                for child in net["children"]:
+                    for server in servers:
+                        if server.host in child["ipv6"]:
+                            server.device.rloc16, server.device.parent_rloc16 = child["rloc16"], child["parent"]
+                border = SimulatedBorderRouter(args.border_router, first.host, args.border_router_port, net).start()
                 print(f"Simulated border router ({args.border_router} API): {border.url}")
             try:
                 await asyncio.Event().wait()

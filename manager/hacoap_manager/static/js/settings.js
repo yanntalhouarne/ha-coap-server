@@ -159,6 +159,25 @@ document.getElementById('storage-compact').addEventListener('click', (event) => 
   notify('Database compacted', 'success', 3000);
 }));
 
+const simulated = () => [...state.devices.values()].filter((d) => /^(127\.|::1$|localhost$)/.test(d.address || ''));
+
+export function renderSimulatedCount() {
+  const count = simulated().length;
+  document.getElementById('simulated-count').textContent = count ? `${count} in the list` : 'none in the list';
+  document.getElementById('remove-simulated').disabled = !count;
+}
+
+document.getElementById('remove-simulated').addEventListener('click', (event) => {
+  const count = simulated().length;
+  if (!count || !confirm(`Remove the ${count} simulated board(s), with their readings and history?`)) return;
+  busy(event.target, async () => {
+    const result = await api('POST', '/api/devices/remove-simulated');
+    notify(`Removed ${result.removed.length} simulated board(s)`, 'success', 3000);
+    await loadDevices();
+    renderSimulatedCount();
+  });
+});
+
 // ------------------------------------------------------------------ running in the background
 
 export async function loadAutostart() {

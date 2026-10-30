@@ -1,5 +1,6 @@
 """The activity feed: everything that happened, newest first, in one list: updates, alerts,
-parent changes, pump runs started from the app, plant photos and builds."""
+parent changes, what the app did to a board (pump runs, settings) and its restarts, plant
+photos and builds."""
 
 from .alerts import NAME
 
@@ -8,7 +9,7 @@ SOURCES = {
     "update": ("updates", "finished", "device_id, image_version, result, message"),
     "alert": ("alerts", "raised", "device_id, kind, message"),
     "parent": ("network_events", "time", "device_id, message"),
-    "pump": ("activity", "time", "device_id, kind, message"),
+    "activity": ("activity", "time", "device_id, kind, message"),  # its own kind: pump, restart, settings
     "build": ("builds", "finished", "profile, variant, result"),
 }
 
@@ -22,8 +23,8 @@ def _text(kind, row, name):
         return f"{name}: update {row['result']} ({row['message']})"
     if kind == "build":
         return f"Build of {row['profile']} ({row['variant']}): {row['result']}"
-    if kind == "pump":
-        return f"{name}: {row['message'][0].lower()}{row['message'][1:]}" if row["message"] else f"{name}: pump run"
+    if kind == "activity":
+        return f"{name}: {row['message'][0].lower()}{row['message'][1:]}" if row["message"] else f"{name}: {row['kind']}"
     return row["message"].replace(NAME, name)  # alerts are stored with a {name} placeholder
 
 
@@ -36,8 +37,8 @@ def build(db, inventory, photos, before=None, limit=30):
         for row in db.recent(table, column, columns, before, limit):
             device_id = row.get("device_id") or ""
             name = names.get(device_id, device_id)
-            entries.append({"time": row["time"], "kind": kind, "text": _text(kind, row, name),
-                            "device_id": device_id, "name": name})
+            entries.append({"time": row["time"], "kind": row["kind"] if kind == "activity" else kind,
+                            "text": _text(kind, row, name), "device_id": device_id, "name": name})
     for device_id, name in names.items():
         try:
             taken = photos.timeline(device_id)

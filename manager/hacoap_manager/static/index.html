@@ -190,6 +190,10 @@
           <div class="card-body" id="dash-offline"></div>
         </div>
         <div class="card mb-4">
+          <div class="card-header">Restarts <span class="text-body-secondary">(7 days)</span></div>
+          <div class="card-body" id="dash-restarts"></div>
+        </div>
+        <div class="card mb-4">
           <div class="card-header">Weakest links</div>
           <div class="card-body" id="dash-links"></div>
         </div>
@@ -215,6 +219,8 @@
         <div class="card mb-4"><div class="card-header">Status</div><div class="card-body" id="device-status"></div></div>
         <div class="card mb-4"><div class="card-header">Firmware</div><div class="card-body" id="device-firmware"></div></div>
         <div class="card mb-4"><div class="card-header">Controls</div><div class="card-body" id="device-controls"></div></div>
+        <div class="card mb-4"><div class="card-header">Health</div><div class="card-body" id="device-health"></div></div>
+        <div class="card mb-4"><div class="card-header">Settings on the board</div><div class="card-body" id="device-board-settings"></div></div>
         <div class="card"><div class="card-header">About this device</div><div class="card-body">
           <form id="device-form" class="row g-2"></form></div></div>
       </div>
@@ -255,7 +261,7 @@
       <button class="btn btn-outline-secondary" id="read-all-slots" title="Asks every device which image it runs">Read all firmware</button>
       <button class="btn btn-outline-secondary" id="doctor-run" title="Checks each step from this computer to the boards">Check my connection</button>
       <button class="btn btn-outline-secondary" id="labels-open" title="Labels to stick on the pots or the boards">Print labels…</button>
-      <div class="ms-auto d-flex gap-2 align-items-center">
+      <div class="ms-auto d-flex flex-wrap gap-2 align-items-center">
         <span class="text-body-secondary small" id="selection-count"></span>
         <div class="dropdown">
           <button class="btn btn-outline-secondary dropdown-toggle" type="button" data-bs-toggle="dropdown"
@@ -269,7 +275,7 @@
       <input class="form-control form-control-sm w-auto" id="device-search" placeholder="filter: name, ID, plant…" size="26">
       <span class="small text-body-secondary">groups:</span>
       <span id="tag-filter" class="d-flex flex-wrap gap-1"></span>
-      <div class="ms-auto d-flex gap-2 align-items-center">
+      <div class="ms-auto d-flex flex-wrap gap-2 align-items-center">
         <label class="small text-body-secondary" for="device-sort"><svg class="icon" aria-hidden="true"><use href="#i-arrow-up-down"/></svg> sort</label>
         <select class="form-select form-select-sm w-auto" id="device-sort">
           <option value="name">name</option><option value="water">needs water soonest</option>
@@ -777,6 +783,13 @@
             <div class="form-text mb-3">How long readings and network history are kept is set under Settings (Keep
               readings, Keep network readings, Keep backups). Old data is deleted once a day; compacting gives the space
               back to the disk.</div>
+            <h6>Simulated boards</h6>
+            <div class="d-flex flex-wrap gap-2 align-items-center mb-1">
+              <button class="btn btn-sm btn-outline-danger" id="remove-simulated" type="button">Remove the simulated boards</button>
+              <span class="small text-body-secondary" id="simulated-count"></span>
+            </div>
+            <div class="form-text mb-3">Boards the simulator added (at a 127.0.0.x address), with their readings and
+              history, before you use real boards. Real boards are never at those addresses.</div>
             <h6>Backup</h6>
             <p class="small text-body-secondary">One file with everything: devices, images, update history, build profiles
               and settings. Use it to keep a copy, or to move the app to another PC.</p>
@@ -860,6 +873,17 @@
       <div class="modal-header"><h5 class="modal-title" id="doctor-title">Check my connection</h5>
         <button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
       <div class="modal-body" id="doctor-body"></div>
+    </div>
+  </div>
+</div>
+
+<!-- The same settings on several boards -->
+<div class="modal fade" id="fleet-settings-modal" tabindex="-1" aria-labelledby="fleet-settings-title">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header"><h5 class="modal-title" id="fleet-settings-title">Settings on the boards</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button></div>
+      <div class="modal-body" id="fleet-settings-body"></div>
     </div>
   </div>
 </div>

@@ -156,8 +156,9 @@ All resources are on UDP port 5683 at the device's IPv6 address. Payloads are ra
 | `data` | GET | — | 4 bytes: soil moisture %, battery %, air humidity %, temperature °C (signed int8). A missing sensor reads 0. |
 | `info` | GET | — | ASCII `"<firmware>,<hardware>,<device id>"` plus a NUL, for example `f83f898,v2.0,1a2b3c4d`. The firmware version is the git commit it was built from. |
 | `pump` | GET, confirmable PUT | `'1'` start, `'0'` stop | 1 byte: 1 while the pump runs, else 0 |
-| `pumpdc` | GET, confirmable PUT | One ASCII digit: the pump run time in seconds (1 to `CONFIG_HACOAP_PUMP_MAX_DURATION`) | 1 byte: the run time in use. Out-of-range values keep the current one. Not kept across resets. |
+| `pumpdc` | GET, confirmable PUT | One ASCII digit: the pump run time in seconds (1 to `CONFIG_HACOAP_PUMP_MAX_DURATION`) | 1 byte: the run time in use. Out-of-range values keep the current one. Kept across resets (the board's `pump_s` setting). |
 | `ping` | PUT | `'1'` beep, `'0'` quiet | none (2.04 Changed) |
+| `diag` | GET | — | ASCII `key=value` pairs, comma-separated: `boots` (since its flash was erased), `up` (seconds), `reset` (why it last restarted: `power`, `pin`, `soft`, `watchdog`, `lockup`, `crash` or `other`), `fault` (after a crash: `<reason>@<address>`), `role`, and when attached `rloc` (its short address), `parent`, `rssi` and `last_rssi` (dBm), `lq` (0 to 3), then `soil_mv` (the soil sensor's output, -1 if not read). For example `boots=12,up=3600,reset=power,role=child,rloc=5c01,parent=5c00,rssi=-62,last_rssi=-60,lq=3,soil_mv=1696`. Older firmware doesn't answer it. See [Restarts and crashes](#restarts-and-crashes). |
 | `log` | GET, with the query `from=<offset>` | — | ASCII `<boot id> <start>` and a line feed, then the log output from byte `start` (at most 512 bytes in all). Only with `CONFIG_HACOAP_REMOTE_LOG`; otherwise 4.04 Not Found. See [Logs](#logs). |
 
 `data` returns the latest readings without waiting on the sensors. They are sampled at boot and then every `CONFIG_HACOAP_SENSOR_SAMPLE_PERIOD_S` (900 s by default), so a reading can be up to one period old.
@@ -217,6 +218,23 @@ The application's settings are Kconfig options, declared in `application/Kconfig
 | `CONFIG_HACOAP_SRP_*` | see [SRP registration](#srp-registration) | SRP names |
 
 Standard Zephyr and OpenThread options work the same way, for example `CONFIG_OPENTHREAD_POLL_PERIOD` or `CONFIG_BOARD_ENABLE_DCDC`.
+
+### Settings that change without a new firmware
+Five of these are only the defaults: a board keeps its own value in flash (Zephyr's settings, under `hacoap/`, next to OpenThread's data), through restarts and updates, and the fleet manager changes it over the air or over USB (a device's page, **Settings on the board**).
+
+| Setting | Default from | Range |
+|---|---|---|
+| `sample_s`: sampling period (s) | `CONFIG_HACOAP_SENSOR_SAMPLE_PERIOD_S` | 10 to 86400 |
+| `pump_s`: pump run time (s) | `CONFIG_HACOAP_PUMP_DEFAULT_DURATION` | 1 to `CONFIG_HACOAP_PUMP_MAX_DURATION` |
+| `poll_ms`: Thread poll period (ms) | `CONFIG_OPENTHREAD_POLL_PERIOD` | above `CONFIG_HACOAP_MCUMGR_POLL_PERIOD_MS`, to 600000 |
+| `soil_dry_mv` / `soil_wet_mv`: the soil sensor's output when dry (0 %) and wet (100 %) | `CONFIG_HACOAP_SOIL_DRY_MV` / `CONFIG_HACOAP_SOIL_WET_MV` | 1 to 3600 / 0 to 3599, dry above wet |
+
+A `pumpdc` PUT changes `pump_s` too, so the run time Home Assistant sets is now kept across resets. They go through the `hacoap` mcumgr group (64, `src/hacoap_mgmt.c`), which works over USB and over the air like the other mcumgr groups:
+- command 0, read: `{"settings": {"<name>": [value, default, min, max], ...}, "soil_mv": <latest soil sensor output>, "samples": <samples since boot>}`
+- command 0, write: `{"set": {"<name>": value, ...}}`: all of them or none (`MGMT_ERR_EINVAL` for an unknown name, a value out of range, or dry at or below wet); answers like a read
+- command 1, write: `{}`: takes a sensor sample now (for calibrating); answers `{"samples": <the count before it>}`
+
+A change applies at once, and is written to flash from the system work queue. Erasing the board's flash (SWD, **Erase everything**) brings back the defaults.
 
 ### Setting a value
 If an option is set in several places, the later one wins: the default in `Kconfig`, then `prj.conf`, then `local.conf` and a variant's `.conf` files, then the command line.
@@ -335,6 +353,9 @@ Older versions of this repository had a Thread network key and network name in `
 | `src/buzzer.c` | Beep patterns |
 | `src/status_led.c` | Network and error states on the module's RGB LED (as short flashes), and the user LED |
 | `src/mcumgr_poll.c` | Faster Thread polling while mcumgr is in use, or the log is read |
+| `src/device_settings.c` | The settings that change without a new firmware, in flash |
+| `src/hacoap_mgmt.c` | The `hacoap` mcumgr group (64): reading and writing those settings, and a sensor sample on demand |
+| `src/diag.c` | Restart and crash records, the boot count, the link to the parent: the `diag` resource |
 | `src/log_buffer.c`, `src/remote_log.c` | The log over the air (`CONFIG_HACOAP_REMOTE_LOG` only): the latest log output in RAM, and the log backend that fills it |
 | `src/srp.c` | SRP service registration |
 | `src/watchdog.c` | Hardware watchdog |
@@ -359,6 +380,9 @@ To test a new module, add `application/tests/unit/test_<module>.c`: include the 
 Build the `usb-logging` variant and open the second USB serial port, or `uart-console` and use the J4 UART (115200 baud). Log levels are set in `overlay-logging.conf` (`CONFIG_COAP_SERVER_LOG_LEVEL_*` for the application, `CONFIG_COAP_RESOURCES_LOG_LEVEL_*` for the CoAP layer).
 
 **Over the air:** build any variant with `CONFIG_HACOAP_REMOTE_LOG=y` (in the fleet manager, a build profile with **Log over the air**), and open the board in the fleet manager's **Console**, **over the air**. The board keeps its latest log output in RAM (`CONFIG_HACOAP_REMOTE_LOG_BUFFER_SIZE`, 4 KB), and the `log` resource returns it from a byte offset: a reader asks from where its last answer ended, and gets each byte once. Each boot draws a new boot id, so a reader can tell the board restarted. Reading `log` switches the board to fast polling, like mcumgr does, until 30 s after the last read: a console costs battery only while it's open. It turns logging on, which costs about 27 KB of flash and 10 KB of RAM in the battery variant (87.6 % of the slot instead of 82.2 %; the `usb-logging` variant with it: 96.9 %). What happens before the board joins the network, or as it crashes, still needs USB. The code: `src/log_buffer.c` (the buffer), `src/remote_log.c` (the log backend that fills it), `handle_log()` in `src/coap_resources.c`.
+
+### Restarts and crashes
+At each boot, the firmware reads why the chip reset (`hwinfo`: power on or brownout, the reset pin, a software reset such as after an update, the watchdog, a CPU lockup), counts the boot (stored with the settings), and reports both in `diag`. A fatal error (a fault, an assert, a stack overflow) goes through the application's own handler (`src/diag.c`, with the SDK's `CONFIG_RESET_ON_FATAL_ERROR` off): it writes the error and the address where it happened into RAM that isn't cleared at boot (it lies above the RAM MCUboot uses), logs it, and resets. The next boot finds it, reports `reset=crash` and `fault=<reason>@<address>` (the reason is Zephyr's `K_ERR_*`; look the address up in `build/zephyr/zephyr.map`, or with `addr2line -e build/zephyr/zephyr.elf <address>`), and clears it. A power loss clears that RAM: the record is only for crashes. The fleet manager reads `diag` at every refresh, keeps each restart in the board's history, and raises an alert for a crash, a watchdog reset or a lockup.
 
 ### Updating the SDK
 The SDK comes from forks of `sdk-nrf` and `sdk-zephyr`, pinned to exact commits in `application/west.yml`. To move to newer commits, update both `revision:` lines, run the setup script, build every variant, and push: CI checks the result on a clean machine. Every other PC picks up the change by running the setup script again.

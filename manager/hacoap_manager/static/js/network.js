@@ -726,6 +726,7 @@ export function showLinkDetails(spring) {
       ['Last RSSI', spring.link.last_rssi !== null && spring.link.last_rssi !== undefined ? `${spring.link.last_rssi} dBm` : ''],
       ['Link quality in / out', spring.link.link_quality_in !== null && spring.link.link_quality_in !== undefined
         ? `${spring.link.link_quality_in} / ${spring.link.link_quality_out ?? '?'} (of 3)` : ''],
+      ['Measured by', spring.link.from_board ? 'the board itself (the border router gave no signal for it)' : ''],
     ]));
 }
 

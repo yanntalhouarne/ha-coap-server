@@ -76,7 +76,9 @@ config HACOAP_PUMP_DEFAULT_DURATION
 	default 1
 	help
 	  How long the pump runs after a 'pump' PUT or a press of S1, until a
-	  'pumpdc' PUT changes it. Not stored across resets.
+	  'pumpdc' PUT changes it (and the change is kept across resets).
+	  The default for the board's 'pump_s' setting, which the fleet
+	  manager changes without a new firmware (src/device_settings.c).
 
 config HACOAP_PUMP_MAX_DURATION
 	int "Longest pump run time a 'pumpdc' PUT can set (s)"
@@ -98,6 +100,8 @@ config HACOAP_SENSOR_SAMPLE_PERIOD_S
 	  work queue. The 'data' resource returns the latest samples, so a CoAP
 	  request never waits on the sensors. A shorter period gives fresher data
 	  but powers the soil sensor more often (about 1 mC per sample).
+	  The default for the board's 'sample_s' setting, which the fleet
+	  manager changes without a new firmware (src/device_settings.c).
 
 config HACOAP_SOIL_POWER_UP_MS
 	int "Soil sensor power-up time (ms)"
@@ -110,12 +114,16 @@ config HACOAP_SOIL_DRY_MV
 	default 2200
 	help
 	  Reported as 0% moisture. Must be above HACOAP_SOIL_WET_MV.
+	  The default for the board's 'soil_dry_mv' setting, which the fleet
+	  manager changes without a new firmware (src/device_settings.c).
 
 config HACOAP_SOIL_WET_MV
 	int "Soil sensor output when wet (mV)"
 	default 980
 	help
 	  Reported as 100% moisture.
+	  The default for the board's 'soil_wet_mv' setting, which the fleet
+	  manager changes without a new firmware (src/device_settings.c).
 
 endmenu
 

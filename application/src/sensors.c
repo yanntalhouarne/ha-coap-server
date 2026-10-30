@@ -16,6 +16,7 @@
 #include <zephyr/logging/log.h>
 #include <zephyr/spinlock.h>
 
+#include "device_settings.h"
 #include "sensors.h"
 
 LOG_MODULE_DECLARE(coap_server, CONFIG_COAP_SERVER_LOG_LEVEL);
@@ -62,13 +63,16 @@ static struct fuel_gauge_get_property props_fuel_gauge[] = {
 	[FUEL_GAUGE_PROP_VOLTAGE] = {.property_type = FUEL_GAUGE_VOLTAGE},
 };
 
-/* Converts the soil sensor voltage to a moisture percentage (0% = dry, 100% = wet). */
+/* Converts the soil sensor voltage to a moisture percentage (0% = dry, 100% = wet), with
+ * the calibration in the settings (dry is always above wet, see device_settings_set()). */
 static uint8_t soil_mv_to_percent(int32_t val_mv)
 {
-	float moisture = (float)CLAMP(val_mv, CONFIG_HACOAP_SOIL_WET_MV, CONFIG_HACOAP_SOIL_DRY_MV);
+	int32_t dry_mv = device_setting_get(SETTING_SOIL_DRY_MV);
+	int32_t wet_mv = device_setting_get(SETTING_SOIL_WET_MV);
+	float moisture = (float)CLAMP(val_mv, wet_mv, dry_mv);
 
-	moisture -= CONFIG_HACOAP_SOIL_WET_MV;
-	moisture /= (CONFIG_HACOAP_SOIL_DRY_MV - CONFIG_HACOAP_SOIL_WET_MV);
+	moisture -= wet_mv;
+	moisture /= (dry_mv - wet_mv);
 	moisture *= 100;
 	moisture = 100 - moisture;
 
@@ -76,7 +80,7 @@ static uint8_t soil_mv_to_percent(int32_t val_mv)
 }
 
 /* Powers the soil sensor, samples it and powers it down again. */
-static int read_soil_moisture(uint8_t *moisture)
+static int read_soil_moisture(uint8_t *moisture, int16_t *soil_mv)
 {
 	int16_t sample = 0; // signed: the SAADC can return small negative values in single-ended mode
 	int32_t val_mv;
@@ -115,6 +119,7 @@ static int read_soil_moisture(uint8_t *moisture)
 	}
 
 	*moisture = soil_mv_to_percent(val_mv);
+	*soil_mv = (int16_t)CLAMP(val_mv, INT16_MIN, INT16_MAX);
 	LOG_INF("soil_voltage = %d mV, soil_humidity = %d %%", (int)val_mv, *moisture);
 
 	return 0;
@@ -215,9 +220,10 @@ static void sample(void)
 	struct sensors_data data = {0};
 	k_spinlock_key_t key;
 
-	if (read_soil_moisture(&data.soil_moisture) != 0)
+	if (read_soil_moisture(&data.soil_moisture, &data.soil_mv) != 0)
 	{
 		data.soil_moisture = 0;
+		data.soil_mv = -1;
 	}
 	if (read_battery_soc(&data.battery_soc) != 0)
 	{
@@ -233,6 +239,7 @@ static void sample(void)
 		data.soil_moisture, data.battery_soc, data.air_humidity, data.temperature);
 
 	key = k_spin_lock(&latest_lock);
+	data.samples = latest.samples + 1U;
 	latest = data;
 	k_spin_unlock(&latest_lock, key);
 }
@@ -240,7 +247,7 @@ static void sample(void)
 static void on_sample_work(struct k_work *work)
 {
 	sample();
-	k_work_schedule(k_work_delayable_from_work(work), K_SECONDS(CONFIG_HACOAP_SENSOR_SAMPLE_PERIOD_S));
+	k_work_schedule(k_work_delayable_from_work(work), K_SECONDS(device_setting_get(SETTING_SAMPLE_S)));
 }
 
 static K_WORK_DELAYABLE_DEFINE(sample_work, on_sample_work);
@@ -308,7 +315,17 @@ void sensors_start(void)
 {
 	sample();
 	log_fuel_gauge();
-	k_work_schedule(&sample_work, K_SECONDS(CONFIG_HACOAP_SENSOR_SAMPLE_PERIOD_S));
+	k_work_schedule(&sample_work, K_SECONDS(device_setting_get(SETTING_SAMPLE_S)));
+}
+
+void sensors_sample_now(void)
+{
+	k_work_reschedule(&sample_work, K_NO_WAIT);
+}
+
+void sensors_reschedule(void)
+{
+	k_work_reschedule(&sample_work, K_SECONDS(device_setting_get(SETTING_SAMPLE_S)));
 }
 
 struct sensors_data sensors_get(void)

@@ -1,6 +1,6 @@
 // The tabs, and which page the address shows.
 
-import { loadAutostart, loadBackups, loadHomeAssistant, loadSettings, loadStorage } from './settings.js';
+import { loadAutostart, loadBackups, loadHomeAssistant, loadSettings, loadStorage, renderSimulatedCount } from './settings.js';
 import { loadBuilds, loadImages } from './images.js';
 import { loadBuildsTab } from './builds.js';
 import { loadConsole } from './console.js';
@@ -37,7 +37,7 @@ export function showTab(route) {
   if (tab === 'network') {
     loadNetwork().then(() => setNetworkView(['mesh', 'tree', 'floorplan'].includes(rest[0]) ? rest[0] : net.view || 'mesh'), () => {});
   }
-  if (name === 'settings') { loadSettings(); loadBackups(); loadStorage().catch(() => {}); loadAutostart().catch(() => {}); loadHomeAssistant().catch(() => {}); }
+  if (name === 'settings') { loadSettings(); loadBackups(); loadStorage().catch(() => {}); loadAutostart().catch(() => {}); loadHomeAssistant().catch(() => {}); renderSimulatedCount(); }
 }
 
 for (const link of document.querySelectorAll('#tabs a')) {

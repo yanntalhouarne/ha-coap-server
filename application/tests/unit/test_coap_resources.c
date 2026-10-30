@@ -69,6 +69,11 @@ static void app_ping_put(uint8_t command)
 	fake_app.ping_command = command;
 }
 
+static size_t app_diag_get(char *payload, size_t size)
+{
+	return (size_t)snprintf(payload, size, "boots=3,up=60,reset=power,role=child");
+}
+
 static size_t app_log_get(uint32_t from, char *payload, size_t size)
 {
 	fake_app.log_gets++;
@@ -86,6 +91,7 @@ static const struct coap_resources_handlers handlers = {
 	.data_get = app_data_get,
 	.info_get = app_info_get,
 	.ping_put = app_ping_put,
+	.diag_get = app_diag_get,
 };
 
 static const struct coap_resources_handlers handlers_with_log = {
@@ -96,6 +102,7 @@ static const struct coap_resources_handlers handlers_with_log = {
 	.data_get = app_data_get,
 	.info_get = app_info_get,
 	.ping_put = app_ping_put,
+	.diag_get = app_diag_get,
 	.log_get = app_log_get,
 };
 
@@ -163,7 +170,7 @@ static void check_response(otCoapType type, otCoapCode code, const void *payload
 
 static void test_init_registers_every_resource(void)
 {
-	static const char *const uris[] = {"pumpdc", "pump", "data", "info", "ping", "log"};
+	static const char *const uris[] = {"pumpdc", "pump", "data", "info", "ping", "diag", "log"};
 
 	setup();
 	CHECK_EQ(fake_coap_resource_count, ARRAY_SIZE(uris));
@@ -342,6 +349,17 @@ static void test_unknown_resource_gets_no_response(void)
 	CHECK_EQ(fake_responses_sent, 0);
 }
 
+static void test_diag_get_answers_with_the_report(void)
+{
+	static const char expected[] = "boots=3,up=60,reset=power,role=child";
+
+	setup();
+	request("diag", CON, OT_COAP_CODE_GET, NULL);
+	check_response(ACK, OT_COAP_CODE_CONTENT, expected, sizeof(expected) - 1);
+	request("diag", CON, OT_COAP_CODE_PUT, "1");
+	CHECK_EQ(fake_responses_sent, 1); // GET only
+}
+
 static void test_log_without_a_log_answers_not_found(void)
 {
 	setup();
@@ -413,6 +431,7 @@ int main(void)
 	RUN_TEST(test_ping_accepts_both_put_types);
 	RUN_TEST(test_no_buffers_means_no_response);
 	RUN_TEST(test_unknown_resource_gets_no_response);
+	RUN_TEST(test_diag_get_answers_with_the_report);
 	RUN_TEST(test_log_without_a_log_answers_not_found);
 	RUN_TEST(test_log_get_reads_from_the_query_offset);
 	RUN_TEST(test_log_get_without_an_offset_reads_from_0);

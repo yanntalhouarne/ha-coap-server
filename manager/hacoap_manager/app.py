@@ -9,6 +9,7 @@ another site can't add without the server's permission (against cross-site reque
 import asyncio
 import contextlib
 import hashlib
+import ipaddress
 import logging
 import time
 from dataclasses import dataclass
@@ -89,6 +90,7 @@ def create_services(data_dir, discover=discovery.discover):
     setup.other_busy = lambda: "build" if builds.running() else None
     alerts = AlertService(db, inventory, settings, events)
     updates.on_failure = lambda job, target: alerts.update_failed(job.id, target.device_id, target.label, target.message)
+    inventory.on_restart = alerts.restarted
     return Services(data_dir, settings, db, events, inventory, images, updates, repository, builds, network,
                     SerialConsole(events), setup, alerts, signing.SigningCheck(repository, data_dir),
                     PhotoStore(data_dir), UpdateCheck(), Doctor(db, settings, discover),
@@ -202,6 +204,24 @@ def create_app(services, background_tasks=True, on_quit=None):
         s.events.publish("devices")
         return {"deleted": device_id}
 
+    @app.post("/api/devices/remove-simulated")
+    async def remove_simulated():
+        """Removes the simulated boards (at a loopback address, such as 127.0.0.2) and their history."""
+        removed = []
+        for device in s.db.devices():
+            try:
+                simulated = ipaddress.ip_address(device["address"].split("%")[0]).is_loopback
+            except ValueError:
+                continue
+            if simulated:
+                s.db.purge_device(device["device_id"])
+                s.photos.delete(device["device_id"])
+                removed.append(device["device_id"])
+        if removed:
+            s.events.publish("devices")
+            s.alerts.scan()
+        return {"removed": removed}
+
     @app.get("/api/devices/{device_id}/photo")
     async def device_photo(device_id: str):
         found = s.photos.read(device_id) if s.db.device(device_id) else None
@@ -294,6 +314,55 @@ def create_app(services, background_tasks=True, on_quit=None):
         except InventoryError as exc:
             raise _bad_request(exc)
 
+    # ------------------------------------------------------------ the board's own settings (mcumgr group 64)
+
+    def _not_updating(device_ids):
+        job = s.updates.running_job()
+        if job is not None and any(t.device_id in device_ids for t in job.targets):
+            raise _bad_request("An update is running on this board: wait for it to finish")
+
+    @app.post("/api/devices/{device_id}/board-settings/read")
+    async def board_settings(device_id: str, body: dict = None):
+        body = body or {}
+        _not_updating([device_id])
+        try:
+            return await s.inventory.board_settings(device_id, body.get("transport", "udp"), body.get("serial_port", ""))
+        except InventoryError as exc:
+            raise _bad_request(exc)
+
+    @app.put("/api/devices/{device_id}/board-settings")
+    async def set_board_settings(device_id: str, body: dict):
+        _not_updating([device_id])
+        values = body.get("values")
+        if not isinstance(values, dict) or not values:
+            raise _bad_request("No settings to change")
+        try:
+            return await s.inventory.set_board_settings(device_id, values, body.get("transport", "udp"),
+                                                        body.get("serial_port", ""))
+        except (InventoryError, ValueError, TypeError) as exc:
+            raise _bad_request(exc)
+
+    @app.post("/api/devices/{device_id}/board-settings/sample")
+    async def sample_soil(device_id: str, body: dict = None):
+        body = body or {}
+        _not_updating([device_id])
+        try:
+            return await s.inventory.sample_soil(device_id, body.get("transport", "udp"), body.get("serial_port", ""))
+        except InventoryError as exc:
+            raise _bad_request(exc)
+
+    @app.post("/api/board-settings")
+    async def set_fleet_settings(body: dict):
+        device_ids = [str(d) for d in body.get("device_ids", [])]
+        values = body.get("values")
+        if not device_ids or not isinstance(values, dict) or not values:
+            raise _bad_request("Choose the boards and the settings to change")
+        _not_updating(device_ids)
+        try:
+            return {"results": await s.inventory.set_fleet_settings(device_ids, values)}
+        except (ValueError, TypeError) as exc:
+            raise _bad_request(exc)
+
     @app.get("/api/devices/{device_id}/details")
     async def device_details(device_id: str, days: int = 30):
         device = s.db.device(device_id)
@@ -309,6 +378,7 @@ def create_app(services, background_tasks=True, on_quit=None):
                 "readings": s.db.readings(device_id, since), "links": s.db.link_samples(device_id, since),
                 "updates": s.db.updates(device_id, limit=50), "network_events": s.db.network_events_for(device_id),
                 "activity": s.db.activity(device_id, since),
+                "restarts": s.db.recent_activity(device_id, "restart", 20),
                 "drain": await asyncio.to_thread(fleet.battery_drain, s.db, device)}
 
     @app.post("/api/devices/{device_id}/pump")

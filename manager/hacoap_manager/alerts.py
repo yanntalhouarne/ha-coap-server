@@ -1,13 +1,19 @@
 """Alerts: a device that stopped answering, a low battery, a plant that needs water, a failed
-update. They're raised when the condition starts and cleared when it ends (or dismissed), and
+update, a board that crashed (or was restarted by its watchdog). They're raised when the condition starts and cleared when it ends (or dismissed), and
 each new one is sent to the page, which can show it as a browser notification.
 
 Messages are stored with a {name} placeholder, filled in with the device's name when read, so
 an alert follows a rename."""
 
+import time
+
 from . import fleet
+from .inventory import reset_text
 
 NAME = "{name}"
+
+# Alerts about something that happened, rather than a state: they stay until dismissed.
+EVENTS = ("update", "restart")
 
 
 class AlertService:
@@ -50,7 +56,7 @@ class AlertService:
         for key, (kind, device_id, message) in now.items():
             if key not in open_keys:
                 new.append(self._named(self.db.add_alert(key, kind, device_id, message)))
-        cleared = [a for a in open_alerts if a["kind"] != "update" and a["key"] not in now]
+        cleared = [a for a in open_alerts if a["kind"] not in EVENTS and a["key"] not in now]
         for alert in cleared:
             self.db.clear_alert(alert["id"])
         for alert in new:
@@ -63,6 +69,13 @@ class AlertService:
         who = NAME if device_id else label  # a board on USB that isn't in the list has only its port
         alert = self._named(self.db.add_alert(f"update:{job_id}:{device_id or label}", "update", device_id,
                                               f"Update of {who} failed: {message}"))
+        self.events.publish("alert", alert=alert)
+        self.events.publish("alerts")
+
+    def restarted(self, device, cause, fault):
+        """A board restarted for a bad reason: a crash, its watchdog, a CPU lockup."""
+        alert = self._named(self.db.add_alert(f"restart:{device['device_id']}:{time.time():.0f}", "restart",
+                                              device["device_id"], f"{NAME} restarted: {reset_text(cause, fault)}"))
         self.events.publish("alert", alert=alert)
         self.events.publish("alerts")
 

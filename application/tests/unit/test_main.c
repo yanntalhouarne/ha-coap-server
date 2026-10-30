@@ -34,6 +34,12 @@ static struct
 	const char *srp_device_id;
 	srp_registered_cb_t srp_registered;
 	int mcumgr_poll_inits;
+	uint32_t normal_poll_ms;
+	int hacoap_mgmt_inits;
+	int reschedules;
+	device_settings_changed_cb settings_changed;
+	int settings_init_call;
+	int diag_inits;
 	const struct coap_resources_handlers *coap;
 	int calls;            // order of the init calls
 	int led_init_call;
@@ -162,6 +168,61 @@ void mcumgr_poll_init(void)
 	fake_mod.mcumgr_poll_inits++;
 }
 
+void mcumgr_poll_set_normal_period(uint32_t period_ms)
+{
+	fake_mod.normal_poll_ms = period_ms;
+}
+
+void hacoap_mgmt_init(void)
+{
+	fake_mod.hacoap_mgmt_inits++;
+}
+
+void sensors_reschedule(void)
+{
+	fake_mod.reschedules++;
+}
+
+int device_settings_init(device_settings_changed_cb changed)
+{
+	fake_mod.settings_changed = changed;
+	fake_mod.settings_init_call = ++fake_mod.calls;
+	return 0;
+}
+
+/* Like the real one for the pump run time: checks the range, then applies it */
+int device_settings_set(const enum device_setting *ids, const int32_t *values, size_t count)
+{
+	for (size_t i = 0U; i < count; i++)
+	{
+		if ((ids[i] == SETTING_PUMP_S) && ((values[i] < 1) || (values[i] > CONFIG_HACOAP_PUMP_MAX_DURATION)))
+		{
+			return -EINVAL;
+		}
+	}
+	for (size_t i = 0U; i < count; i++)
+	{
+		on_setting_changed(ids[i], values[i]);
+	}
+	return 0;
+}
+
+void diag_init(void)
+{
+	fake_mod.diag_inits++;
+}
+
+void diag_link_read(otInstance *instance, struct diag_link *link)
+{
+	(void)instance;
+	*link = (struct diag_link){.role = "child", .attached = true, .rloc16 = 0x5c01};
+}
+
+size_t diag_format(char *payload, size_t size, const struct diag_link *link, int32_t soil_mv)
+{
+	return (size_t)snprintf(payload, size, "rloc=%04x,soil_mv=%d", link->rloc16, (int)soil_mv);
+}
+
 int coap_resources_init(const struct coap_resources_handlers *handlers)
 {
 	fake_mod.coap = handlers;
@@ -193,8 +254,11 @@ static void test_boot_reaches_openthread(void)
 	CHECK_EQ(firmware_main(), 0);
 
 	CHECK_EQ(fake_mod.led_init_call, 1); // first, so that error indications work
+	CHECK_EQ(fake_mod.settings_init_call, 2); // before the modules that use the settings
+	CHECK_EQ(fake_mod.diag_inits, 1);
 	CHECK(fake_mod.coap == &coap_handlers);
 	CHECK_EQ(fake_mod.mcumgr_poll_inits, 1);
+	CHECK_EQ(fake_mod.hacoap_mgmt_inits, 1);
 	CHECK(fake_ot_state_cb != NULL);
 	CHECK(fake_ot_started);
 	CHECK_STR(device_id, "1a2b3c4d");
@@ -244,10 +308,43 @@ static void test_pumpdc_put_takes_one_ascii_digit(void)
 	CHECK_EQ(on_pumpdc_put(5), 5);
 	CHECK_EQ(fake_mod.pump_set_durations, 1);
 
-	/* '0' is a digit, but out of range for the pump */
+	/* '0' is a digit, but out of range for the pump: the setting refuses it */
 	CHECK_EQ(on_pumpdc_put('0'), 5);
-	CHECK_EQ(fake_mod.pump_set_duration_arg, 0);
+	CHECK_EQ(fake_mod.pump_set_durations, 1);
 	CHECK_EQ(on_pumpdc_get(), 5);
+}
+
+static void test_settings_are_applied(void)
+{
+	reset_module();
+	(void)firmware_main();
+	fake_mod.settings_changed(SETTING_PUMP_S, 7);
+	CHECK_EQ(fake_mod.pump_duration, 7);
+	fake_mod.settings_changed(SETTING_POLL_MS, 5000);
+	CHECK_EQ(fake_mod.normal_poll_ms, 5000);
+	fake_mod.settings_changed(SETTING_SAMPLE_S, 60);
+	CHECK_EQ(fake_mod.reschedules, 1);
+	fake_mod.settings_changed(SETTING_SOIL_DRY_MV, 2000); // read at each sample
+}
+
+static void test_a_sample_period_from_flash_waits_for_the_sensors(void)
+{
+	reset_module();
+	sampling = false;
+	on_setting_changed(SETTING_SAMPLE_S, 60); // at load, before sensors_start()
+	CHECK_EQ(fake_mod.reschedules, 0);
+}
+
+static void test_diag_reports_the_link_and_the_soil_voltage(void)
+{
+	char payload[DIAG_PAYLOAD_MAX_SIZE];
+	size_t length;
+
+	reset_module();
+	fake_mod.sensors.soil_mv = 1696;
+	length = on_diag_get(payload, sizeof(payload));
+	CHECK_EQ(length, 22);
+	CHECK(memcmp(payload, "rloc=5c01,soil_mv=1696", 22) == 0);
 }
 
 static void test_pump_put_only_acts_on_a_change(void)
@@ -355,6 +452,9 @@ int main(void)
 	RUN_TEST(test_boot_continues_with_missing_sensors);
 	RUN_TEST(test_usb_already_enabled_is_not_an_error);
 	RUN_TEST(test_pumpdc_put_takes_one_ascii_digit);
+	RUN_TEST(test_settings_are_applied);
+	RUN_TEST(test_a_sample_period_from_flash_waits_for_the_sensors);
+	RUN_TEST(test_diag_reports_the_link_and_the_soil_voltage);
 	RUN_TEST(test_pump_put_only_acts_on_a_change);
 	RUN_TEST(test_data_sends_the_temperature_as_a_signed_byte);
 	RUN_TEST(test_info_reports_versions_and_device_id);

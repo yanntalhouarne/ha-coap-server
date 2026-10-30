@@ -110,6 +110,11 @@ export async function loadDashboard() {
   'No battery is low. Forecasts appear once a device has a few readings over several hours.'));
   document.getElementById('dash-offline').replaceChildren(table(d.offline.map((e) => h('tr', {},
     h('td', {}, deviceLink(e)), h('td', { class: 'small' }, `last seen ${ago(e.last_seen)}`))), 'Every device answered recently.'));
+  document.getElementById('dash-restarts').replaceChildren(table((d.restarts || []).map((e) => h('tr', {},
+    h('td', {}, deviceLink(e)),
+    h('td', { class: 'text-end text-nowrap' }, `${e.count}×`, e.bad ? h('span', { class: 'text-danger ms-1' }, `(${e.bad} bad)`) : null),
+    h('td', { class: 'small text-body-secondary' }, `${ago(e.last.time)}: ${e.last.message.replace(/^Restarted: /, '')}`))),
+  'No board restarted. Boards with a newer firmware report their restarts and crashes.'));
   document.getElementById('dash-links').replaceChildren(table(d.weak_links.map((l) => h('tr', {},
     h('td', {}, l.device_id ? deviceLink({ device_id: l.device_id, name: l.from }) : l.from, ' ↔ ', l.to),
     h('td', { class: 'small' }, linkText(l)))),
@@ -125,7 +130,8 @@ export async function loadDashboard() {
 
 // ------------------------------------------------------------------ the activity feed
 
-const feedIcons = { update: 'upload', alert: 'triangle-alert', parent: 'network', pump: 'droplets', photo: 'camera', build: 'hammer' };
+const feedIcons = { update: 'upload', alert: 'triangle-alert', parent: 'network', pump: 'droplets', photo: 'camera', build: 'hammer',
+  restart: 'power', settings: 'sliders-horizontal' };
 const feed = { entries: [] };
 
 export async function loadFeed(older = false) {
@@ -156,12 +162,12 @@ export function renderDeviceDrain(periods) {
   const measured = periods.filter((p) => p.rate);
   document.getElementById('device-drain').replaceChildren(measured.length ? h('div', { class: 'mb-3' },
     h('div', { class: 'small fw-bold mb-1' }, 'Battery drain by firmware'),
-    h('table', { class: 'table table-sm mb-0 small' }, h('tbody', {}, measured.map((p) => h('tr', {},
+    h('div', { class: 'table-responsive' }, h('table', { class: 'table table-sm mb-0 small' }, h('tbody', {}, measured.map((p) => h('tr', {},
       h('td', {}, imageLabel(p.image_hash, p.version)),
       h('td', { class: 'text-nowrap' }, `${when(p.start)} → ${p.end ? when(p.end) : 'now'}`),
       h('td', { class: 'text-end text-nowrap' }, perDay(p.rate)),
       h('td', { class: 'text-body-secondary text-nowrap' }, fullLasts(p.rate.per_day > 0.01 ? 100 / p.rate.per_day : null)),
-      h('td', { class: 'text-body-secondary text-nowrap' }, `over ${p.rate.days.toFixed(1)} days`)))))) : '');
+      h('td', { class: 'text-body-secondary text-nowrap' }, `over ${p.rate.days.toFixed(1)} days`))))))) : '');
 }
 
 export async function loadDrain() {

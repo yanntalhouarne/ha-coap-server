@@ -6,13 +6,16 @@
  * Startup, and the glue between the CoAP resources, the hardware modules and OpenThread.
  *
  * Modules:
- *     - coap_resources: the CoAP API ('pumpdc', 'pump', 'data', 'info', 'ping', 'log')
+ *     - coap_resources: the CoAP API ('pumpdc', 'pump', 'data', 'info', 'ping', 'diag', 'log')
  *     - pump:           timed pump runs, from CoAP or the S1 button
  *     - sensors:        soil, battery and air readings, sampled periodically
  *     - buzzer:         beep patterns
  *     - status_led:     network and error states on the module's RGB LED
  *     - mcumgr_poll:    faster Thread polling while mcumgr updates the device or the log is read
  *     - log_buffer:     the latest log output, for 'log' (with remote_log, CONFIG_HACOAP_REMOTE_LOG)
+ *     - device_settings: the settings that can change without a new firmware, in flash
+ *     - hacoap_mgmt:    the 'hacoap' mcumgr group, to read and write them
+ *     - diag:           restart and crash records, and the link to the parent, for 'diag'
  *     - srp:            service registration, so Home Assistant can discover the device
  *     - watchdog:       resets the SoC if the system work queue stalls
  */
@@ -28,6 +31,9 @@
 
 #include "buzzer.h"
 #include "coap_resources.h"
+#include "device_settings.h"
+#include "diag.h"
+#include "hacoap_mgmt.h"
 #include "log_buffer.h"
 #include "mcumgr_poll.h"
 #include "pump.h"
@@ -44,6 +50,34 @@ LOG_MODULE_REGISTER(coap_server, CONFIG_COAP_SERVER_LOG_LEVEL);
 /* Device ID (FICR DEVICEID[0] in hex), reported in 'info' and appended to the SRP hostname */
 static char device_id[9];
 
+/* Set once the sensors sample periodically */
+static bool sampling;
+
+/* Applies a setting: at boot (when it differs from its default), and after each change */
+static void on_setting_changed(enum device_setting id, int32_t value)
+{
+	switch (id)
+	{
+	case SETTING_SAMPLE_S:
+		if (sampling)
+		{
+			sensors_reschedule();
+		}
+		break;
+
+	case SETTING_PUMP_S:
+		(void)pump_set_duration((uint8_t)value);
+		break;
+
+	case SETTING_POLL_MS:
+		mcumgr_poll_set_normal_period((uint32_t)value);
+		break;
+
+	default:
+		break; // the soil calibration is read at each sample
+	}
+}
+
 /* CoAP handlers (called from the OpenThread thread) */
 static uint8_t on_pumpdc_get(void)
 {
@@ -52,10 +86,14 @@ static uint8_t on_pumpdc_get(void)
 
 static uint8_t on_pumpdc_put(uint8_t value)
 {
-	/* The payload is a single ASCII digit. Out-of-range values keep the current run time. */
+	/* The payload is a single ASCII digit. Out-of-range values keep the current run time.
+	 * The run time is a setting, so it's kept across resets. */
+	static const enum device_setting pump_s = SETTING_PUMP_S;
+	int32_t seconds = value - '0';
+
 	if ((value >= '0') && (value <= '9'))
 	{
-		(void)pump_set_duration(value - '0');
+		(void)device_settings_set(&pump_s, &seconds, 1);
 	}
 
 	return pump_get_duration();
@@ -118,6 +156,14 @@ static void on_ping_put(uint8_t command)
 	}
 }
 
+static size_t on_diag_get(char *payload, size_t size)
+{
+	struct diag_link link;
+
+	diag_link_read(openthread_get_default_instance(), &link);
+	return diag_format(payload, size, &link, sensors_get().soil_mv);
+}
+
 #ifdef CONFIG_HACOAP_REMOTE_LOG
 static size_t on_log_get(uint32_t from, char *payload, size_t size)
 {
@@ -135,6 +181,7 @@ static const struct coap_resources_handlers coap_handlers = {
 	.data_get = on_data_get,
 	.info_get = on_info_get,
 	.ping_put = on_ping_put,
+	.diag_get = on_diag_get,
 #ifdef CONFIG_HACOAP_REMOTE_LOG
 	.log_get = on_log_get,
 #endif
@@ -225,6 +272,10 @@ int main(void)
 		LOG_ERR("Could not initialize leds (error: %d)", ret);
 	}
 
+	/* Before the modules that use the settings. A failure leaves the defaults in use. */
+	(void)device_settings_init(on_setting_changed);
+	diag_init();
+
 	if (IS_ENABLED(CONFIG_USB_DEVICE_STACK))
 	{
 		ret = usb_enable(NULL);
@@ -266,7 +317,9 @@ int main(void)
 
 	snprintf(device_id, sizeof(device_id), "%x", (unsigned int)NRF_FICR->DEVICEID[0]);
 	sensors_start();
+	sampling = true;
 	mcumgr_poll_init();
+	hacoap_mgmt_init();
 
 	LOG_INF("Start CoAP-server sample");
 	ret = coap_resources_init(&coap_handlers);

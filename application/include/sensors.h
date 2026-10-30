@@ -26,15 +26,23 @@ struct sensors_data
 	uint8_t battery_soc;   // %
 	uint8_t air_humidity;  // %
 	int8_t temperature;    // degC
+	int16_t soil_mv;       // the soil sensor's output (mV), for calibrating; -1 if not read
+	uint32_t samples;      // samples taken since boot
 };
 
 /* Checks the sensors and configures the soil sensor power outputs (off).
  * Returns a mask of the SENSOR_* bits that are not available (0 if all are). */
 uint32_t sensors_init(void);
 
-/* Takes a first sample now (blocking, about SOIL_POWER_UP_MS), then every
- * HACOAP_SENSOR_SAMPLE_PERIOD_S from the system work queue. */
+/* Takes a first sample now (blocking, about SOIL_POWER_UP_MS), then every sampling period
+ * (the 'sample_s' setting) from the system work queue. */
 void sensors_start(void);
+
+/* Takes a sample as soon as possible, from the system work queue (does not wait for it). */
+void sensors_sample_now(void);
+
+/* Restarts the sampling period from now: after the 'sample_s' setting changed. */
+void sensors_reschedule(void);
 
 /* Returns the latest readings. Safe to call from any thread. */
 struct sensors_data sensors_get(void);

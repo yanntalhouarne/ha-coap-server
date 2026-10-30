@@ -14,6 +14,28 @@ class InventoryError(Exception):
     pass
 
 
+# Why a board restarted ('diag'), in words
+RESET_CAUSES = {
+    "power": "power on (a battery change, the USB plugged in, or a brownout)",
+    "pin": "the reset button",
+    "soft": "a software reset (after an update, or a reset from the app)",
+    "watchdog": "the watchdog: it stopped responding",
+    "lockup": "a CPU lockup",
+    "crash": "a crash",
+    "other": "another reason",
+}
+# The ones worth an alert
+BAD_RESETS = ("watchdog", "lockup", "crash")
+
+
+def reset_text(cause, fault=""):
+    text = RESET_CAUSES.get(cause, cause or "an unknown reason")
+    if cause == "crash" and fault:
+        reason, _, address = fault.partition("@")
+        text += f" (fatal error {reason} at 0x{address})"
+    return text
+
+
 class Inventory:
     def __init__(self, db, settings, events, discover=discovery.discover):
         self.db = db
@@ -21,6 +43,7 @@ class Inventory:
         self.events = events
         self._discover = discover
         self.refreshed = False  # every device asked at least once since the app started
+        self.on_restart = None  # called with (device, cause, fault) after a restart that's a problem
 
     def _changed(self, device):
         self.events.publish("device", device=self.describe(device))
@@ -75,24 +98,56 @@ class Inventory:
         return device
 
     async def refresh(self, device_id):
-        """Reads 'info' and 'data' over CoAP."""
+        """Reads 'info', 'data' and (newer firmware) 'diag' over CoAP."""
         device = self._device(device_id)
         if not device["address"]:
             raise InventoryError(f"{device_id} has no network address")
         options = self._coap_options()
-        try:
-            info, data = await asyncio.gather(coap.get_info(device["address"], **options),
-                                              coap.get_data(device["address"], **options))
-        except (coap.CoapError, TimeoutError, OSError) as exc:
-            return self._changed(self.db.upsert_device(device_id, last_error=f"No answer: {exc}"))
+        # Firmware without 'diag' doesn't answer it: once seen, not asked again until an update.
+        ask_diag = not device["no_diag_fw"] or device["no_diag_fw"] != device["fw_version"]
+        requests = [coap.get_info(device["address"], **options), coap.get_data(device["address"], **options)]
+        if ask_diag:
+            requests.append(coap.get_diag(device["address"], **options))
+        answers = await asyncio.gather(*requests, return_exceptions=True)
+        info, data = answers[:2]
+        for answer in (info, data):
+            if isinstance(answer, BaseException):
+                if not isinstance(answer, (coap.CoapError, TimeoutError, OSError)):
+                    raise answer
+                return self._changed(self.db.upsert_device(device_id, last_error=f"No answer: {answer}"))
         if info.device_id != device_id:
             return self._changed(self.db.upsert_device(
                 device_id, last_error=f"{device['address']} is now device {info.device_id}"))
         self.db.add_reading(device_id, data.battery, data.soil_moisture, data.air_humidity, data.temperature)
-        return self._changed(self.db.upsert_device(
-            device_id, fw_version=info.fw_version, hw_version=info.hw_version, soil_moisture=data.soil_moisture,
-            battery=data.battery, air_humidity=data.air_humidity, temperature=data.temperature,
-            last_seen=time.time(), last_error=""))
+        fields = dict(fw_version=info.fw_version, hw_version=info.hw_version, soil_moisture=data.soil_moisture,
+                      battery=data.battery, air_humidity=data.air_humidity, temperature=data.temperature,
+                      last_seen=time.time(), last_error="")
+        if ask_diag:
+            diag = answers[2]
+            if isinstance(diag, coap.Diagnostics):
+                fields.update(self._diagnostics(device, diag))
+            elif isinstance(diag, (TimeoutError, coap.CoapError)):
+                fields["no_diag_fw"] = info.fw_version  # older firmware
+            elif isinstance(diag, BaseException) and not isinstance(diag, OSError):
+                raise diag
+        return self._changed(self.db.upsert_device(device_id, **fields))
+
+    def _diagnostics(self, device, diag):
+        """The fields 'diag' sets, after recording any restart since the last answer."""
+        now = time.time()
+        previous = device["boots"]
+        if previous is not None and diag.boots != previous:
+            # Several restarts between two refreshes: only the last one's cause is known.
+            count = diag.boots - previous if diag.boots > previous else 1  # a lower count: its flash was erased
+            message = f"Restarted: {reset_text(diag.reset, diag.fault)}"
+            if count > 1:
+                message += f" ({count} restarts since the last check)"
+            self.db.add_activity(device["device_id"], "restart", message, when=now - diag.uptime_s)
+            if diag.reset in BAD_RESETS and self.on_restart is not None:
+                self.on_restart(device, diag.reset, diag.fault)
+        return dict(boots=diag.boots, reset_cause=diag.reset, fault=diag.fault, uptime_s=diag.uptime_s,
+                    role=diag.role, rloc16=diag.rloc16, parent_rloc16=diag.parent, parent_rssi=diag.rssi,
+                    link_quality=diag.link_quality, soil_mv=diag.soil_mv, diag_time=now, no_diag_fw="")
 
     async def refresh_all(self, concurrency=4):
         semaphore = asyncio.Semaphore(concurrency)
@@ -107,6 +162,90 @@ class Inventory:
         await asyncio.gather(*(one(d) for d in self.db.devices() if d["address"]))
         self.refreshed = True
         return self.devices()
+
+    # ------------------------------------------------------------ the board's settings (mcumgr group 64)
+
+    # What each setting is, for the page and the activity log
+    SETTING_NAMES = {"sample_s": "sampling period (s)", "soil_dry_mv": "soil sensor when dry (mV)",
+                     "soil_wet_mv": "soil sensor when wet (mV)", "pump_s": "pump run time (s)",
+                     "poll_ms": "poll period (ms)"}
+
+    def _link(self, device_id, transport, serial_port):
+        device = self._device(device_id)
+        address = serial_port if transport == "serial" else device["address"]
+        if not address:
+            raise InventoryError("No serial port given" if transport == "serial" else f"{device_id} has no network address")
+        return device, DeviceLink(transport, address, self.settings.link_settings())
+
+    @staticmethod
+    def _settings_error(exc):
+        if "ENOTSUP" in str(exc):
+            return InventoryError("This board's firmware has no settings to change: update it to a newer firmware first")
+        if "EINVAL" in str(exc):
+            return InventoryError("The board refused these values (out of range, or the soil sensor's dry value "
+                                  "not above its wet one): nothing changed")
+        return InventoryError(str(exc))
+
+    async def board_settings(self, device_id, transport="udp", serial_port=""):
+        """The board's settings: {"settings": {name: {value, default, min, max}}, "soil_mv", "samples"}."""
+        device, link = self._link(device_id, transport, serial_port)
+        try:
+            async with link:
+                result = await link.board_settings()
+        except McumgrError as exc:
+            raise self._settings_error(exc) from exc
+        self._changed(self.db.upsert_device(device_id, soil_mv=result["soil_mv"], last_seen=time.time()))
+        return result
+
+    async def set_board_settings(self, device_id, values, transport="udp", serial_port=""):
+        """Changes some of the board's settings ({name: value}): all of them, or none."""
+        unknown = set(values) - set(self.SETTING_NAMES)
+        if unknown:
+            raise InventoryError(f"Unknown settings: {', '.join(sorted(unknown))}")
+        device, link = self._link(device_id, transport, serial_port)
+        try:
+            async with link:
+                before = (await link.board_settings())["settings"]
+                result = await link.set_board_settings(values)
+        except McumgrError as exc:
+            raise self._settings_error(exc) from exc
+        changes = [f"{self.SETTING_NAMES[name]} {before[name]['value']} → {result['settings'][name]['value']}"
+                   for name in values if name in before and before[name]["value"] != result["settings"][name]["value"]]
+        if changes:
+            self.db.add_activity(device_id, "settings", "Settings changed: " + ", ".join(changes))
+        self._changed(self.db.upsert_device(device_id, last_seen=time.time()))
+        return result
+
+    async def sample_soil(self, device_id, transport="udp", serial_port="", timeout_s=15.0):
+        """Takes a sensor sample now and returns the settings with its soil voltage (for calibrating)."""
+        device, link = self._link(device_id, transport, serial_port)
+        try:
+            async with link:
+                before = await link.sample()
+                deadline = time.monotonic() + timeout_s
+                while True:
+                    await asyncio.sleep(0.5)  # the soil sensor powers up for 200 ms first
+                    result = await link.board_settings()
+                    if result["samples"] > before or time.monotonic() > deadline:
+                        break
+        except McumgrError as exc:
+            raise self._settings_error(exc) from exc
+        if result["samples"] <= before:
+            raise InventoryError("The board didn't take a new sample")
+        self._changed(self.db.upsert_device(device_id, soil_mv=result["soil_mv"], last_seen=time.time()))
+        return result
+
+    async def set_fleet_settings(self, device_ids, values):
+        """The same settings on several boards, over the air, one after the other.
+        Returns {device_id: error or ""}."""
+        results = {}
+        for device_id in device_ids:
+            try:
+                await self.set_board_settings(device_id, values)
+                results[device_id] = ""
+            except InventoryError as exc:
+                results[device_id] = str(exc)
+        return results
 
     async def read_slots(self, device_id, transport="udp", serial_port=""):
         """Reads the image slots over mcumgr, and records the running image."""

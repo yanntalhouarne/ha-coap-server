@@ -25,6 +25,9 @@ BUILD_ASSERT(CONFIG_HACOAP_MCUMGR_POLL_PERIOD_MS < CONFIG_OPENTHREAD_POLL_PERIOD
 /* Only used from the system work queue */
 static bool fast_polling;
 
+/* The poll period when not polling fast (the 'poll_ms' setting) */
+static atomic_t normal_period_ms = ATOMIC_INIT(CONFIG_OPENTHREAD_POLL_PERIOD);
+
 static void set_poll_period(uint32_t period_ms)
 {
 	struct openthread_context *context = openthread_get_default_context();
@@ -57,12 +60,29 @@ static void on_normal_poll_work(struct k_work *work)
 	ARG_UNUSED(work);
 
 	fast_polling = false;
-	set_poll_period(CONFIG_OPENTHREAD_POLL_PERIOD);
-	LOG_INF("mcumgr and log idle: poll period %d ms", CONFIG_OPENTHREAD_POLL_PERIOD);
+	set_poll_period((uint32_t)atomic_get(&normal_period_ms));
+	LOG_INF("mcumgr and log idle: poll period %d ms", (int)atomic_get(&normal_period_ms));
+}
+
+static void on_apply_work(struct k_work *work)
+{
+	ARG_UNUSED(work);
+
+	if (!fast_polling)
+	{
+		set_poll_period((uint32_t)atomic_get(&normal_period_ms));
+	}
 }
 
 static K_WORK_DEFINE(fast_poll_work, on_fast_poll_work);
 static K_WORK_DELAYABLE_DEFINE(normal_poll_work, on_normal_poll_work);
+static K_WORK_DEFINE(apply_work, on_apply_work);
+
+void mcumgr_poll_set_normal_period(uint32_t period_ms)
+{
+	atomic_set(&normal_period_ms, (long)period_ms);
+	k_work_submit(&apply_work);
+}
 
 void mcumgr_poll_hold(void)
 {

@@ -225,6 +225,9 @@ fieldset legend::before { content: "// "; color: var(--t-accent-text); }
 .event-failed { --event: var(--t-red); }
 .event-pump { --event: var(--t-cyan); }
 .event-parent { --event: var(--t-magenta); }
+.event-restart { --event: var(--t-orange); }
+.calibrate { border-top: 1px solid var(--t-border-subtle); padding-top: .5rem; margin-top: .25rem; }
+.calibrate .btn { margin: .15rem 0; }
 .legend-event { display: inline-block; width: .55rem; height: .55rem; border-radius: 50%; background: var(--event);
   margin: 0 .25rem 0 .5rem; vertical-align: baseline; }
 .chart-y { display: flex; flex-direction: column; justify-content: space-between; font-size: .65rem; color: var(--t-text-muted);
@@ -302,6 +305,8 @@ fieldset legend::before { content: "// "; color: var(--t-accent-text); }
 /* ---------------------------------------------------------------- phones */
 
 @media (max-width: 767.98px) {
+  /* A card's table scrolls on its own rather than widening the page */
+  .card-body > .table, .card-body > div > .table { display: block; overflow-x: auto; }
   .topbar { flex-wrap: wrap; gap: .5rem; padding: .35rem .75rem; }
   .topbar .tabs { order: 3; width: 100%; flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
   .topbar .tabs::-webkit-scrollbar { display: none; }
@@ -870,6 +875,8 @@ button.net-figure:hover { border-color: var(--t-brand); }
 .feed-update .icon { color: var(--t-green); }
 .feed-update.failed .icon, .feed-alert .icon { color: var(--t-yellow); }
 .feed-pump .icon { color: var(--t-cyan); }
+.feed-restart .icon { color: var(--t-orange); }
+.feed-settings .icon { color: var(--t-blue); }
 .feed-parent .icon { color: var(--t-magenta); }
 .feed-photo .icon { color: var(--t-brand); }
 .feed a { color: var(--t-text); text-decoration: none; }

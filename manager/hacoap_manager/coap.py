@@ -1,4 +1,4 @@
-"""A small CoAP client (RFC 7252) for the device's resources: 'info', 'data', 'ping' and 'log'.
+"""A small CoAP client (RFC 7252) for the device's resources: 'info', 'data', 'ping', 'diag' and 'log'.
 
 Only what the devices need: GET and PUT, confirmable requests with retransmission,
 piggybacked or separate responses. Timeouts are long because a sleepy device only
@@ -296,3 +296,49 @@ async def get_log(host, offset=0, **kwargs):
     if code != CONTENT:
         raise CoapError(f"'log' answered {code_name(code)}")
     return parse_log(payload)
+
+
+@dataclass
+class Diagnostics:
+    """The 'diag' payload (application/include/diag.h)."""
+    boots: int            # boots since the board's flash was erased
+    uptime_s: int
+    reset: str            # why it last restarted: power, pin, soft, watchdog, lockup, crash, other
+    fault: str            # after a crash: "<reason>@<address>", else ""
+    role: str             # disabled, detached, child, router, leader
+    rloc16: str           # "0x5c01", or "" when not attached
+    parent: str
+    rssi: int | None      # the parent's average RSSI (dBm)
+    last_rssi: int | None
+    link_quality: int | None
+    soil_mv: int | None   # the soil sensor's latest output, or None when it wasn't read
+
+
+def parse_diag(payload):
+    fields = {}
+    for item in payload.rstrip(b"\0").decode("ascii", errors="replace").split(","):
+        key, equals, value = item.partition("=")
+        if equals:
+            fields[key.strip()] = value.strip()
+    if "boots" not in fields or "reset" not in fields:
+        raise CoapError(f"unexpected 'diag' payload: {payload[:60]!r}")
+
+    def number(key):
+        try:
+            return int(fields[key])
+        except (KeyError, ValueError):
+            return None
+
+    def hex16(key):
+        return f"0x{fields[key]}" if fields.get(key) else ""
+
+    soil_mv = number("soil_mv")
+    return Diagnostics(number("boots") or 0, number("up") or 0, fields["reset"], fields.get("fault", ""),
+                       fields.get("role", ""), hex16("rloc"), hex16("parent"), number("rssi"), number("last_rssi"),
+                       number("lq"), soil_mv if soil_mv is not None and soil_mv >= 0 else None)
+
+
+async def get_diag(host, **kwargs):
+    """Restarts, crashes and the link to the parent. Firmware without 'diag' doesn't answer, so
+    this raises TimeoutError for it."""
+    return parse_diag(await _get(host, "diag", **kwargs))

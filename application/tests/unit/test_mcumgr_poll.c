@@ -11,6 +11,8 @@
 static void reset_module(void)
 {
 	fast_polling = false;
+	normal_period_ms = CONFIG_OPENTHREAD_POLL_PERIOD;
+	apply_work.pending = false;
 	fast_poll_work.pending = false;
 	normal_poll_work.scheduled = false;
 	normal_poll_work.schedules = 0;
@@ -104,6 +106,23 @@ static void test_hold_polls_fast_like_an_mcumgr_request(void)
 	CHECK_EQ(normal_poll_work.schedules, 3);
 }
 
+static void test_the_normal_period_is_a_setting(void)
+{
+	reset_module();
+	mcumgr_poll_set_normal_period(10000);
+	fake_work_run(&apply_work);
+	CHECK_EQ(fake_poll_period_ms, 10000);
+
+	/* While polling fast, it waits for the end of the fast polling */
+	mcumgr_poll_hold();
+	fake_work_run(&fast_poll_work);
+	mcumgr_poll_set_normal_period(20000);
+	fake_work_run(&apply_work);
+	CHECK_EQ(fake_poll_period_ms, CONFIG_HACOAP_MCUMGR_POLL_PERIOD_MS);
+	fake_dwork_run(&normal_poll_work);
+	CHECK_EQ(fake_poll_period_ms, 20000);
+}
+
 int main(void)
 {
 	RUN_TEST(test_registers_for_mcumgr_requests);
@@ -112,5 +131,6 @@ int main(void)
 	RUN_TEST(test_each_request_restarts_the_timeout);
 	RUN_TEST(test_poll_period_is_set_once_per_session);
 	RUN_TEST(test_hold_polls_fast_like_an_mcumgr_request);
+	RUN_TEST(test_the_normal_period_is_a_setting);
 	return TEST_RESULT();
 }

@@ -209,6 +209,19 @@ static void handle_ping(otMessage *request, const otMessageInfo *response_info, 
 	response_send(request, response_info, OT_COAP_CODE_CHANGED, NULL, 0);
 }
 
+/* 'diag' GET: restarts, crashes and the link to the parent, as "key=value,..." (see diag.h) */
+static void handle_diag(otMessage *request, const otMessageInfo *response_info, otCoapCode code)
+{
+	char payload[DIAG_PAYLOAD_MAX_SIZE];
+	size_t length;
+
+	ARG_UNUSED(code);
+
+	LOG_DBG("Received 'diag' GET request");
+	length = app->diag_get(payload, sizeof(payload));
+	response_send(request, response_info, OT_COAP_CODE_CONTENT, payload, (uint16_t)length);
+}
+
 /* The number in the "from=<n>" Uri-Query option of 'request', or 0 without one. */
 static uint32_t query_from(otMessage *request)
 {
@@ -263,6 +276,7 @@ static struct coap_resource resources[] = {
 	{.ot = {.mUriPath = "data"}, .allowed = ALLOW_GET, .handle = handle_data},
 	{.ot = {.mUriPath = "info"}, .allowed = ALLOW_GET, .handle = handle_info},
 	{.ot = {.mUriPath = "ping"}, .allowed = ALLOW_PUT, .handle = handle_ping},
+	{.ot = {.mUriPath = "diag"}, .allowed = ALLOW_GET, .handle = handle_diag},
 	{.ot = {.mUriPath = "log"}, .allowed = ALLOW_GET, .handle = handle_log},
 };
 

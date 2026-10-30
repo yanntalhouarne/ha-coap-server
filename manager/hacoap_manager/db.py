@@ -28,7 +28,19 @@ CREATE TABLE IF NOT EXISTS devices (
     location      TEXT NOT NULL DEFAULT '',
     plant         TEXT NOT NULL DEFAULT '',
     water_below   INTEGER,                    -- soil moisture % under which it needs water (NULL: the default)
-    photo         REAL                        -- when its photo was added (photos/<device_id>), or NULL
+    photo         REAL,                       -- when its photo was added (photos/<device_id>), or NULL
+    boots         INTEGER,                    -- from 'diag' (newer firmware): boots since its flash was erased
+    reset_cause   TEXT NOT NULL DEFAULT '',   -- why it last restarted: power, pin, soft, watchdog, lockup, crash
+    fault         TEXT NOT NULL DEFAULT '',   -- after a crash: "<reason>@<address>"
+    uptime_s      INTEGER,                    -- at diag_time
+    role          TEXT NOT NULL DEFAULT '',   -- its Thread role: child, router, detached...
+    rloc16        TEXT NOT NULL DEFAULT '',   -- its short address, such as 0x5c01
+    parent_rloc16 TEXT NOT NULL DEFAULT '',
+    parent_rssi   INTEGER,                    -- dBm, the board's own measure of its parent
+    link_quality  INTEGER,                    -- 0 to 3, the same
+    soil_mv       INTEGER,                    -- the soil sensor's output, for calibrating
+    diag_time     REAL,                       -- when 'diag' last answered
+    no_diag_fw    TEXT NOT NULL DEFAULT ''    -- the firmware that didn't answer 'diag' (not asked again)
 );
 CREATE TABLE IF NOT EXISTS images (
     hash     TEXT PRIMARY KEY,
@@ -112,7 +124,7 @@ CREATE TABLE IF NOT EXISTS activity (
     id        INTEGER PRIMARY KEY AUTOINCREMENT,
     time      REAL NOT NULL,
     device_id TEXT NOT NULL,
-    kind      TEXT NOT NULL,                   -- pump (started from the app)
+    kind      TEXT NOT NULL,                   -- pump (started from the app), restart, settings
     message   TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS activity_device_time ON activity (device_id, time);
@@ -133,7 +145,9 @@ CREATE TABLE IF NOT EXISTS builds (
 
 DEVICE_FIELDS = ("name", "address", "serial_port", "fw_version", "hw_version", "image_version", "image_hash",
                  "soil_moisture", "battery", "air_humidity", "temperature", "last_seen", "last_error", "notes",
-                 "tags", "location", "plant", "water_below", "photo")
+                 "tags", "location", "plant", "water_below", "photo", "boots", "reset_cause", "fault", "uptime_s",
+                 "role", "rloc16", "parent_rloc16", "parent_rssi", "link_quality", "soil_mv", "diag_time",
+                 "no_diag_fw")
 
 # Columns added after the first version: (table, column, definition), added to older databases
 ADDED_COLUMNS = [
@@ -144,6 +158,18 @@ ADDED_COLUMNS = [
     ("images", "release", "INTEGER NOT NULL DEFAULT 0"),
     ("devices", "water_below", "INTEGER"),
     ("devices", "photo", "REAL"),
+    ("devices", "boots", "INTEGER"),
+    ("devices", "reset_cause", "TEXT NOT NULL DEFAULT ''"),
+    ("devices", "fault", "TEXT NOT NULL DEFAULT ''"),
+    ("devices", "uptime_s", "INTEGER"),
+    ("devices", "role", "TEXT NOT NULL DEFAULT ''"),
+    ("devices", "rloc16", "TEXT NOT NULL DEFAULT ''"),
+    ("devices", "parent_rloc16", "TEXT NOT NULL DEFAULT ''"),
+    ("devices", "parent_rssi", "INTEGER"),
+    ("devices", "link_quality", "INTEGER"),
+    ("devices", "soil_mv", "INTEGER"),
+    ("devices", "diag_time", "REAL"),
+    ("devices", "no_diag_fw", "TEXT NOT NULL DEFAULT ''"),
 ]
 
 
@@ -223,6 +249,14 @@ class Database:
 
     def delete_device(self, device_id):
         return self._execute("DELETE FROM devices WHERE device_id = ?", (device_id,)).rowcount > 0
+
+    def purge_device(self, device_id):
+        """Deletes a device and everything recorded about it."""
+        with self._lock:
+            for table in ("readings", "link_samples", "activity", "alerts", "updates", "network_events", "devices"):
+                self._conn.execute(f"DELETE FROM {table} WHERE device_id = ?", (device_id,))
+            self._conn.execute("DELETE FROM floorplan_positions WHERE node_key = ?", (device_id,))
+            self._conn.commit()
 
     # ------------------------------------------------------------ images
 
@@ -388,6 +422,15 @@ class Database:
     def activity(self, device_id, since=0):
         return self._query("SELECT time, kind, message FROM activity WHERE device_id = ? AND time >= ? ORDER BY time",
                            (device_id, since))
+
+    def recent_activity(self, device_id, kind, limit):
+        """A device's newest activity of one kind, newest first."""
+        return self._query("SELECT time, kind, message FROM activity WHERE device_id = ? AND kind = ? "
+                           "ORDER BY time DESC LIMIT ?", (device_id, kind, limit))
+
+    def activity_kind_between(self, kind, start, end):
+        return self._query("SELECT * FROM activity WHERE kind = ? AND time >= ? AND time < ? ORDER BY time",
+                           (kind, start, end))
 
     # ------------------------------------------------------------ the activity feed
 
