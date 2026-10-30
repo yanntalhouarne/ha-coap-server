@@ -6,15 +6,13 @@ import { waterIn } from './network.js';
 
 // ------------------------------------------------------------------ wall display
 
-// Full screen for a spare monitor: every plant big, the ones that need water first, a page
-// at a time when they don't all fit, turning every 15 seconds.
-export const wall = { plants: [], page: 0, timers: [], soon: null };
-export const WALL_PAGE = 6;
+// Full screen for a spare monitor: every plant big on one page, the ones that need water
+// first; it scrolls when they don't all fit, with the header kept at the top.
+export const wall = { plants: [], timers: [], soon: null };
 
 export async function loadWall() {
   wall.plants = await api('GET', '/api/wall', undefined, { quiet: true });
   if (!wall.timers.length) {
-    wall.timers.push(setInterval(() => { wall.page += 1; renderWall(); }, 15000));
     wall.timers.push(setInterval(() => loadWall().catch(() => {}), 60000));
     wall.timers.push(setInterval(renderWallClock, 1000));
   }
@@ -41,13 +39,11 @@ export function renderWallClock() {
 
 export function renderWall() {
   const plants = wall.plants;
-  const pages = Math.max(1, Math.ceil(plants.length / WALL_PAGE));
-  const page = wall.page % pages;
   const thirsty = plants.filter((p) => p.needs_water);
   document.getElementById('wall-banner').replaceChildren(thirsty.length
     ? h('span', { class: 'wall-alert' }, `💧 ${thirsty.map((p) => p.name).join(', ')} ${thirsty.length > 1 ? 'need' : 'needs'} water`)
     : h('span', { class: 'wall-ok' }, 'Every plant has enough water'));
-  document.getElementById('wall-grid').replaceChildren(...plants.slice(page * WALL_PAGE, (page + 1) * WALL_PAGE).map((p) => {
+  document.getElementById('wall-grid').replaceChildren(...plants.map((p) => {
     const soil = p.soil_moisture;
     const fill = soil === null || soil === undefined ? 0 : Math.max(0, Math.min(100, soil));
     return h('div', { class: `wall-card${p.needs_water ? ' thirsty' : ''}${p.online ? '' : ' offline'}` },
@@ -63,7 +59,6 @@ export function renderWall() {
           : p.water_forecast && p.water_forecast.days !== null ? `water ${waterIn(p.water_forecast)}` : ''),
         h('div', { class: 'wall-meta' }, `battery ${pct(p.battery)}`, p.online ? '' : ' · offline')));
   }));
-  document.getElementById('wall-foot').textContent = pages > 1 ? `page ${page + 1} of ${pages}` : '';
 }
 
 document.getElementById('wall-fullscreen').addEventListener('click', () => {
