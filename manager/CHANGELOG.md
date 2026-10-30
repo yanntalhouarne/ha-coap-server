@@ -34,7 +34,7 @@ First version: the plan's phases 0, 1, 2, 5 and 6. Tested against a simulated de
 - **Ctrl+K search** for tabs, devices and actions. **With selected:** actions for all the ticked devices.
 - **Exports:** readings as CSV, and a problem report (no keys, PSKd blanked out).
 - **App update check:** optional, asks GitHub once a day.
-- **Phones:** a narrower layout, and pinch to zoom the map.
+- **Phones:** a narrower layout with every tab in rows of three, and pinch to zoom the map.
 - **Check my connection:** border router, mDNS, the route to the Thread network, and each board's CoAP and mcumgr speed with an update time estimate; a failed step says what usually fixes it.
 - **Battery drain by firmware:** % per day under each image, per device and for the fleet, leaving out charging and the time around updates.
 - **Running in the background:** start with the computer (no admin rights), a second start opens the running app, **Stop the app**, and a log file.

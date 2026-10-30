@@ -307,10 +307,11 @@ fieldset legend::before { content: "// "; color: var(--t-accent-text); }
 @media (max-width: 767.98px) {
   /* A card's table scrolls on its own rather than widening the page */
   .card-body > .table, .card-body > div > .table { display: block; overflow-x: auto; }
-  .topbar { flex-wrap: wrap; gap: .5rem; padding: .35rem .75rem; }
-  .topbar .tabs { order: 3; width: 100%; flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
-  .topbar .tabs::-webkit-scrollbar { display: none; }
-  .topbar .tabs a { white-space: nowrap; }
+  /* Every tab shows, in rows of three; the bar scrolls away with the page rather than stay on top */
+  .topbar { flex-wrap: wrap; gap: .5rem; padding: .35rem .75rem; position: static; }
+  .topbar .tabs { order: 3; width: 100%; display: grid; grid-template-columns: repeat(auto-fill, minmax(6.75rem, 1fr)); gap: .2rem; }
+  .topbar .tabs a { white-space: nowrap; justify-content: center; padding: .35rem .3rem; }
+  .topbar .tabs a kbd { display: none; }
   .palette-button kbd { display: none; }
   .statusbar .seg-brand, #status-theme, #status-clock { display: none !important; }
   .statusbar > span { padding: 0 .5rem; }
@@ -1024,7 +1025,7 @@ td.flip { display: table-cell; animation: flip-cell 1.4s ease-out; }
 .graph-key-value { color: var(--t-text-muted); font-size: .75rem; }
 .graph-legend-actions { margin-left: auto; }
 
-/* Nine tabs on one line: the key numbers go first, then the icons, as the window narrows */
+/* Nine tabs on one line while they fit: the key numbers go first, then the icons, as the window narrows */
 .tabs a, .palette-button { white-space: nowrap; }
 @media (min-width: 768px) and (max-width: 1699.98px) {
   .tabs a kbd { display: none; }
@@ -1034,10 +1035,10 @@ td.flip { display: table-cell; animation: flip-cell 1.4s ease-out; }
   .tabs a .icon { display: none; }
   .palette-button kbd { display: none; }
 }
-/* Narrower still: one row that scrolls sideways, as on a phone */
+/* Narrower still: the tabs get their own row under the logo, and wrap if they must */
 @media (min-width: 768px) and (max-width: 1199.98px) {
-  .topbar .tabs { flex-wrap: nowrap; overflow-x: auto; min-width: 0; flex: 1 1 auto; scrollbar-width: none; }
-  .topbar .tabs::-webkit-scrollbar { display: none; }
+  .topbar { flex-wrap: wrap; row-gap: .35rem; }
+  .topbar .tabs { order: 3; width: 100%; row-gap: .2rem; }
 }
 #graph-metrics { flex-wrap: nowrap; overflow-x: auto; max-width: 100%; scrollbar-width: none; }
 #graph-metrics button { white-space: nowrap; }
