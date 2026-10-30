@@ -35,7 +35,7 @@ export function showTab(route) {
   if (name === 'images') { loadImages(); loadBuilds(); }
   if (name === 'builds') loadBuildsTab();
   if (tab === 'network') {
-    loadNetwork().then(() => setNetworkView(rest[0] === 'floorplan' ? 'floorplan' : net.view || 'mesh'), () => {});
+    loadNetwork().then(() => setNetworkView(['mesh', 'tree', 'floorplan'].includes(rest[0]) ? rest[0] : net.view || 'mesh'), () => {});
   }
   if (name === 'settings') { loadSettings(); loadBackups(); loadStorage().catch(() => {}); loadAutostart().catch(() => {}); loadHomeAssistant().catch(() => {}); }
 }

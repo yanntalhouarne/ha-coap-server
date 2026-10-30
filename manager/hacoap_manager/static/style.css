@@ -285,10 +285,6 @@ fieldset legend::before { content: "// "; color: var(--t-accent-text); }
 #status-alerts a { color: var(--t-yellow); }
 #status-app-update a { color: var(--t-cyan); }
 
-/* ---------------------------------------------------------------- network history, heatmap */
-
-.history-slider { width: 12rem; }
-
 /* ---------------------------------------------------------------- search (Ctrl+K) */
 
 .palette-button kbd { background: var(--t-surface-2); color: var(--t-text-muted); font-size: .65rem; padding: 0 .25rem; margin-left: .35rem; box-shadow: none; }
@@ -319,8 +315,6 @@ fieldset legend::before { content: "// "; color: var(--t-accent-text); }
   .statusbar .seg-brand, #status-theme, #status-clock { display: none !important; }
   .statusbar > span { padding: 0 .5rem; }
   main.container-fluid { padding-left: .75rem; padding-right: .75rem; }
-  .network-canvas svg { height: 60vh; }
-  .network-canvas, .floorplan { min-height: 0; }
   .history-slider { width: 7rem; }
   #add-device input { min-width: 0; }
   .tiles { grid-template-columns: repeat(2, 1fr); }
@@ -434,15 +428,84 @@ body.wall-mode main { padding: 1.5rem 2rem !important; max-width: none; }
   .summary .table { --bs-table-bg: transparent; }
 }
 
-/* ---------------------------------------------------------------- the network map */
+/* ---------------------------------------------------------------- the network tab */
 
-/* The map takes the width; the toolbar, legend, zoom and details float over it. */
+/* Across the top: the mesh's figures, then the reading's controls (the settings behind the gear) */
+.net-head { display: flex; flex-direction: column; gap: .6rem; margin-bottom: .75rem; }
+.net-figures { display: grid; grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr)); gap: .5rem; }
+.net-figures:empty { display: none; }
+.net-figure { position: relative; overflow: hidden; display: flex; flex-direction: column; gap: .05rem; min-width: 0;
+  padding: .5rem .75rem .5rem .9rem; background: var(--t-surface); border: 1px solid var(--t-border-subtle); border-radius: .55rem;
+  color: inherit; font: inherit; text-align: left; }
+.net-figure::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 3px; background: var(--t-border-strong); }
+.net-figure.ok::before { background: var(--t-green); }
+.net-figure.warn::before { background: var(--t-yellow); }
+.net-figure.bad::before { background: var(--t-red); }
+button.net-figure { cursor: pointer; transition: border-color .15s; }
+button.net-figure:hover { border-color: var(--t-brand); }
+.net-figure-label { display: flex; align-items: center; gap: .35rem; font-size: .7rem; color: var(--t-text-muted); letter-spacing: .02em; }
+.net-figure-value { font: 600 1.35rem/1.25 var(--mono); color: var(--t-text); }
+.net-figure.ok .net-figure-value { color: var(--t-green); }
+.net-figure.warn .net-figure-value { color: var(--t-yellow); }
+.net-figure.bad .net-figure-value { color: var(--t-red); }
+.net-figure-note { font-size: .72rem; color: var(--t-text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.net-actions { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem .9rem; }
+.net-read.earlier { color: var(--t-yellow) !important; }
+.net-history { display: inline-flex; align-items: center; gap: .4rem; font-size: .78rem; color: var(--t-text-secondary); }
+.net-history:not(.d-none) { display: inline-flex; }
+.history-slider { width: 8rem; }
+.net-gear { padding-left: .6rem; padding-right: .6rem; }
+.net-settings { width: min(24rem, calc(100vw - 2rem)); padding: .9rem; font-size: .85rem; }
+.net-settings hr { margin: .8rem 0; border-color: var(--t-border-subtle); }
+
+/* The list of nodes, beside the map, as tall as it */
+.net-body { display: grid; grid-template-columns: 17.5rem minmax(0, 1fr); gap: .75rem; }
+.net-list, .map-wrap { height: clamp(32rem, calc(100vh - 16rem), 62rem); }
+.net-list { display: flex; flex-direction: column; overflow: hidden; background: var(--t-surface);
+  border: 1px solid var(--t-border-subtle); border-radius: .6rem; }
+.net-list-head { display: flex; flex-direction: column; gap: .4rem; padding: .6rem; border-bottom: 1px solid var(--t-border-subtle); }
+.net-search { position: relative; }
+.net-search .icon { position: absolute; left: .6rem; top: 50%; transform: translateY(-50%); color: var(--t-text-muted); pointer-events: none; }
+.net-search input { padding-left: 1.9rem; }
+.net-list-body { position: relative; flex: 1; overflow-y: auto; padding: .3rem; }  /* relative: rows measure their place in it */
+.net-group { display: flex; align-items: center; justify-content: space-between; padding: .6rem .5rem .25rem;
+  font-size: .66rem; text-transform: uppercase; letter-spacing: .09em; color: var(--t-text-muted); }
+.net-count { font: .66rem var(--mono); color: var(--t-text-secondary); background: var(--t-surface-2); border-radius: 1rem; padding: .05rem .45rem; }
+.net-count:empty { display: none; }
+.net-row { display: flex; align-items: center; gap: .6rem; width: 100%; padding: .3rem .45rem; border: 1px solid transparent;
+  border-radius: .45rem; background: transparent; color: inherit; font-size: .8rem; text-align: left; }
+.net-row:hover, .net-row.pointed { background: var(--t-surface-2); }
+.net-row.selected { background: color-mix(in srgb, var(--t-brand) 14%, transparent); border-color: color-mix(in srgb, var(--t-brand) 45%, transparent); }
+.net-row:focus-visible { outline: 2px solid var(--t-brand); outline-offset: -2px; }
+.net-row-icon { flex: none; width: 1.9rem; height: 1.9rem; overflow: visible; }
+.net-row-icon .node-badge, .net-row-icon .br-glow { display: none; }
+.net-row-text { display: flex; flex-direction: column; flex: 1; min-width: 0; }
+.net-row-name { color: var(--t-text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.net-row.offline .net-row-name { color: var(--t-text-muted); }
+.net-row-sub { font-size: .7rem; color: var(--t-text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.net-row-signal { display: flex; flex-direction: column; align-items: flex-end; gap: .1rem; flex: none; font: .66rem var(--mono); color: var(--t-text-muted); }
+.net-list-empty { margin: 0; padding: .75rem; font-size: .8rem; color: var(--t-text-muted); }
+
+/* Signal bars: one to four, coloured by the link's quality */
+.net-row-signal .bars, .bars.inline { width: 1.05rem; height: .85rem; }
+.bars.inline { vertical-align: -.05rem; }
+.bars rect { fill: color-mix(in srgb, var(--t-text-muted) 30%, transparent); }
+.bars.q3 rect.lit { fill: var(--t-green); }
+.bars.q2 rect.lit { fill: var(--t-yellow); }
+.bars.q1 rect.lit, .bars.q0 rect.lit { fill: var(--t-red); }
+.net-links li { padding: .1rem 0; }
+
+/* The map takes the rest; the toolbar, legend, zoom and details float over it. */
 .map-wrap { position: relative; border: 1px solid var(--t-border-subtle); border-radius: .6rem; overflow: hidden;
-  background: radial-gradient(ellipse at 50% 45%, color-mix(in srgb, var(--t-brand) 9%, var(--t-bg-deep)) 0%, var(--t-bg-deep) 62%); }
-.network-canvas, .floorplan { position: relative; min-height: 38rem; }
-.network-canvas svg { width: 100%; height: 42rem; display: block; touch-action: none; user-select: none; cursor: grab; }
-.network-canvas svg.panning, .floorplan-stage svg.panning { cursor: grabbing; }
+  background: radial-gradient(ellipse at 50% 40%, color-mix(in srgb, var(--t-brand) 8%, var(--t-bg-deep)) 0%, var(--t-bg-deep) 65%); }
+.network-canvas, .tree-view, .floorplan { position: relative; height: 100%; }
+.network-canvas > svg, .tree-view > svg { display: block; width: 100%; height: 100%; touch-action: none; user-select: none; cursor: grab; }
+.network-canvas svg.panning, .tree-view svg.panning, .floorplan-stage svg.panning { cursor: grabbing; }
 .icon { width: 1em; height: 1em; flex: none; vertical-align: -.125em; }
+.map-empty { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: .7rem;
+  padding: 2rem; text-align: center; font-size: .85rem; color: var(--t-text-secondary); }
+.map-empty > .icon { width: 2.6rem; height: 2.6rem; color: var(--t-text-muted); opacity: .55; }
+.map-empty p { max-width: 27rem; margin: 0; line-height: 1.6; }
 
 /* Glass panels over the map */
 .map-toolbar, .map-legend, .zoom-controls, .heat-scale, .map-drawer {
@@ -457,6 +520,7 @@ body.wall-mode main { padding: 1.5rem 2rem !important; max-width: none; }
 .map-tool:hover, .map-seg button:not(.active):hover { color: var(--t-text); background: var(--t-surface-2); }
 .map-tool:has(input:checked) { color: var(--t-brand); background: color-mix(in srgb, var(--t-brand) 14%, transparent); }
 .map-tool:has(input:focus-visible), .map-seg button:focus-visible { outline: 2px solid var(--t-brand); outline-offset: 1px; }
+.map-wrap[data-view="tree"] .map-tool:has(#heatmap-toggle) { display: none; }  /* no heatmap on the tree */
 .zoom-controls { position: absolute; z-index: 3; top: .7rem; right: .7rem; display: flex; flex-direction: column; padding: .2rem; }
 .zoom-controls button { border: 0; background: transparent; color: var(--t-text-secondary); width: 2rem; height: 2rem;
   display: flex; align-items: center; justify-content: center; border-radius: .35rem; font-size: 1rem; }
@@ -478,7 +542,7 @@ body.wall-mode main { padding: 1.5rem 2rem !important; max-width: none; }
   padding: .35rem .6rem; font-size: .72rem; color: var(--t-text-secondary); }
 .heat-scale i { width: 6rem; height: .45rem; border-radius: .25rem; background: linear-gradient(90deg, #ef4444, #f59e0b, #22c55e); }
 
-/* Details: a drawer over the map's right side (under the map on a narrow screen) */
+/* Details: a drawer over the map's right side (under the map on a phone) */
 .map-drawer { position: absolute; z-index: 4; top: .7rem; right: .7rem; bottom: .7rem; width: min(22rem, 40%);
   display: flex; flex-direction: column; transform: translateX(calc(100% + 1rem)); opacity: 0; pointer-events: none;
   transition: transform .25s ease, opacity .25s ease; }
@@ -488,23 +552,24 @@ body.wall-mode main { padding: 1.5rem 2rem !important; max-width: none; }
 .map-drawer-body { padding: .75rem; overflow-y: auto; }
 :root[data-bs-theme="light"] .map-drawer .btn-close-white { filter: none; }
 
-/* Mesh: hop rings, links, nodes */
-.hop-ring ellipse { fill: none; stroke: color-mix(in srgb, var(--t-text-muted) 35%, transparent); stroke-width: 1.2; stroke-dasharray: 3 7; }
-.hop-ring text { font: 10px var(--mono); fill: var(--t-text-muted); letter-spacing: .08em; }
-.link { fill: none; stroke-linecap: round; opacity: .85; transition: opacity .2s; }
-.link.child { stroke-dasharray: 2 7; animation: link-flow 1.6s linear infinite; }
-@keyframes link-flow { to { stroke-dashoffset: -18; } }
-.link-hit { fill: none; stroke: transparent; stroke-width: 14; cursor: pointer; }
-.no-links .links { display: none; }
+/* Nodes: the same in every view. A circle and its icon (a board: its plant), its ring the
+   strength of its way to the border router, a badge for what needs attention. */
+.grid-dot { fill: color-mix(in srgb, var(--t-text-muted) 30%, transparent); }
 .node { cursor: grab; }
 .node .select-ring { fill: none; stroke: var(--t-text); stroke-width: 2; opacity: 0; transition: opacity .2s; }
-.node.selected .select-ring { opacity: .9; }
-.shape-br rect { fill: var(--t-brand); }
+.node.selected .select-ring { opacity: .9; stroke: var(--t-brand); }
+.shape-br circle { fill: var(--t-brand); }
 .shape-br use { color: var(--t-bg-deep); }
-.br-glow { fill: var(--t-brand); opacity: .14; }
-.shape-router circle { fill: var(--t-surface-2); stroke: var(--t-blue); stroke-width: 2; }
+.br-glow { opacity: .14; animation: br-breathe 3.2s ease-in-out infinite; transform-box: fill-box; transform-origin: center; }
+@keyframes br-breathe { 50% { opacity: .24; transform: scale(1.08); } }
+.shape-node circle { fill: var(--t-surface); stroke: var(--ring, var(--t-border-strong)); stroke-width: 2.5; }
+.shape-node use { color: var(--t-text-secondary); }
 .shape-router use { color: var(--t-blue); }
-.shape-child { stroke: var(--t-bg-deep); stroke-width: 2; }
+.shape-child circle { stroke-width: 2; }
+.shape-node.q3 { --ring: var(--t-green); }
+.shape-node.q2 { --ring: var(--t-yellow); }
+.shape-node.q1, .shape-node.q0 { --ring: var(--t-red); }
+.shape-node.qn { --ring: var(--t-text-muted); }
 .avatar-bg { fill: var(--t-brand); }
 .avatar-glyph { color: #0b1220; }
 .gauge-track { fill: none; stroke: color-mix(in srgb, var(--t-text-muted) 35%, transparent); stroke-width: 3.5; }
@@ -512,39 +577,83 @@ body.wall-mode main { padding: 1.5rem 2rem !important; max-width: none; }
 .avatar.dry .gauge { stroke: var(--t-yellow); }
 .avatar.offline { opacity: .5; }
 .avatar.offline .gauge { stroke: var(--t-text-muted); }
-.chip rect { fill: color-mix(in srgb, var(--t-surface) 90%, transparent); stroke: var(--t-border-subtle); }
+.node-badge { color: var(--t-text-muted); }
+.node-badge circle { fill: var(--t-bg-deep); stroke: currentColor; stroke-width: 1.5; }
+.node-badge.warn { color: var(--t-yellow); }
+.node-badge.bad { color: var(--t-red); }
+.node-label { font: 11px var(--mono); fill: var(--t-text-secondary); stroke: var(--t-bg-deep); stroke-width: 4px;
+  stroke-linejoin: round; paint-order: stroke; pointer-events: none; }
+.node-label.board { fill: var(--t-text); font-weight: 600; }
+.chip rect { fill: var(--t-surface); stroke: var(--t-border-strong); }
 .chip text { font: 11px var(--mono); fill: var(--t-text-secondary); }
 .chip.board text { fill: var(--t-text); font-weight: 600; }
 .node use, .chip, .avatar image { pointer-events: none; }
-/* Pointing at a node: its way to the border router stays, the rest dims */
-.tracing .node:not(.on-path), .tracing .hop-ring { opacity: .25; }
-.tracing .link-group:not(.on-path) .link { opacity: .12; }
+
+/* Links: the backbone (each node's way to the border router) solid, with dots flowing towards
+   it; the spare router-to-router links only for the router in focus, or with "all links" */
+.link { fill: none; stroke-linecap: round; opacity: .9; transition: opacity .2s; }
+.link-flow { fill: none; stroke: color-mix(in srgb, var(--t-text) 75%, transparent); stroke-width: 1.8; stroke-linecap: round;
+  stroke-dasharray: .1 14; animation: link-flow 1.5s linear infinite; pointer-events: none; opacity: .5; }
+@keyframes link-flow { to { stroke-dashoffset: -14.1; } }
+.link-hit { fill: none; stroke: transparent; stroke-width: 14; cursor: pointer; }
+.link-group.spare { display: none; }
+.all-links .link-group.spare, .link-group.spare.near { display: inline; }
+.link-group.spare .link { stroke-dasharray: 3 6; opacity: .5; }
+
+/* Pointing at (or selecting) a node: its way to the border router stays, the rest dims */
+.node, .link-group, .tree-link { transition: opacity .2s; }
+.tracing .node:not(.on-path):not(.selected) { opacity: .25; }
+.tracing .link-group:not(.on-path):not(.near) .link, .tracing .link-group:not(.on-path) .link-flow { opacity: .08; }
 .tracing .link-group.on-path .link { opacity: 1; filter: drop-shadow(0 0 4px currentColor); }
-.node, .link-group { transition: opacity .2s; }
-.map-tip { position: absolute; z-index: 5; transform: translate(-50%, calc(-100% - 34px)); pointer-events: none;
+.tracing .link-group.on-path .link-flow { opacity: .9; }
+.map-tip { position: absolute; z-index: 5; transform: translate(-50%, calc(-100% - 8px)); pointer-events: none;
   background: var(--t-surface); border: 1px solid var(--t-border-subtle); border-radius: .45rem; padding: .4rem .6rem;
   font-size: .75rem; white-space: nowrap; box-shadow: 0 6px 20px rgb(0 0 0 / .3); color: var(--t-text-secondary); }
 .map-tip b { color: var(--t-text); }
 @keyframes ring-pulse { 0% { stroke-width: 2; opacity: .9; } 100% { stroke-width: 16; opacity: 0; } }
 .node.pulse .select-ring { animation: ring-pulse 1.2s ease-out; }
 .pulse-dot { fill: var(--t-brand); pointer-events: none; filter: drop-shadow(0 0 5px var(--t-brand)); }
-@media (prefers-reduced-motion: reduce) {
-  .link.child { animation: none; }
-  .node.pulse .select-ring { animation: none; }
-  .map-drawer { transition: none; }
-}
 
-/* Floor plan: a dimmed picture, pins, and the nodes to place */
-.floorplan-stage { position: relative; overflow: hidden; padding: 3.6rem .7rem 3.4rem; }
-.floorplan-stage svg { display: block; margin: 0 auto; max-width: 100%; height: auto; cursor: grab; touch-action: none;
-  user-select: none; border-radius: .4rem; }
-.floorplan-picture { filter: saturate(.55) brightness(.9); }
-.plan-dim { fill: var(--t-bg-deep); opacity: .3; pointer-events: none; }
+/* The tree: routers in levels, each one's children as cards under it, square lines */
+.tree .node { cursor: pointer; }
+.tree-link path { fill: none; stroke: var(--q); stroke-width: 2; stroke-linejoin: round; opacity: .8; }
+.tree-link.child path { stroke: color-mix(in srgb, var(--t-text-muted) 55%, transparent); stroke-width: 1.5; opacity: 1; }
+.tree-link.on-path path { stroke: var(--q); stroke-width: 2.6; opacity: 1; }
+.tree-link-label { font: 10.5px var(--mono); fill: var(--q); stroke: var(--t-bg-deep); stroke-width: 4px; paint-order: stroke; }
+.tracing .tree-link:not(.on-path) { opacity: .15; }
+.tree-card .card-bg { fill: var(--t-surface); stroke: var(--t-border-subtle); transition: stroke .15s; }
+.tree-card:hover .card-bg, .tree-card.on-path .card-bg { stroke: var(--t-brand); }
+.tree-card .select-ring { stroke-width: 2; }
+.card-name { font: 600 12px var(--mono); fill: var(--t-text); }
+.card-sub, .card-margin { font: 10.5px var(--mono); fill: var(--t-text-muted); }
+.card-margin { fill: var(--t-text-secondary); }
+
+/* Floor plan: the picture in the theme's colours, small pins, names and lines only for the
+   node in focus (or all of them, with "all names" and "all links") */
+.floorplan { display: flex; flex-direction: column; }
+.floorplan-stage { position: relative; flex: 1; min-height: 0; overflow: hidden; display: flex; align-items: center;
+  justify-content: center; padding: 3.8rem .9rem 3.6rem; }
+.floorplan-stage svg { display: block; max-width: 100%; height: auto; cursor: grab; touch-action: none; user-select: none;
+  border-radius: .5rem; box-shadow: 0 10px 40px rgb(0 0 0 / .35); }
+/* Grey, then tinted towards the accent (Home Assistant blue in every theme); inverted when the
+   picture is light in a dark theme or dark in a light one (.invert, measured by the page) */
+.floorplan-picture { filter: grayscale(1) sepia(.35) hue-rotate(160deg) saturate(1.5) contrast(.95); }
+.plan.invert .floorplan-picture { filter: grayscale(1) invert(1) sepia(.35) hue-rotate(160deg) saturate(1.5) contrast(.95); }
+:root[data-bs-theme="dark"] .floorplan-picture { filter: grayscale(1) sepia(.5) hue-rotate(160deg) saturate(1.8) brightness(.8) contrast(1.1); }
+:root[data-bs-theme="dark"] .plan.invert .floorplan-picture { filter: grayscale(1) invert(1) sepia(.5) hue-rotate(160deg) saturate(1.8) brightness(.62) contrast(1.15); }
+.plan-dim { fill: var(--t-bg-deep); opacity: .12; pointer-events: none; }
+:root[data-bs-theme="light"] .plan-dim { opacity: 0; }
 .plan-link { filter: drop-shadow(0 0 3px rgb(0 0 0 / .5)); }
-.pin-body { fill: var(--t-surface); stroke: var(--t-border-strong); stroke-width: 1; filter: drop-shadow(0 3px 4px rgb(0 0 0 / .45)); }
+.pin-body { fill: var(--t-surface); stroke: var(--t-border-strong); stroke-width: 1; filter: drop-shadow(0 2px 3px rgb(0 0 0 / .45)); }
+.plan .chip { display: none; }
+.plan .node:hover .chip, .plan .node:focus-visible .chip, .plan .node.selected .chip, .plan.tracing .node.on-path .chip,
+.plan.all-names .chip { display: inline; }
+.plan .link-group { display: none; }
+.plan.all-links .link-group, .plan .link-group.on-path, .plan .link-group.near { display: inline; }
+.plan.all-links:not(.tracing) .link-group .link { opacity: .45; }
 .plan .node.leaving { opacity: .4; }
 .place-list { display: flex; flex-wrap: wrap; gap: .35rem; align-items: center; font-size: .75rem;
-  padding: 3.8rem 3.6rem 0 .7rem; }
+  padding: 3.8rem 3.6rem 0 .9rem; }
 .place-list:not(.d-none) ~ .floorplan-stage { padding-top: .7rem; }
 .place-title { color: var(--t-text-muted); margin-right: .2rem; }
 .place-chip, .place-ghost { display: inline-flex; align-items: center; gap: .35rem; padding: .15rem .55rem .15rem .2rem;
@@ -558,10 +667,25 @@ body.wall-mode main { padding: 1.5rem 2rem !important; max-width: none; }
 .floorplan-hint { position: absolute; top: 4rem; left: 1rem; background: var(--t-surface); padding: .5rem .75rem; font-size: .8rem; }
 .floorplan-stage .heatmap, .network-canvas .heatmap { pointer-events: none; }
 
+/* Under the map: the changes and the channels, as tabs */
+.net-more-head { display: flex; align-items: center; gap: .5rem; padding: .35rem .5rem; }
+.net-more-head .net-count { margin-left: .15rem; }
+.net-events { max-height: 16rem; overflow-y: auto; }
+.net-events li { display: flex; gap: .75rem; padding: .35rem .4rem; border-bottom: 1px solid var(--t-border-subtle); }
+.net-events li:last-child { border-bottom: 0; }
+.net-event-time { flex: none; width: 6.5rem; color: var(--t-text-muted); }
+
+@media (prefers-reduced-motion: reduce) {
+  .link-flow, .br-glow, .node.pulse .select-ring { animation: none; }
+  .map-drawer { transition: none; }
+}
+
+/* Narrower: the list under the map */
 @media (max-width: 1199.98px) {
-  .map-drawer { position: static; width: auto; transform: none; opacity: 1; pointer-events: auto; margin: .7rem; display: none; }
-  .map-drawer.open { display: flex; }
-  .map-wrap:has(.map-drawer.open) .zoom-controls { right: .7rem; }
+  .net-body { grid-template-columns: minmax(0, 1fr); }
+  .net-list { order: 2; height: auto; max-height: 24rem; }
+  .map-drawer { width: min(22rem, 60%); }
+  .map-wrap:has(.map-drawer.open) .zoom-controls { right: calc(min(22rem, 60%) + 1.4rem); }
 }
 
 /* ---------------------------------------------------------------- icons, tiles, motion */
@@ -599,19 +723,26 @@ body.wall-mode main { padding: 1.5rem 2rem !important; max-width: none; }
   .tab:not(.d-none), .card-body:empty::before, .tiles:empty::before { animation: none; }
 }
 
-/* Phones: the map's toolbar above it, no zoom buttons (pinch) */
+/* Phones: the map's toolbar above it, no zoom buttons (pinch), the details under it */
 @media (max-width: 767.98px) {
   .map-toolbar { position: static; margin: .5rem; box-shadow: none; }
   .zoom-controls { display: none; }
   .place-list { padding-top: .2rem; }
-  .floorplan-stage { padding-top: .6rem; }
+  .floorplan-stage { padding: .6rem; min-height: 50vh; }
   .map-legend { position: static; margin: .5rem; box-shadow: none; }
+  .map-drawer { position: static; width: auto; transform: none; opacity: 1; pointer-events: auto; margin: .7rem; display: none; }
+  .map-drawer.open { display: flex; }
+  .map-wrap:has(.map-drawer.open) .zoom-controls { right: .7rem; }
+  .net-figures { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   /* The map first, then its legend and details */
-  .map-wrap { display: flex; flex-direction: column; }
+  .map-wrap { display: flex; flex-direction: column; height: auto; }
+  .network-canvas, .tree-view, .floorplan { height: auto; min-height: 0; }
+  .network-canvas > svg, .tree-view > svg { height: 60vh; }
   .map-toolbar { order: 0; }
-  .network-canvas, .floorplan { order: 1; }
+  .network-canvas, .tree-view, .floorplan { order: 1; }
   .map-legend { order: 2; }
   .map-drawer { order: 3; }
+  .map-empty { position: static; }
 }
 
 /* ---------------------------------------------------------------- the Devices tab's cards */

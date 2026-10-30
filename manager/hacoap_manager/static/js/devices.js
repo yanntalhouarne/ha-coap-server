@@ -2,8 +2,7 @@
 
 import { ago, api, busy, h, notify, pct, photoUrl, shortHash, state, svg, when } from './core.js';
 import { currentRoute, showTab } from './tabs.js';
-import { net, renderNetwork } from './network.js';
-import { renderFloorplan } from './floorplan.js';
+import { net, redrawNetwork } from './network.js';
 import { renderStatusDevices } from './live.js';
 import { statusClass } from './updates.js';
 
@@ -18,8 +17,7 @@ export async function loadDevices() {
   renderDevices();
   // The map's boards show their photo and soil: draw it again once the devices are known
   if (currentRoute().split('/')[0] === 'network' && net.state) {
-    renderNetwork();
-    renderFloorplan();
+    redrawNetwork();
   }
 }
 

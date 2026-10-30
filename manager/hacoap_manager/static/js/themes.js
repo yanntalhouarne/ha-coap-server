@@ -2,7 +2,7 @@
 
 import { TABS, showTab } from './tabs.js';
 import { h, svg } from './core.js';
-import { net, renderNetwork } from './network.js';
+import { net, redrawNetwork } from './network.js';
 import { openPalette } from './palette.js';
 
 // ------------------------------------------------------------------ themes and keys
@@ -20,7 +20,7 @@ export function setTheme(id) {
   for (const item of document.querySelectorAll('#theme-menu .dropdown-item')) {
     item.classList.toggle('active', item.dataset.themeId === theme.id);
   }
-  if (net.state && net.state.topology) renderNetwork();
+  if (net.state && net.state.topology) redrawNetwork();
 }
 
 // The computer switched between light and dark, with the System theme chosen

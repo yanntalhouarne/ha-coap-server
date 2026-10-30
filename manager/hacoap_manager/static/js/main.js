@@ -13,6 +13,8 @@ import { renderNotificationState } from './dashboard.js';
 import './charts.js';
 import './device.js';
 import './floorplan.js';
+import './tree.js';
+import './netframe.js';
 import './console.js';
 import './settings.js';
 import { connectEvents, renderClock } from './live.js';

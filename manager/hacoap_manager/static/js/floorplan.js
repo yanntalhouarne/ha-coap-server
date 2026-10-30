@@ -1,24 +1,32 @@
-// The Network tab's floor plan, and the channel scan.
+// The Network tab's floor plan, switching between the views, and the channel scan.
 
-import { ago, api, busy, h, notify, photoUrl, state, svg } from './core.js';
-import { boardAvatar, enableZoom, heatmapLayer, linkPath, linkStrength, loadNetwork, nameChip, net, nodeLabel, nodeShape, qualityColors, renderHeatmapNote, showNodeDetails, shownName, shownTopology } from './network.js';
+import { ago, api, busy, h, photoUrl, state, svg } from './core.js';
+import { applyFocus, boardAvatar, enableZoom, heatmapLayer, linkKey, linkPath, linkStrength, meshTree, nameChip, net, nodeEvents,
+  nodeLabel, nodeShape, qualityColors, renderHeatmapNote, renderNetwork, selectNode, shownName, shownTopology, wayLink } from './network.js';
+import { showMore } from './netframe.js';
+import { renderTree } from './tree.js';
 
-// ------------------------------------------------------------------ network: floor plan and channels
+// ------------------------------------------------------------------ network: the views
 
+const VIEWS = ['mesh', 'tree', 'floorplan'];
 
 export function setNetworkView(view) {
-  net.view = view;
-  document.getElementById('view-mesh').classList.toggle('active', view === 'mesh');
-  document.getElementById('view-floorplan').classList.toggle('active', view === 'floorplan');
-  document.getElementById('network-canvas').classList.toggle('d-none', view !== 'mesh');
-  document.getElementById('floorplan').classList.toggle('d-none', view !== 'floorplan');
-  document.getElementById('floorplan-tools').classList.toggle('d-none', view !== 'floorplan');
+  net.view = VIEWS.includes(view) ? view : 'mesh';
+  for (const name of VIEWS) document.getElementById(`view-${name}`).classList.toggle('active', name === net.view);
+  document.getElementById('network-canvas').classList.toggle('d-none', net.view !== 'mesh');
+  document.getElementById('tree-view').classList.toggle('d-none', net.view !== 'tree');
+  document.getElementById('floorplan').classList.toggle('d-none', net.view !== 'floorplan');
+  document.getElementById('map-wrap').dataset.view = net.view;
+  document.getElementById('map-wrap').querySelector('.map-tip')?.remove();
   renderHeatmapNote();
-  if (view === 'floorplan') renderFloorplan();
+  if (net.view === 'mesh') renderNetwork();
+  if (net.view === 'tree') renderTree();
+  if (net.view === 'floorplan') renderFloorplan();
 }
 
-document.getElementById('view-mesh').addEventListener('click', () => setNetworkView('mesh'));
-document.getElementById('view-floorplan').addEventListener('click', () => setNetworkView('floorplan'));
+for (const name of VIEWS) document.getElementById(`view-${name}`).addEventListener('click', () => setNetworkView(name));
+
+// ------------------------------------------------------------------ the floor plan
 
 export const nodeKey = (node) => node.device_id || node.ext_address || node.id;
 
@@ -26,48 +34,72 @@ export function renderFloorplan() {
   const container = document.getElementById('floorplan');
   const st = net.state;
   const plan = st && st.floorplan;
-  container.querySelectorAll('.floorplan-stage').forEach((e) => e.remove());
   document.getElementById('floorplan-empty').classList.toggle('d-none', !!plan);
   document.getElementById('floorplan-remove').classList.toggle('d-none', !plan);
+  document.getElementById('floorplan-choose-label').textContent = plan ? 'Replace the picture' : 'Choose a picture';
   if (!plan) document.getElementById('place-list').classList.add('d-none');
   renderHeatmapNote();
-  if (!plan || net.view !== 'floorplan') return;
+  if (!plan || net.view !== 'floorplan') {
+    container.querySelectorAll('.floorplan-stage').forEach((e) => e.remove());
+    return;
+  }
   const img = new Image();
   img.src = `/api/network/floorplan?t=${plan.time}`;
-  const stage = h('div', { class: 'floorplan-stage' });
-  container.append(stage);
   img.addEventListener('load', () => {
-    // Shown as large as fits, but no taller than 75 % of the window or twice the picture's own
-    // height: a small screenshot stretched further only gets blurrier (zoom in to see detail).
-    const aspect = img.naturalHeight / img.naturalWidth;
-    const maxHeight = Math.min(window.innerHeight * 0.75, img.naturalHeight * 2);
-    const W = Math.round(Math.min(stage.clientWidth || 1000, maxHeight / aspect));
-    const size = { W, H: Math.round(W * aspect) };
-    if (!net.floorplanSize || net.floorplanSize.W !== size.W) net.zoom.floorplan = null;  // a zoom in other units
-    net.floorplanSize = size;
+    container.querySelectorAll('.floorplan-stage').forEach((e) => e.remove());
+    const stage = h('div', { class: 'floorplan-stage' });
+    container.append(stage);
     drawFloorplanNodes(stage, img);
   });
 }
 
-// On the floor plan, your boards are pins (their photo above the spot they mark), the routers
-// icons on the spot itself. PIN_LIFT: how far above its spot a pin's photo sits.
-export const PIN_LIFT = 32;
-
-export function floorShape(node) {
-  if (node.device_id) {
-    const R = 17;
-    const body = `M0,0 C-6,-10 -${R},-${PIN_LIFT - R * 0.6} -${R},-${PIN_LIFT} A${R},${R} 0 1 1 ${R},-${PIN_LIFT} ` +
-      `C${R},-${PIN_LIFT - R * 0.6} 6,-10 0,0Z`;
-    return { lift: PIN_LIFT, chipY: 5, el: svg('g', { class: 'pin' }, svg('path', { class: 'pin-body', d: body }),
-      svg('g', { transform: `translate(0,-${PIN_LIFT})` }, boardAvatar(node, 11))) };
+// How light the picture is, from 0 (black) to 1 (white): a plan drawn light on dark (a dark-mode
+// screenshot) or dark on light (an architect's drawing) is shown inverted when it doesn't match the theme.
+const lightness = new WeakMap();
+function pictureLightness(img) {
+  if (!lightness.has(img)) {
+    const canvas = document.createElement('canvas');
+    canvas.width = canvas.height = 48;
+    const context = canvas.getContext('2d', { willReadFrequently: true });
+    context.drawImage(img, 0, 0, 48, 48);
+    const data = context.getImageData(0, 0, 48, 48).data;
+    let sum = 0;
+    for (let i = 0; i < data.length; i += 4) sum += (0.2126 * data[i] + 0.7152 * data[i + 1] + 0.0722 * data[i + 2]) / 255;
+    lightness.set(img, sum / (data.length / 4));
   }
-  const shape = nodeShape(node, 0.8);
+  return lightness.get(img);
+}
+
+// The picture as large as the map's space allows, but no more than twice its own size: a small
+// screenshot stretched further only gets blurrier (zoom in to see detail).
+function planSize(stage, img) {
+  const aspect = img.naturalHeight / img.naturalWidth;
+  const style = getComputedStyle(stage);  // its padding keeps the picture clear of the toolbar and the legend
+  const room = { w: Math.max(200, stage.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight)),
+    h: Math.max(200, stage.clientHeight - parseFloat(style.paddingTop) - parseFloat(style.paddingBottom)) };
+  const W = Math.round(Math.min(room.w, room.h / aspect, img.naturalWidth * 2));
+  return { W, H: Math.round(W * aspect) };
+}
+
+// On the floor plan, your boards are small pins (their photo above the spot they mark), the
+// other nodes their circle on the spot itself. PIN_LIFT: how far above its spot a pin's photo sits.
+export const PIN_LIFT = 26;
+
+export function floorShape(node, quality) {
+  if (node.device_id) {
+    const R = 13;
+    const body = `M0,0 C-5,-8 -${R},-${PIN_LIFT - R * 0.6} -${R},-${PIN_LIFT} A${R},${R} 0 1 1 ${R},-${PIN_LIFT} ` +
+      `C${R},-${PIN_LIFT - R * 0.6} 5,-8 0,0Z`;
+    return { lift: PIN_LIFT, chipY: 5, el: svg('g', { class: 'pin' }, svg('path', { class: 'pin-body', d: body }),
+      svg('g', { transform: `translate(0,-${PIN_LIFT})` }, boardAvatar(node, 8.5))) };
+  }
+  const shape = nodeShape(node, node.border_router ? 0.6 : 0.75, quality);
   return { lift: 0, chipY: shape.r + 4, el: shape.el };
 }
 
 export function drawFloorplanNodes(stage, img) {
   const topology = shownTopology();
-  stage.querySelector('svg')?.remove();
+  stage.querySelector(':scope > svg')?.remove();
   stage.querySelector('.floorplan-hint')?.remove();
   const placeList = document.getElementById('place-list');
   if (!topology) {
@@ -75,31 +107,42 @@ export function drawFloorplanNodes(stage, img) {
     stage.append(h('div', { class: 'floorplan-hint' }, 'Read the network first: the nodes come from it.'));
     return;
   }
-  const { W, H } = net.floorplanSize;  // map units are screen pixels at the full view
+  const tree = meshTree(topology);
   const positions = net.state.positions || {};
+  const unplaced = topology.nodes.filter((node) => !positions[nodeKey(node)]);
+  // The list of nodes to place sits above the picture: lay it out first, then size the picture to the room left
+  renderPlaceList(placeList, unplaced, stage, img);
+  const size = planSize(stage, img);
+  if (!net.floorplanSize || net.floorplanSize.W !== size.W) net.zoom.floorplan = null;  // a zoom in other units
+  net.floorplanSize = size;
+  const { W, H } = size;  // map units are screen pixels at the full view
   const points = new Map();
-  const unplaced = [];
   for (const node of topology.nodes) {
     const p = positions[nodeKey(node)];
-    if (p) points.set(node.id, { x: p.x * W, y: p.y * H, placed: true });
-    else unplaced.push(node);
+    if (p) points.set(String(node.id), { x: p.x * W, y: p.y * H, placed: true });
   }
-  const shapes = new Map(topology.nodes.map((node) => [node.id, floorShape(node)]));
-  // Links start where each node is drawn: a pin's photo, a router's icon
+  const quality = (id) => { const way = wayLink(tree, id); return way ? linkStrength(way).quality : undefined; };
+  const shapes = new Map(topology.nodes.map((node) => [String(node.id), floorShape(node, quality(String(node.id)))]));
+  // Links start where each node is drawn: a pin's photo, a router's circle. Only the one in focus
+  // shows its way to the border router (or every link, with "all links").
   const anchor = (id) => { const p = points.get(id); return { x: p.x, y: p.y - shapes.get(id).lift }; };
-  const links = net.showLinks ? topology.links.filter((l) => points.has(l.a) && points.has(l.b)).map((link) => {
+  const links = topology.links.filter((l) => points.has(String(l.a)) && points.has(String(l.b))).map((link) => {
+    const a = String(link.a), b = String(link.b);
     const strength = linkStrength(link);
     const color = strength.quality === null ? 'var(--t-text-muted)' : qualityColors[strength.quality];
-    return svg('path', { class: `link plan-link ${link.kind}`, d: linkPath(anchor(link.a), anchor(link.b), 0.12),
-      style: `stroke: ${color}`, 'stroke-width': Math.max(1.5, strength.width * 0.7), 'data-a': link.a, 'data-b': link.b },
-    svg('title', {}, strength.text));
-  }) : [];
+    const key = linkKey(a, b);
+    return svg('g', { class: `link-group ${tree.primary.has(key) ? 'primary' : 'spare'}`, 'data-key': key, 'data-a': a, 'data-b': b },
+      svg('path', { class: 'link plan-link', d: linkPath(anchor(a), anchor(b), 0.12), style: `stroke: ${color}`,
+        'stroke-width': Math.max(1.5, strength.width * 0.7) }, svg('title', {}, strength.text)));
+  });
   const box = [0, 0, W, H];
+  const dark = document.documentElement.getAttribute('data-bs-theme') === 'dark';
+  const invert = (pictureLightness(img) > 0.5) === dark;
   const drawing = svg('svg', { viewBox: (net.zoom.floorplan || box).join(' '), width: W, height: H,
-    preserveAspectRatio: 'xMidYMid meet', class: 'plan' },
+    preserveAspectRatio: 'xMidYMid meet', class: `plan${invert ? ' invert' : ''}${net.allLinks ? ' all-links' : ''}${net.allNames ? ' all-names' : ''}` },
     svg('image', { href: img.src, x: 0, y: 0, width: W, height: H, preserveAspectRatio: 'none', class: 'floorplan-picture' }),
     svg('rect', { x: 0, y: 0, width: W, height: H, class: 'plan-dim' }),
-    net.heatmap ? heatmapLayer(topology, points, [0, 0, W, H]) : null,
+    net.heatmap ? heatmapLayer(topology, points, [0, 0, W, H], Math.max(W, H) * 0.3, false) : null,
     svg('g', { class: 'links' }, links));
   const toMap = (clientX, clientY) => {
     const point = drawing.createSVGPoint();
@@ -114,19 +157,17 @@ export function drawFloorplanNodes(stage, img) {
     if (off) delete net.state.positions[nodeKey(node)]; else net.state.positions[nodeKey(node)] = body;
     drawFloorplanNodes(stage, img);
   };
-  for (const node of topology.nodes.filter((n) => points.has(n.id))) {
-    const p = points.get(node.id);
-    const shape = shapes.get(node.id);
-    const group = svg('g', { class: `node${node.device_id ? ' board' : ''}`, transform: `translate(${p.x},${p.y})`,
-      'data-device': node.device_id || null, tabindex: 0, role: 'button', 'aria-label': nodeLabel(node),
-      onkeydown: (event) => {
-        if (event.key === 'Enter' || event.key === ' ') {
-          event.preventDefault();
-          showNodeDetails(node, true);
-        }
-      } },
-      shape.el, shownName(node) ? nameChip(nodeLabel(node), shape.chipY, node.device_id ? 'board' : '') : null,
-      svg('title', {}, `${nodeLabel(node)}: drag it where it is (off the picture to take it off the plan)`));
+  for (const node of topology.nodes.filter((n) => points.has(String(n.id)))) {
+    const id = String(node.id);
+    const p = points.get(id);
+    const shape = shapes.get(id);
+    // Names show for the node pointed at or selected, and its way (always for your boards with "all names")
+    const group = svg('g', { class: `node${node.device_id ? ' board' : ''}${shownName(node) ? ' named' : ''}`, transform: `translate(${p.x},${p.y})`,
+      'data-device': node.device_id || null, 'data-node': id, tabindex: 0, role: 'button', 'aria-label': nodeLabel(node) },
+    svg('circle', { r: 16, cy: -shape.lift, class: 'select-ring' }),
+    shape.el, nameChip(nodeLabel(node), shape.chipY, node.device_id ? 'board' : ''),
+    svg('title', {}, `${nodeLabel(node)}: drag it where it is (off the picture to take it off the plan)`));
+    nodeEvents(group, id);
     let start = null;
     group.addEventListener('pointerdown', (event) => {
       group.setPointerCapture(event.pointerId);
@@ -145,7 +186,7 @@ export function drawFloorplanNodes(stage, img) {
       if (!start) return;
       const moved = start.moved;
       start = null;
-      if (!moved) return showNodeDetails(node, true);
+      if (!moved) return selectNode(id, true);
       save(node, p);
     });
     drawing.append(group);
@@ -153,8 +194,16 @@ export function drawFloorplanNodes(stage, img) {
   stage.append(drawing);
   // In until each of the picture's pixels is 4 screen pixels (at least 3×): beyond, it's only blur
   enableZoom(stage, drawing, box, 'floorplan', { maxIn: Math.max(3, 4 * img.naturalWidth / W), maxOut: 1 });
+  stage.dropOnPlan = (node, x, y) => {
+    const rect = drawing.getBoundingClientRect();
+    if (x < rect.left || x > rect.right || y < rect.top || y > rect.bottom) return;
+    save(node, toMap(x, y));
+  };
+  applyFocus();
+}
 
-  // The nodes not on the plan yet, as chips to drag onto it
+// The nodes not on the plan yet, as chips to drag onto it.
+function renderPlaceList(placeList, unplaced, stage) {
   placeList.classList.toggle('d-none', !unplaced.length);
   unplaced.sort((a, b) => (b.device_id ? 1 : 0) - (a.device_id ? 1 : 0) || nodeLabel(a).localeCompare(nodeLabel(b)));
   placeList.replaceChildren(h('span', { class: 'place-title' }, 'Drag onto the plan:'), ...unplaced.map((node) => {
@@ -165,11 +214,7 @@ export function drawFloorplanNodes(stage, img) {
           ? svg('use', { href: '#hacoap-glyph', x: -11, y: -11, width: 22, height: 22 })
           : nodeShape(node, 0.6).el),
       nodeLabel(node));
-    chip.addEventListener('pointerdown', (event) => dragOntoPlan(event, chip, (x, y) => {
-      const rect = drawing.getBoundingClientRect();
-      if (x < rect.left || x > rect.right || y < rect.top || y > rect.bottom) return;
-      save(node, toMap(x, y));
-    }));
+    chip.addEventListener('pointerdown', (event) => dragOntoPlan(event, chip, (x, y) => stage.dropOnPlan && stage.dropOnPlan(node, x, y)));
     return chip;
   }));
 }
@@ -192,19 +237,7 @@ export function dragOntoPlan(event, chip, drop) {
   document.addEventListener('pointerup', up);
 }
 
-document.getElementById('floorplan-upload').addEventListener('click', (event) => busy(event.target, async () => {
-  const file = document.getElementById('floorplan-file').files[0];
-  if (!file) return notify('Choose a picture first', 'warning');
-  await api('POST', `/api/network/floorplan?name=${encodeURIComponent(file.name)}`, file);
-  document.getElementById('floorplan-file').value = '';
-  await loadNetwork();
-}));
-
-document.getElementById('floorplan-remove').addEventListener('click', async () => {
-  if (!confirm('Remove the floor plan picture? The positions are kept.')) return;
-  await api('DELETE', '/api/network/floorplan').catch(() => {});
-  await loadNetwork();
-});
+// ------------------------------------------------------------------ channels
 
 export function renderChannelScan(scan) {
   const container = document.getElementById('channel-scan-result');
@@ -228,5 +261,6 @@ export function renderChannelScan(scan) {
 }
 
 document.getElementById('channel-scan').addEventListener('click', (event) => busy(event.target, async () => {
+  showMore('channels');
   renderChannelScan(await api('POST', '/api/network/channel-scan'));
 }));

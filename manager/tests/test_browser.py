@@ -114,8 +114,16 @@ def test_devices_tab(page):
 def test_network_tab(page):
     dom = page("network")
     assert "<svg" in dom and "Border router" in dom and "basil" in dom
-    assert "hop-ring" in dom and "avatar" in dom and "map-toolbar" in dom      # the redrawn map
+    assert "avatar" in dom and "map-toolbar" in dom and "link-flow" in dom    # the map, its backbone flowing
     assert "with signal strength" in dom
+    assert "net-figure" in dom and "weakest link" in dom                       # the figures across the top
+    assert 'class="net-row' in dom and "Your boards" in dom                    # the list of nodes
+
+
+def test_tree_view(page):
+    dom = page("network/tree")
+    assert 'class="tree"' in dom and "tree-card" in dom and "tree-link" in dom
+    assert "basil" in dom and " dB<" in dom                                    # a card with its signal
 
 
 def test_updates_tab(page):
@@ -179,6 +187,7 @@ def test_floorplan_view(page):
     dom = page("network/floorplan")
     assert "/api/network/floorplan" in dom and "plan-dim" in dom
     assert 'class="pin"' in dom and "place-chip" in dom                # basil on the plan, the others to place
+    assert 'class="plan' in dom and 'data-node=' in dom                 # the placed node, ready for the highlight
     assert "basil" in dom
 
 

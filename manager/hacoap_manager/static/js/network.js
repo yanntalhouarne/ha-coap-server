@@ -1,30 +1,36 @@
-// The Network tab's mesh: layout, drawing, zoom, details, history, heatmap, pulses.
+// The Network tab's shared parts and its mesh view: what each node looks like (the same in every
+// view), how strong each link is, each node's way to the border router, the highlight every view
+// and the node list share, the details drawer, loading and history, the heatmap, pulses.
 
 import { ago, api, busy, h, notify, pct, photoUrl, state, svg, when } from './core.js';
 import { currentRoute } from './tabs.js';
 import { daysText } from './dashboard.js';
 import { deviceName, devicePath, pingDevice } from './devices.js';
 import { renderChannelScan, renderFloorplan } from './floorplan.js';
+import { renderNetFrame, renderNetworkEvents } from './netframe.js';
+import { renderTree } from './tree.js';
 
 // ------------------------------------------------------------------ network
 
-export const net = { state: null, positions: new Map(), dragged: new Set(), selected: null, layout: null, zoom: {}, viewing: null,
-  history: [], heatmap: false, allNames: false, showLinks: true, view: 'mesh' };
+// Node IDs are kept as strings everywhere (they're also the elements' data-node).
+export const net = { state: null, positions: new Map(), dragged: new Set(), selected: null, hover: null, layout: null, zoom: {},
+  viewing: null, history: [], heatmap: false, allNames: false, allLinks: false, view: 'mesh' };
 // The reading on screen: the latest, or an earlier one picked on the history slider.
 export const shownTopology = () => (net.viewing ? net.viewing.topology : net.state && net.state.topology);
 export const nodeStyles = {
-  'border router': { r: 20, color: 'var(--t-brand)', label: 'Border router', icon: 'router' },
-  router: { r: 16, color: 'var(--t-blue)', label: 'Router', icon: 'radio-tower' },
-  'FTD child': { r: 9, color: 'var(--t-magenta)', label: 'FTD child (can become a router)' },
-  MED: { r: 8, color: 'var(--t-orange)', label: 'MED (end device, always listening)' },
-  SED: { r: 8, color: 'var(--t-cyan)', label: 'SED (sleepy end device)' },
+  'border router': { r: 22, label: 'Border router', icon: 'router' },
+  router: { r: 16, label: 'Router', icon: 'radio-tower' },
+  'FTD child': { r: 11, label: 'FTD child (can become a router)', icon: 'radio-tower' },
+  MED: { r: 11, label: 'MED (end device, always listening)', icon: 'cpu' },
+  SED: { r: 11, label: 'SED (sleepy end device)', icon: 'moon' },
 };
 export const qualityColors = { 3: 'var(--t-green)', 2: 'var(--t-yellow)', 1: 'var(--t-red)', 0: 'var(--t-red)' };
 export const calmMotion = () => window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+export const LOW_BATTERY = 20;  // %, as the app's alerts (fleet.LOW_BATTERY)
 
 export function nodeStyle(node) {
   if (node.border_router) return nodeStyles['border router'];
-  return nodeStyles[node.kind] || nodeStyles[node.role === 'child' ? 'SED' : 'router'];
+  return nodeStyles[node.kind] || nodeStyles[node.parent ? 'SED' : 'router'];
 }
 
 export const iconUse = (name, size, attrs = {}) => svg('use', { href: `#i-${name}`, x: -size / 2, y: -size / 2, width: size, height: size, ...attrs });
@@ -53,22 +59,40 @@ export function boardAvatar(node, r) {
       : svg('use', { href: '#hacoap-glyph', x: -r * 0.72, y: -r * 0.72, width: r * 1.44, height: r * 1.44, class: 'avatar-glyph' }));
 }
 
-// The node's drawing, centred on 0,0: { r (its radius, for what goes under it), el }.
-export function nodeShape(node, scale = 1) {
+// The one thing to know about a board at a glance, as a small badge on its circle.
+export function nodeBadge(node) {
+  const device = node.device_id ? state.devices.get(node.device_id) : null;
+  if (!device) return null;
+  if (!device.online) return { icon: 'wifi-off', tone: 'bad', text: 'offline' };
+  if (device.battery !== null && device.battery !== undefined && device.battery <= LOW_BATTERY) return { icon: 'battery-low', tone: 'warn', text: 'battery low' };
+  if (device.needs_water) return { icon: 'droplet', tone: 'warn', text: 'needs water' };
+  return null;
+}
+
+// The node's drawing, centred on 0,0, the same in every view: a circle with an icon (or a board's
+// plant photo), its ring the strength of its way to the border router (a board's: its soil), and
+// a badge for what needs attention. quality: of that way's first link (0-3, null unknown).
+// Returns { r (its outer radius, for what goes under it), el }.
+export function nodeShape(node, scale = 1, quality = undefined) {
   const style = nodeStyle(node);
+  const ring = quality === undefined ? '' : ` q${quality === null ? 'n' : quality}`;
+  let r, el;
   if (node.device_id) {
-    const r = AVATAR_R * scale;
-    return { r: r + 5, el: boardAvatar(node, r) };
+    r = AVATAR_R * scale;
+    el = boardAvatar(node, r);
+    r += 5;
+  } else if (node.border_router) {
+    r = style.r * scale;
+    el = svg('g', { class: 'shape-br' }, svg('circle', { r: r * 1.75, class: 'br-glow' }), svg('circle', { r }), iconUse(style.icon, r * 1.05));
+  } else {
+    r = style.r * scale;
+    el = svg('g', { class: `shape-node ${node.parent ? 'shape-child' : 'shape-router'}${ring}` }, svg('circle', { r }), iconUse(style.icon, r * 1.05));
   }
-  const r = style.r * scale;
-  if (node.border_router) {
-    return { r, el: svg('g', { class: 'shape-br' }, svg('circle', { r: r * 1.9, class: 'br-glow' }),
-      svg('rect', { x: -r, y: -r, width: 2 * r, height: 2 * r, rx: r * 0.4 }), iconUse(style.icon, r * 1.15)) };
-  }
-  if (style.icon) {
-    return { r, el: svg('g', { class: 'shape-router' }, svg('circle', { r }), iconUse(style.icon, r * 1.1)) };
-  }
-  return { r, el: svg('circle', { r, class: 'shape-child', style: `fill: ${style.color}` }) };
+  const badge = nodeBadge(node);
+  if (!badge) return { r, el };
+  const b = 7 * Math.max(0.75, scale);
+  return { r, el: svg('g', {}, el, svg('g', { class: `node-badge ${badge.tone}`, transform: `translate(${r * 0.72},${r * 0.72})` },
+    svg('circle', { r: b }), iconUse(badge.icon, b * 1.25))) };
 }
 
 export function nodeLabel(node) {
@@ -78,13 +102,16 @@ export function nodeLabel(node) {
   return `${node.kind || node.role || 'node'} ${node.rloc16_hex}`.trim();
 }
 
-// A name in a small rounded chip, centred under (or beside) its node.
+// A name in a small rounded chip, centred under (or beside) its node (on the floor plan, over the picture).
 export function nameChip(text, y, kind = '') {
   const w = text.length * 6.7 + 14;
   return svg('g', { class: `chip ${kind}`, transform: `translate(0,${y})` },
     svg('rect', { x: -w / 2, y: 0, width: w, height: 18, rx: 9 }),
     svg('text', { x: 0, y: 12.5, 'text-anchor': 'middle' }, text));
 }
+
+// A name under its node, outlined in the background's colour so lines don't cross it out.
+export const nodeText = (text, y, kind = '') => svg('text', { class: `node-label ${kind}`, x: 0, y: y + 13, 'text-anchor': 'middle' }, text);
 
 export const shownName = (node) => !!node.device_id || node.border_router || node.kind === 'router' || net.allNames;
 
@@ -105,19 +132,18 @@ export function linkStrength(link) {
   return { width: 2, quality: null, text: 'no signal information' };
 }
 
+// Signal bars (one to four), coloured by quality, as phones show them.
+export function signalBars(quality, attrs = {}) {
+  const lit = quality === null || quality === undefined ? 0 : quality + 1;
+  return svg('svg', { class: `bars q${lit ? quality : 'n'}`, viewBox: '0 0 15 12', 'aria-hidden': 'true', ...attrs },
+    ...[0, 1, 2, 3].map((i) => svg('rect', { x: i * 4, y: 9 - i * 3, width: 3, height: 3 + i * 3, rx: 0.6, class: i < lit ? 'lit' : null })));
+}
+
 // A gentle curve from a to b.
 export function linkPath(a, b, bend = 0.1) {
   const dx = b.x - a.x, dy = b.y - a.y;
   return `M${a.x},${a.y} Q${(a.x + b.x) / 2 - dy * bend},${(a.y + b.y) / 2 + dx * bend} ${b.x},${b.y}`;
 }
-
-// The layout: the border router in the middle, the routers on rings by how many hops they
-// are from it, and each router's children fanned out away from the middle. Distance follows
-// signal strength: a child sits closer to its parent the stronger its link, and a router sits
-// inside its ring with a strong link towards the border router, outside it with a weak one.
-// The rings are ellipses as wide as the map is ('aspect': its width over its height), so it
-// fills the view. Nodes you dragged stay where you put them until the next Read the network.
-export const RING_GAP = 210;
 
 // How weak a link is, from 0 (strong) to 1 (weak); 0.5 without signal information.
 export function weakness(link) {
@@ -127,61 +153,114 @@ export function weakness(link) {
   return quality === null ? 0.5 : { 3: 0.1, 2: 0.45, 1: 0.8, 0: 1 }[quality];
 }
 
-export function layoutNetwork(topology, aspect = 1.8) {
-  const sx = Math.sqrt(Math.max(0.5, Math.min(3, aspect))), sy = 1 / sx;
-  const nodes = topology.nodes.map((node) => ({ node, x: 0, y: 0 }));
+export const linkKey = (a, b) => (String(a) < String(b) ? `${a}|${b}` : `${b}|${a}`);
+
+// Each node's way to the border router: the hops over router-to-router links (breadth first, so
+// the fewest), and the next node on the way ('towards': a child's parent, a router's neighbour
+// one hop nearer). The links on these ways are the network's backbone ('primary'); the other
+// router-to-router links are spares. Worked out once per reading.
+const trees = new WeakMap();
+
+export function meshTree(topology) {
+  if (trees.has(topology)) return trees.get(topology);
+  const byId = new Map(topology.nodes.map((n) => [String(n.id), n]));
   const between = new Map();
   for (const link of topology.links) {
     between.set(`${link.a} ${link.b}`, link);
     between.set(`${link.b} ${link.a}`, link);
   }
   const linkOf = (a, b) => between.get(`${a} ${b}`);
-  const byId = new Map(nodes.map((n) => [n.node.id, n]));
-  const center = nodes.find((n) => n.node.border_router) || nodes.find((n) => !n.node.parent) || nodes[0];
-  const routers = nodes.filter((n) => !n.node.parent);
-  // Hops from the border router over router-to-router links, and the way back to it
-  const neighbours = new Map(routers.map((n) => [n.node.id, []]));
+  const center = topology.nodes.find((n) => n.border_router) || topology.nodes.find((n) => !n.parent) || topology.nodes[0];
+  const neighbours = new Map(topology.nodes.filter((n) => !n.parent).map((n) => [String(n.id), []]));
   for (const link of topology.links.filter((l) => l.kind === 'mesh')) {
-    if (neighbours.has(link.a) && neighbours.has(link.b)) {
-      neighbours.get(link.a).push(link.b);
-      neighbours.get(link.b).push(link.a);
+    const a = String(link.a), b = String(link.b);
+    if (neighbours.has(a) && neighbours.has(b)) {
+      neighbours.get(a).push(b);
+      neighbours.get(b).push(a);
     }
   }
-  const hops = new Map(center ? [[center.node.id, 0]] : []);
-  const towards = new Map();
-  const queue = center ? [center.node.id] : [];
-  while (queue.length) {
-    const id = queue.shift();
-    for (const next of neighbours.get(id) || []) {
-      if (!hops.has(next)) { hops.set(next, hops.get(id) + 1); towards.set(next, id); queue.push(next); }
+  const hops = new Map(), towards = new Map();
+  if (center) {
+    hops.set(String(center.id), 0);
+    const queue = [String(center.id)];
+    while (queue.length) {
+      const id = queue.shift();
+      for (const next of neighbours.get(id) || []) {
+        if (!hops.has(next)) { hops.set(next, hops.get(id) + 1); towards.set(next, id); queue.push(next); }
+      }
     }
   }
-  const deepest = Math.max(1, ...hops.values());
+  for (const n of topology.nodes) {
+    const id = String(n.id), parent = n.parent === null || n.parent === undefined ? null : String(n.parent);
+    if (!parent || !byId.has(parent)) continue;
+    towards.set(id, parent);
+    if (hops.has(parent)) hops.set(id, hops.get(parent) + 1);
+  }
+  const primary = new Set([...towards].map(([a, b]) => linkKey(a, b)));
+  const tree = { byId, linkOf, center, hops, towards, primary };
+  trees.set(topology, tree);
+  return tree;
+}
+
+// The link from a node towards the border router (its parent's, or the next router's), if any.
+export function wayLink(tree, id) {
+  return tree.towards.has(id) ? tree.linkOf(id, tree.towards.get(id)) : null;
+}
+
+// The nodes and links on a node's way to the border router.
+export function wayToBorderRouter(topology, id) {
+  const { towards } = meshTree(topology);
+  const ids = new Set([String(id)]), keys = new Set();
+  let at = String(id);
+  while (towards.has(at) && !ids.has(towards.get(at))) {
+    const next = towards.get(at);
+    keys.add(linkKey(at, next));
+    ids.add(next);
+    at = next;
+  }
+  return { ids, keys };
+}
+
+// The layout: the border router in the middle, the routers around it by how many hops they
+// are from it, and each router's children fanned out away from the middle. Distance follows
+// signal strength: a child sits closer to its parent the stronger its link, and a router sits
+// nearer the middle with a strong link towards the border router, farther with a weak one.
+// The rings are ellipses as wide as the map is ('aspect': its width over its height), so it
+// fills the view. Nodes you dragged stay where you put them until the next Read the network.
+export const RING_GAP = 210;
+
+export function layoutNetwork(topology, aspect = 1.8) {
+  const sx = Math.sqrt(Math.max(0.5, Math.min(3, aspect))), sy = 1 / sx;
+  const tree = meshTree(topology);
+  const nodes = topology.nodes.map((node) => ({ node, id: String(node.id), x: 0, y: 0 }));
+  const byId = new Map(nodes.map((n) => [n.id, n]));
+  const center = tree.center ? byId.get(String(tree.center.id)) : null;
+  const routers = nodes.filter((n) => !n.node.parent);
+  const deepest = Math.max(1, ...routers.map((n) => tree.hops.get(n.id) || 0));
   const rings = new Map();
   for (const n of routers) {
     if (n === center) continue;
-    const ring = hops.get(n.node.id) || deepest + 1;
+    const ring = tree.hops.get(n.id) || deepest + 1;
     if (!rings.has(ring)) rings.set(ring, []);
     rings.get(ring).push(n);
   }
-  const radii = [];
   let radius = 0;
   for (const ring of [...rings.keys()].sort((a, b) => a - b)) {
     const members = rings.get(ring).sort((a, b) => (a.node.rloc16 || 0) - (b.node.rloc16 || 0));
     radius = Math.max(radius + RING_GAP, (members.length * 170) / (2 * Math.PI));
-    radii.push({ ring, rx: radius * sx, ry: radius * sy });
     members.forEach((n, i) => {
       const angle = (ring % 2 ? -Math.PI / 2 : 0) + (i / members.length) * 2 * Math.PI;
-      // Inside the ring with a strong link to the router before it (towards the border router), outside with a weak one
-      const r = radius * (0.8 + 0.4 * weakness(linkOf(n.node.id, towards.get(n.node.id))));
+      // Nearer with a strong link to the router before it (towards the border router), farther with a weak one
+      const r = radius * (0.8 + 0.4 * weakness(wayLink(tree, n.id)));
       n.x = Math.cos(angle) * r * sx; n.y = Math.sin(angle) * r * sy;
     });
   }
   // Children: around the border router on a small ring, else fanned out away from the middle
   const children = new Map();
   for (const n of nodes.filter((n) => n.node.parent)) {
-    if (!children.has(n.node.parent)) children.set(n.node.parent, []);
-    children.get(n.node.parent).push(n);
+    const parent = String(n.node.parent);
+    if (!children.has(parent)) children.set(parent, []);
+    children.get(parent).push(n);
   }
   for (const [parentId, kids] of children) {
     const parent = byId.get(parentId);
@@ -189,7 +268,7 @@ export function layoutNetwork(topology, aspect = 1.8) {
     if (!parent || parent === center) {
       kids.forEach((n, i) => {
         const angle = -Math.PI / 2 + ((i + 0.5) / kids.length) * 2 * Math.PI;
-        const r = parent ? 85 + 130 * weakness(linkOf(n.node.id, parentId)) : radius + RING_GAP;
+        const r = parent ? 85 + 130 * weakness(tree.linkOf(n.id, parentId)) : radius + RING_GAP;
         n.x = Math.cos(angle) * r * (parent ? 1.25 : sx); n.y = Math.sin(angle) * r * (parent ? 0.85 : sy);
       });
       continue;
@@ -200,33 +279,26 @@ export function layoutNetwork(topology, aspect = 1.8) {
     const spread = Math.min(2.6, (80 / r0) * (kids.length - 1) / (kids.length > 5 ? 2 : 1));
     kids.forEach((n, i) => {
       const angle = kids.length === 1 ? out : out - spread / 2 + (spread * i) / (kids.length - 1);
-      const r = 75 + 150 * weakness(linkOf(n.node.id, parentId));  // strong: close to its parent
+      const r = 75 + 150 * weakness(tree.linkOf(n.id, parentId));  // strong: close to its parent
       n.x = parent.x + Math.cos(angle) * r; n.y = parent.y + Math.sin(angle) * r;
     });
   }
   for (const n of nodes) {
-    const moved = net.dragged.has(n.node.id) && net.positions.get(n.node.id);
+    const moved = net.dragged.has(n.id) && net.positions.get(n.id);
     if (moved) { n.x = moved.x; n.y = moved.y; }
-    net.positions.set(n.node.id, { x: n.x, y: n.y });
+    net.positions.set(n.id, { x: n.x, y: n.y });
+    const way = wayLink(tree, n.id);
+    n.quality = way ? linkStrength(way).quality : undefined;
   }
-  // Links, drawn from a child towards its parent (the flow runs that way)
+  // Links, drawn from the node farther from the border router towards the nearer one (the flow runs that way)
   const springs = topology.links.map((link) => {
-    let a = byId.get(link.a), b = byId.get(link.b);
-    if (link.kind === 'child' && b && b.node.parent === a.node.id) [a, b] = [b, a];
-    return { a, b, link, ...linkStrength(link) };
-  }).filter((s) => s.a && s.b);
-  return { nodes, springs, byId, radii, center, towards };
-}
-
-// The way from a node to the border router: the nodes and links on it.
-export function pathToBorderRouter(layout, n) {
-  const ids = new Set([n.node.id]);
-  let at = n.node.parent || n.node.id;
-  ids.add(at);
-  while (layout.towards.has(at)) { at = layout.towards.get(at); ids.add(at); }
-  const links = layout.springs.filter((s) => ids.has(s.a.node.id) && ids.has(s.b.node.id) &&
-    (s.link.kind === 'child' ? s.a === n || s.b === n : true));
-  return { ids, links };
+    let a = byId.get(String(link.a)), b = byId.get(String(link.b));
+    if (!a || !b) return null;
+    if (tree.towards.get(b.id) === a.id) [a, b] = [b, a];
+    const key = linkKey(a.id, b.id);
+    return { a, b, link, key, primary: tree.primary.has(key), ...linkStrength(link) };
+  }).filter(Boolean);
+  return { nodes, springs, byId, center };
 }
 
 export function placeNode(n) {
@@ -238,19 +310,38 @@ export function placeLinks(springs) {
     const d = linkPath(s.a, s.b, s.link.kind === 'mesh' ? 0.06 : 0.12);
     s.path.setAttribute('d', d);
     s.hit.setAttribute('d', d);
+    if (s.flow) s.flow.setAttribute('d', d);
   }
+}
+
+// A faint grid of dots behind a drawing, moving with it as it's panned and zoomed.
+export function dotGrid(id, [x, y, w, height]) {
+  return [svg('defs', {}, svg('pattern', { id, width: 28, height: 28, patternUnits: 'userSpaceOnUse' },
+    svg('circle', { cx: 14, cy: 14, r: 1.15, class: 'grid-dot' }))),
+  svg('rect', { x: x - 2 * w, y: y - 2 * height, width: 5 * w, height: 5 * height, fill: `url(#${id})`, class: 'grid' })];
+}
+
+// Pointing at, focusing or selecting a node, in any view or the list.
+export function nodeEvents(el, id) {
+  el.addEventListener('pointerenter', () => hoverNode(id, true));
+  el.addEventListener('pointerleave', () => hoverNode(id, false));
+  el.addEventListener('focus', () => hoverNode(id, true));
+  el.addEventListener('blur', () => hoverNode(id, false));
+  el.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault();
+      selectNode(id, true);
+    }
+  });
 }
 
 export function renderNetwork() {
   const canvas = document.getElementById('network-canvas');
   const topology = shownTopology();
   document.getElementById('network-empty').classList.toggle('d-none', !!topology);
-  const before = net.layout ? new Map(net.layout.nodes.map((n) => [n.node.id, { x: n.x, y: n.y }])) : new Map();
-  canvas.querySelector('svg')?.remove();
-  canvas.querySelector('.map-tip')?.remove();
-  document.getElementById('network-warnings').replaceChildren(...((topology && topology.warnings) || []).map((w) =>
-    h('div', { class: 'alert alert-warning py-1 small mb-2' }, w)));
-  if (!topology) return;
+  const before = net.layout ? new Map(net.layout.nodes.map((n) => [n.id, { x: n.x, y: n.y }])) : new Map();
+  canvas.querySelector(':scope > svg')?.remove();  // the map itself (the empty note and zoom buttons have icons)
+  if (!topology || net.view !== 'mesh') return;
 
   const aspect = canvas.clientWidth && canvas.clientHeight ? canvas.clientWidth / canvas.clientHeight : 1.8;
   const layout = net.layout = layoutNetwork(topology, aspect);
@@ -260,41 +351,30 @@ export function renderNetwork() {
     Math.max(...xs, 140) - Math.min(...xs, -140) + 2 * pad, Math.max(...ys, 140) - Math.min(...ys, -140) + 2 * pad];
   layout.box = box;
 
-  // Rings for the hops, behind everything
-  const rings = layout.radii.map(({ ring, rx, ry }) => svg('g', { class: 'hop-ring' },
-    svg('ellipse', { rx, ry }),
-    svg('text', { x: rx * 0.72 + 6, y: -ry * 0.72 - 6 }, `${ring} hop${ring > 1 ? 's' : ''}`)));  // on the ring, up right
+  // The backbone (each node's way to the border router) drawn strongly, with a flow towards it;
+  // the spare router-to-router links only when asked for, or for the router in focus
   const links = layout.springs.map((s) => {
     const color = s.quality === null ? 'var(--t-text-muted)' : qualityColors[s.quality];
-    s.path = svg('path', { class: `link ${s.link.kind}`, style: `stroke: ${color}`, 'stroke-width': s.width });
+    s.path = svg('path', { class: 'link', style: `stroke: ${color}`, 'stroke-width': s.primary ? s.width : 1.5 });
+    s.flow = s.primary ? svg('path', { class: 'link-flow' }) : null;
     s.hit = svg('path', { class: 'link-hit', onclick: () => showLinkDetails(s) }, svg('title', {}, s.text));
-    return svg('g', { class: 'link-group' }, s.path, s.hit);
+    return svg('g', { class: `link-group ${s.primary ? 'primary' : 'spare'} ${s.link.kind}`, 'data-key': s.key,
+      'data-a': s.a.id, 'data-b': s.b.id }, s.path, s.flow, s.hit);
   });
   const groups = layout.nodes.map((n) => {
-    const shape = nodeShape(n.node);
-    const group = svg('g', { class: `node${net.selected === n.node.id ? ' selected' : ''}${n.node.device_id ? ' board' : ''}`,
-      'data-device': n.node.device_id || null, 'data-node': n.node.id,
+    const shape = nodeShape(n.node, 1, n.quality);
+    const group = svg('g', { class: `node${n.node.device_id ? ' board' : ''}`, 'data-device': n.node.device_id || null, 'data-node': n.id,
       tabindex: 0, role: 'button', 'aria-label': `${nodeLabel(n.node)}, ${n.node.device_id ? 'your board' : nodeStyle(n.node).label}` },
       svg('circle', { r: shape.r + 6, class: 'select-ring' }), shape.el,
-      shownName(n.node) ? nameChip(nodeLabel(n.node), shape.r + 6, n.node.device_id ? 'board' : '') : null);
+      shownName(n.node) ? nodeText(nodeLabel(n.node), shape.r + 4, n.node.device_id ? 'board' : '') : null);
     n.group = group;
     makeDraggable(group, n);
-    group.addEventListener('pointerenter', () => traceNode(n, true));
-    group.addEventListener('pointerleave', () => traceNode(n, false));
-    // From the keyboard: Tab goes from node to node (tracing each), Enter or Space opens it
-    group.addEventListener('focus', () => traceNode(n, true));
-    group.addEventListener('blur', () => traceNode(n, false));
-    group.addEventListener('keydown', (event) => {
-      if (event.key === 'Enter' || event.key === ' ') {
-        event.preventDefault();
-        showNodeDetails(n.node, true);
-      }
-    });
+    nodeEvents(group, n.id);
     return group;
   });
   const drawing = svg('svg', { viewBox: (net.zoom.mesh || box).join(' '), preserveAspectRatio: 'xMidYMid meet',
-    class: `mesh${net.showLinks ? '' : ' no-links'}` },
-    net.heatmap ? meshHeatmap() : null, ...rings, svg('g', { class: 'links' }, links), ...groups);
+    class: `mesh${net.allLinks ? ' all-links' : ''}` },
+    ...dotGrid('mesh-grid', box), net.heatmap ? meshHeatmap() : null, svg('g', { class: 'links' }, links), ...groups);
   canvas.append(drawing);
   if (canvas.clientWidth && canvas.clientWidth < 768) {  // a phone: as tall as the drawing needs, no letterbox
     drawing.style.height = `${Math.max(280, Math.min(window.innerHeight * 0.75, canvas.clientWidth * box[3] / box[2]))}px`;
@@ -302,8 +382,8 @@ export function renderNetwork() {
   enableZoom(canvas, drawing, box, 'mesh');
 
   // Glide from where the nodes were (after a new reading), else just place them
-  const moving = layout.nodes.filter((n) => before.has(n.node.id) &&
-    Math.hypot(before.get(n.node.id).x - n.x, before.get(n.node.id).y - n.y) > 1);
+  const moving = layout.nodes.filter((n) => before.has(n.id) &&
+    Math.hypot(before.get(n.id).x - n.x, before.get(n.id).y - n.y) > 1);
   if (moving.length && !calmMotion()) {
     const target = new Map(layout.nodes.map((n) => [n, { x: n.x, y: n.y }]));
     const started = performance.now();
@@ -311,7 +391,7 @@ export function renderNetwork() {
       const k = Math.min(1, (now - started) / 600);
       const ease = 1 - (1 - k) ** 3;
       for (const n of layout.nodes) {
-        const from = before.get(n.node.id) || target.get(n);
+        const from = before.get(n.id) || target.get(n);
         const to = target.get(n);
         n.x = from.x + (to.x - from.x) * ease; n.y = from.y + (to.y - from.y) * ease;
         placeNode(n);
@@ -324,51 +404,88 @@ export function renderNetwork() {
     layout.nodes.forEach(placeNode);
     placeLinks(layout.springs);
   }
-
-  const counts = { routers: 0, children: 0, sleepy: 0, boards: 0 };
-  for (const n of topology.nodes) {
-    if (n.kind === 'router' || n.border_router) counts.routers++; else counts.children++;
-    if (n.kind === 'SED') counts.sleepy++;
-    if (n.device_id) counts.boards++;
-  }
-  document.getElementById('network-summary').textContent = (net.viewing ? 'Earlier reading: ' : '') +
-    `${counts.routers} router(s), ${counts.children} child(ren) (${counts.sleepy} sleepy), ${counts.boards} of your boards. ` +
-    `Read ${ago(topology.fetched)} (${topology.source === 'api' ? 'with signal strength' : 'link quality only'}).`;
+  applyFocus();
 }
 
-// Pointing at a node: its way to the border router lights up, the rest dims, and a small card
-// says what it is.
-export function traceNode(n, on) {
-  const drawing = n.group.ownerSVGElement;
-  const canvas = document.getElementById('network-canvas');
-  canvas.querySelector('.map-tip')?.remove();
-  drawing.classList.toggle('tracing', on);
-  for (const el of drawing.querySelectorAll('.on-path')) el.classList.remove('on-path');
-  if (!on || n.dragging) return;
-  const { ids, links } = pathToBorderRouter(net.layout, n);
-  for (const m of net.layout.nodes) if (ids.has(m.node.id)) m.group.classList.add('on-path');
-  for (const s of links) s.path.parentNode.classList.add('on-path');
-  const device = n.node.device_id ? state.devices.get(n.node.device_id) : null;
-  const toParent = net.layout.springs.find((s) => s.a === n && s.link.kind === 'child');
-  const hops = Math.max(0, ids.size - 1);
+// Every view, the list and the figures, after a new reading or a change of what's shown.
+export function redrawNetwork() {
+  renderNetwork();
+  renderTree();
+  renderFloorplan();
+  renderNetFrame();
+  renderHeatmapNote();
+}
+
+// ------------------------------------------------------------------ the highlight
+
+// The node pointed at (or else the one selected): its way to the border router lit, the rest
+// dimmed, and a router's spare links shown. The same in the mesh, the tree, the floor plan and the list.
+export function applyFocus() {
+  const topology = shownTopology();
+  const id = net.hover ?? net.selected;
+  const known = topology && id !== null && id !== undefined && meshTree(topology).byId.has(id);
+  const way = known ? wayToBorderRouter(topology, id) : null;
+  for (const root of document.querySelectorAll('#network-canvas > svg, #tree-view > svg, #floorplan svg.plan')) {
+    root.classList.toggle('tracing', !!way);
+    for (const el of root.querySelectorAll('[data-node]')) {
+      el.classList.toggle('on-path', !!way && way.ids.has(el.dataset.node));
+      el.classList.toggle('selected', el.dataset.node === net.selected);
+    }
+    for (const el of root.querySelectorAll('[data-key]')) {
+      el.classList.toggle('on-path', !!way && way.keys.has(el.dataset.key));
+      el.classList.toggle('near', !!way && (el.dataset.a === id || el.dataset.b === id));
+    }
+  }
+  for (const row of document.querySelectorAll('#net-list-body [data-node]')) {
+    row.classList.toggle('selected', row.dataset.node === net.selected);
+    row.classList.toggle('pointed', row.dataset.node === net.hover);
+  }
+}
+
+// Pointing at a node (in any view or the list): the highlight, and a small card on the map
+// saying what it is.
+export function hoverNode(id, on) {
+  if (!on && net.hover !== id) return;
+  net.hover = on ? id : null;
+  applyFocus();
+  showTip(net.hover);
+}
+
+export function showTip(id) {
+  const wrap = document.getElementById('map-wrap');
+  wrap.querySelector('.map-tip')?.remove();
+  const topology = shownTopology();
+  if (id === null || !topology) return;
+  const tree = meshTree(topology);
+  const node = tree.byId.get(id);
+  const el = [...wrap.querySelectorAll(`.node[data-node="${CSS.escape(id)}"]`)].find((e) => e.getBoundingClientRect().width > 0);
+  if (!node || !el) return;
+  const device = node.device_id ? state.devices.get(node.device_id) : null;
+  const way = wayLink(tree, id);
+  const hops = tree.hops.get(id);
+  const badge = nodeBadge(node);
   const lines = device
     ? [device.plant && device.plant.toLowerCase() !== deviceName(device).toLowerCase() ? device.plant : null,
-      `soil ${pct(device.soil_moisture)} · battery ${pct(device.battery)}${device.online ? '' : ' · offline'}`]
-    : [nodeStyle(n.node).label];
-  if (toParent) lines.push(`to its parent: ${toParent.text}`);
-  if (!n.node.border_router) lines.push(`${hops} hop${hops === 1 ? '' : 's'} from the border router`);
-  const point = drawing.createSVGPoint();
-  point.x = n.x; point.y = n.y;
-  const screen = point.matrixTransform(drawing.getScreenCTM());
-  const frame = canvas.getBoundingClientRect();
-  canvas.append(h('div', { class: 'map-tip', style: `left: ${screen.x - frame.left}px; top: ${screen.y - frame.top}px` },
-    h('b', {}, nodeLabel(n.node)), ...lines.filter(Boolean).map((line) => h('div', {}, line))));
+      `soil ${pct(device.soil_moisture)} · battery ${pct(device.battery)}`, badge ? badge.text : null]
+    : [nodeStyle(node).label];
+  if (way) lines.push(`to ${node.parent ? 'its parent' : 'the next router'}: ${linkStrength(way).text}`);
+  if (!node.border_router && hops !== undefined) lines.push(`${hops} hop${hops === 1 ? '' : 's'} from the border router`);
+  const rect = el.getBoundingClientRect(), frame = wrap.getBoundingClientRect();
+  wrap.append(h('div', { class: 'map-tip', style: `left: ${rect.left + rect.width / 2 - frame.left}px; top: ${rect.top - frame.top}px` },
+    h('b', {}, nodeLabel(node)), ...lines.filter(Boolean).map((line) => h('div', {}, line))));
+}
+
+// Selecting a node (a click in any view or the list): its details, and the highlight kept.
+export function selectNode(id, reveal = false) {
+  const topology = shownTopology();
+  const node = topology && meshTree(topology).byId.get(String(id));
+  if (node) showNodeDetails(node, reveal);
 }
 
 // The scroll wheel (or a trackpad pinch) zooms around the pointer, dragging the background
 // pans, and a double click or "fit" shows the whole map again (smoothly). Each view ('mesh',
-// 'floorplan') keeps its zoom across redraws; maxIn and maxOut are how far in and out it can go
-// (maxOut 1: the whole map, no more).
+// 'tree', 'floorplan') keeps its zoom across redraws; maxIn and maxOut are how far in and out it
+// can go (maxOut 1: the whole map, no more).
 export function enableZoom(canvas, drawing, box, key, { maxIn = 12, maxOut = 2 } = {}) {
   const view = () => { const v = drawing.viewBox.baseVal; return [v.x, v.y, v.width, v.height]; };
   const show = (v) => { net.zoom[key] = v; drawing.setAttribute('viewBox', (v || box).join(' ')); };
@@ -460,19 +577,19 @@ export function makeDraggable(group, n) {
   group.addEventListener('pointermove', (event) => {
     if (!n.dragging) return;
     if (!moved && Math.hypot(event.clientX - start.x, event.clientY - start.y) < 4) return;  // a click, so far
-    if (!moved) traceNode(n, false);
+    if (!moved) hoverNode(n.id, false);
     const point = group.ownerSVGElement.createSVGPoint();
     point.x = event.clientX; point.y = event.clientY;
     const p = point.matrixTransform(group.ownerSVGElement.getScreenCTM().inverse());
     n.x = p.x; n.y = p.y; moved = true;
     placeNode(n);
     placeLinks(net.layout.springs.filter((s) => s.a === n || s.b === n));
-    net.positions.set(n.node.id, { x: n.x, y: n.y });
-    net.dragged.add(n.node.id);
+    net.positions.set(n.id, { x: n.x, y: n.y });
+    net.dragged.add(n.id);
   });
   group.addEventListener('pointerup', () => {
     n.dragging = false;
-    if (!moved) showNodeDetails(n.node, true);
+    if (!moved) selectNode(n.id, true);
     else redrawMeshHeatmap();
   });
 }
@@ -482,7 +599,7 @@ export function detailsTable(rows) {
     .map(([k, v]) => h('tr', {}, h('th', { class: 'fw-normal text-body-secondary' }, k), h('td', { class: 'text-break' }, v)))));
 }
 
-// The details slide in over the map (under it on a narrow screen).
+// The details slide in over the map (under it on a phone).
 export function openDrawer(title) {
   document.getElementById('map-drawer-title').textContent = title;
   document.getElementById('map-drawer').classList.add('open');
@@ -492,23 +609,31 @@ export function closeDrawer() {
   document.getElementById('map-drawer').classList.remove('open');
   net.selected = null;
   net.selectedNode = null;
-  if (net.layout) for (const n of net.layout.nodes) n.group.classList.remove('selected');
+  applyFocus();
 }
 
 document.getElementById('map-drawer-close').addEventListener('click', closeDrawer);
 
 export function showNodeDetails(node, reveal = false) {
-  net.selected = node.id;
+  net.selected = String(node.id);
   net.selectedNode = node;
   openDrawer(node.device_id ? 'Board' : nodeStyle(node).label);
-  if (net.layout) for (const n of net.layout.nodes) n.group.classList.toggle('selected', n.node.id === node.id);
+  applyFocus();
+  // Its row in the list scrolled into sight, within the list only (the page stays where it is)
+  const list = document.getElementById('net-list-body');
+  const row = list.querySelector(`[data-node="${CSS.escape(net.selected)}"]`);
+  if (row && row.offsetTop < list.scrollTop) list.scrollTop = row.offsetTop;
+  else if (row && row.offsetTop + row.offsetHeight > list.scrollTop + list.clientHeight) list.scrollTop = row.offsetTop + row.offsetHeight - list.clientHeight;
   const topology = shownTopology();
-  const nodes = new Map(topology.nodes.map((n) => [n.id, n]));
-  const links = topology.links.filter((l) => l.a === node.id || l.b === node.id).map((l) => {
-    const other = nodes.get(l.a === node.id ? l.b : l.a);
-    return h('li', {}, `${other ? nodeLabel(other) : '?'}: ${linkStrength(l).text}`);
+  const nodes = new Map(topology.nodes.map((n) => [String(n.id), n]));
+  const links = topology.links.filter((l) => String(l.a) === net.selected || String(l.b) === net.selected).map((l) => {
+    const other = nodes.get(String(String(l.a) === net.selected ? l.b : l.a));
+    const strength = linkStrength(l);
+    return h('li', {}, signalBars(strength.quality, { class: `bars q${strength.quality ?? 'n'} inline` }),
+      ` ${other ? nodeLabel(other) : '?'}: ${strength.text}`);
   });
   const device = node.device_id && state.devices.get(node.device_id);
+  const hops = meshTree(topology).hops.get(net.selected);
   document.getElementById('network-details').replaceChildren(...[
     device ? boardCard(device) : h('h6', {}, nodeLabel(node)),
     device ? h('div', { class: 'net-section' }, 'On the network') : null,
@@ -516,16 +641,17 @@ export function showNodeDetails(node, reveal = false) {
       ['Board', node.device_id && !device ? `${node.name} (${node.device_id})` : ''],
       ['Role', node.border_router ? `border router, ${node.role}` : node.role],
       ['Type', node.kind],
+      ['Hops', node.border_router || hops === undefined ? '' : `${hops} from the border router`],
       ['RLOC16', node.rloc16_hex],
       ['Extended address', node.ext_address],
-      ['Parent', node.parent && nodes.get(node.parent) ? nodeLabel(nodes.get(node.parent)) : ''],
+      ['Parent', node.parent && nodes.get(String(node.parent)) ? nodeLabel(nodes.get(String(node.parent))) : ''],
       ['Child timeout', node.timeout ? `${node.timeout} s` : ''],
       ['Host name', node.hostname],
-      ['IPv6', node.ipv6.join(', ')],
+      ['IPv6', (node.ipv6 || []).join(', ')],
     ]),
-    links.length ? h('div', { class: 'mt-2' }, h('b', {}, 'Links'), h('ul', { class: 'mb-0 ps-3' }, links)) : null,
+    links.length ? h('div', { class: 'mt-2' }, h('b', {}, 'Links'), h('ul', { class: 'list-unstyled net-links mb-0' }, links)) : null,
   ].filter(Boolean));  // replaceChildren would write out a null
-  // On a narrow screen the details sit under the map: bring them up after a click.
+  // On a phone the details sit under the map: bring them up after a click.
   const card = document.getElementById('network-details');
   if (reveal && card.getBoundingClientRect().top > window.innerHeight - 80) card.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
@@ -594,7 +720,7 @@ export function showLinkDetails(spring) {
   document.getElementById('network-details').replaceChildren(
     h('h6', {}, `${nodeLabel(spring.a.node)} ↔ ${nodeLabel(spring.b.node)}`),
     detailsTable([
-      ['Kind', spring.link.kind === 'mesh' ? 'router to router' : 'child to parent'],
+      ['Kind', spring.link.kind === 'mesh' ? `router to router${spring.primary ? '' : ' (a spare: not on a way to the border router)'}` : 'child to parent'],
       ['Link margin', spring.link.link_margin !== null && spring.link.link_margin !== undefined ? `${spring.link.link_margin} dB` : ''],
       ['Average RSSI', spring.link.average_rssi !== null && spring.link.average_rssi !== undefined ? `${spring.link.average_rssi} dBm` : ''],
       ['Last RSSI', spring.link.last_rssi !== null && spring.link.last_rssi !== undefined ? `${spring.link.last_rssi} dBm` : ''],
@@ -607,15 +733,18 @@ export function renderNetworkLegend() {
   const pill = (...children) => h('span', { class: 'legend-pill' }, ...children);
   const mini = (shape) => svg('svg', { class: 'legend-node', viewBox: '-28 -28 56 56' }, shape);
   const help = h('div', { class: 'legend-help d-none' },
-    'Your boards show their plant photo (or the logo), ringed by their soil moisture. Rings mark the hops from the ',
-    'border router. The closer a board is to its parent, the stronger its link; a router inside its ring has a strong ',
-    'link towards the border router. Lines: thick and green is a strong link, thin and red a weak one; the dashes flow from each child ',
-    'to its parent. Your boards never link to each other. Point at a node to see its way to the border router, click ',
-    'it for details, drag it to tidy up (Read the network puts it back). Scroll to zoom, drag the background to move around, double-click to fit.');
+    'Your boards show their plant photo (or the logo), ringed by their soil moisture; a badge marks one that is offline, ',
+    'low on battery or needs water. A router\'s ring is the strength of its way to the border router. Lines: thick and ',
+    'green is a strong link, thin and red a weak one; the moving dots flow towards the border router. Only each node\'s ',
+    'way to the border router is drawn: a router\'s other links show when you point at it, or with "all links". On the ',
+    'mesh, the closer a board is to its parent, the stronger its link. Point at a node to see its way to the border ',
+    'router, click it for details; drag it to tidy up (Read the network puts it back). Scroll to zoom, drag the ',
+    'background to move around, double-click to fit.');
   document.getElementById('network-legend').replaceChildren(
     pill(mini(nodeShape({ border_router: true }).el), 'border router'),
-    pill(mini(nodeShape({ kind: 'router' }).el), 'router'),
-    pill(mini(nodeShape({ device_id: '-' }).el), 'your board · ring: soil'),
+    pill(mini(nodeShape({ kind: 'router' }, 1, 3).el), 'router'),
+    pill(mini(nodeShape({ device_id: '-' }).el), 'your board'),
+    pill(mini(nodeShape({ kind: 'SED', parent: '-' }, 1.3, 3).el), 'other device'),
     pill(h('span', { class: 'legend-strength' }), 'strong → weak'),
     h('button', { class: 'legend-info', type: 'button', title: 'How to read the map', 'aria-label': 'How to read the map',
       onclick: () => help.classList.toggle('d-none') }, svg('svg', { class: 'icon' }, svg('use', { href: '#i-info' }))),
@@ -625,17 +754,14 @@ export function renderNetworkLegend() {
 export async function loadNetwork() {
   net.state = await api('GET', '/api/network');
   document.getElementById('border-router-url').value = net.state.border_router_url || '';
-  renderNetwork();
+  redrawNetwork();
   renderNetworkLegend();
-  renderFloorplan();
   renderChannelScan(net.state.channel_scan);
   loadNetworkHistory().catch(() => {});
-  document.getElementById('network-events').replaceChildren(...(net.state.events.length
-    ? net.state.events.map((e) => h('li', { class: 'mb-1' }, h('span', { class: 'text-body-secondary' }, `${when(e.time)} `), e.message))
-    : [h('li', { class: 'text-body-secondary' }, 'No changes seen yet. Boards changing parent show here.')]));
+  renderNetworkEvents(net.state.events);
 }
 
-for (const [id, key] of [['labels-toggle', 'allNames'], ['links-toggle', 'showLinks']]) {
+for (const [id, key] of [['labels-toggle', 'allNames'], ['links-toggle', 'allLinks']]) {
   try {
     const kept = localStorage.getItem(`hacoap-map-${key}`);
     if (kept !== null) net[key] = kept === '1';
@@ -644,12 +770,11 @@ for (const [id, key] of [['labels-toggle', 'allNames'], ['links-toggle', 'showLi
   document.getElementById(id).addEventListener('change', (event) => {
     net[key] = event.target.checked;
     try { localStorage.setItem(`hacoap-map-${key}`, net[key] ? '1' : '0'); } catch (error) { /* not remembered */ }
-    renderNetwork();
-    renderFloorplan();
+    redrawNetwork();
   });
 }
 
-document.getElementById('network-refresh').addEventListener('click', (event) => busy(event.target, async () => {
+document.getElementById('network-refresh').addEventListener('click', (event) => busy(event.currentTarget, async () => {
   // Every node goes back where its signal puts it (the floor plan keeps its places), even if
   // the reading fails (such as when the automatic one is running)
   net.dragged.clear();
@@ -699,8 +824,7 @@ export function showLatestNetwork() {
   const slider = document.getElementById('history-slider');
   slider.value = slider.max;
   renderHistoryLabel();
-  renderNetwork();
-  renderFloorplan();
+  redrawNetwork();
 }
 
 document.getElementById('history-slider').addEventListener('input', renderHistoryLabel);
@@ -712,8 +836,7 @@ document.getElementById('history-slider').addEventListener('change', async (even
   if (!topology) return;
   net.viewing = { id: entry.id, time: entry.time, topology };
   renderHistoryLabel();
-  renderNetwork();
-  renderFloorplan();
+  redrawNetwork();
 });
 document.getElementById('history-latest').addEventListener('click', showLatestNetwork);
 
@@ -722,11 +845,11 @@ document.getElementById('history-latest').addEventListener('click', showLatestNe
 // The signal over the floor plan or the mesh, estimated from the placed nodes: each one counts
 // with the margin of its strongest link, blended by distance (nearer nodes weigh more), and the
 // colour fades out within 'reach' of every node. A guide to dead zones, not a measurement.
-// area is [x, y, width, height] in map units.
-export function heatmapLayer(topology, points, [x0, y0, W, H], reach = Math.max(W, H) * 0.3) {
+// area is [x, y, width, height] in map units; bands: colour in steps of 5 dB (contours), else smooth.
+export function heatmapLayer(topology, points, [x0, y0, W, H], reach = Math.max(W, H) * 0.3, bands = true) {
   const samples = [];
   for (const node of topology.nodes) {
-    const p = points.get(node.id);
+    const p = points.get(String(node.id));
     if (!p || !p.placed) continue;
     const margins = topology.links.filter((l) => l.a === node.id || l.b === node.id).map((l) => {
       if (l.link_margin !== null && l.link_margin !== undefined) return l.link_margin;
@@ -755,8 +878,8 @@ export function heatmapLayer(topology, points, [x0, y0, W, H], reach = Math.max(
         weights += weight;
       }
       const alpha = Math.max(0, 1 - Math.sqrt(nearest) / reach);
-      // Colour in bands of 5 dB (contours), the fade smooth
-      pixels.data.set([...marginColor(Math.round(sum / weights / 5) * 5), Math.round(alpha * 110)], (row * cols + col) * 4);
+      const margin = sum / weights;
+      pixels.data.set([...marginColor(bands ? Math.round(margin / 5) * 5 : margin), Math.round(alpha * 110)], (row * cols + col) * 4);
     }
   }
   context.putImageData(pixels, 0, 0);
@@ -769,7 +892,7 @@ export const MESH_HEAT_REACH = 160;
 
 export function meshHeatmap() {
   const { nodes, box } = net.layout;
-  const points = new Map(nodes.map((n) => [n.node.id, { x: n.x, y: n.y, placed: true }]));
+  const points = new Map(nodes.map((n) => [n.id, { x: n.x, y: n.y, placed: true }]));
   const xs = nodes.map((n) => n.x), ys = nodes.map((n) => n.y);
   const r = MESH_HEAT_REACH;
   const area = [Math.min(...xs, box[0]) - r, Math.min(...ys, box[1]) - r,
@@ -779,16 +902,16 @@ export function meshHeatmap() {
 
 // After a node is dragged on the mesh, the heatmap follows.
 export function redrawMeshHeatmap() {
-  const drawing = document.querySelector('#network-canvas svg');
+  const drawing = document.querySelector('#network-canvas > svg');
   const old = drawing && drawing.querySelector('.heatmap');
   if (!drawing || !net.heatmap) return;
   const layer = meshHeatmap();
   if (old) old.remove();
-  if (layer) drawing.prepend(layer);
+  if (layer) drawing.querySelector('.grid').after(layer);
 }
 
 export function renderHeatmapNote() {
-  const shown = net.heatmap && (net.view === 'mesh' ? !!shownTopology() : !!(net.state && net.state.floorplan));
+  const shown = net.heatmap && (net.view === 'mesh' ? !!shownTopology() : net.view === 'floorplan' && !!(net.state && net.state.floorplan));
   document.getElementById('heatmap-note').classList.toggle('d-none', !shown);
   document.getElementById('heat-scale').classList.toggle('d-none', !shown);
 }
@@ -806,9 +929,7 @@ document.getElementById('heatmap-toggle').checked = net.heatmap;
 document.getElementById('heatmap-toggle').addEventListener('change', (event) => {
   net.heatmap = event.target.checked;
   try { localStorage.setItem('hacoap-heatmap', net.heatmap ? '1' : '0'); } catch (error) { /* not remembered */ }
-  renderNetwork();
-  renderFloorplan();
-  renderHeatmapNote();
+  redrawNetwork();
 });
 
 // ------------------------------------------------------------------ a board answering, on the map
@@ -818,15 +939,15 @@ export const calm = () => window.matchMedia && window.matchMedia('(prefers-reduc
 
 export function pulseBoard(deviceId) {
   if (calm() || currentRoute().split('/')[0] !== 'network') return;
-  for (const group of document.querySelectorAll(`#network-canvas g.node[data-device="${CSS.escape(deviceId)}"], #floorplan g.node[data-device="${CSS.escape(deviceId)}"]`)) {
+  for (const group of document.querySelectorAll(`#map-wrap g.node[data-device="${CSS.escape(deviceId)}"]`)) {
     group.classList.remove('pulse');
     void group.getBBox();  // restarts the animation
     group.classList.add('pulse');
     setTimeout(() => group.classList.remove('pulse'), 1300);
   }
-  const n = net.layout && net.layout.nodes.find((x) => x.node.device_id === deviceId);
+  const n = net.view === 'mesh' && net.layout && net.layout.nodes.find((x) => x.node.device_id === deviceId);
   const spring = n && net.layout.springs.find((sp) => sp.a === n && sp.link.kind === 'child');
-  const drawing = document.querySelector('#network-canvas svg');
+  const drawing = document.querySelector('#network-canvas > svg');
   if (!spring || !drawing || !spring.path) return;
   const length = spring.path.getTotalLength();  // the link runs from the board to its parent
   const dot = svg('circle', { r: 5, class: 'pulse-dot' });
