@@ -8,7 +8,7 @@ import { waterIn } from './network.js';
 
 // Full screen for a spare monitor: every plant big on one page, the ones that need water
 // first; it scrolls when they don't all fit, with the header kept at the top.
-export const wall = { plants: [], timers: [], soon: null };
+export const wall = { plants: [], timers: [], soon: null, wasFullscreen: false };
 
 export async function loadWall() {
   wall.plants = await api('GET', '/api/wall', undefined, { quiet: true });
@@ -65,6 +65,11 @@ export function renderWall() {
 document.getElementById('wall-fullscreen').addEventListener('click', () => {
   if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
   else document.documentElement.requestFullscreen().catch(() => notify('This browser won\'t go full screen', 'warning'));
+});
+
+// Back to the wall from a plant's page (the link does it), full screen again if it was
+document.getElementById('device-to-wall').addEventListener('click', () => {
+  if (wall.wasFullscreen && !document.fullscreenElement) document.documentElement.requestFullscreen().catch(() => {});
 });
 
 // ------------------------------------------------------------------ weekly summary

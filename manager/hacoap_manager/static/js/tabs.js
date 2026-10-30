@@ -9,7 +9,7 @@ import { loadDevicePage } from './device.js';
 import { loadGraph } from './graphs.js';
 import { loadHistory, renderUpdateForm } from './updates.js';
 import { loadNetwork, net } from './network.js';
-import { loadSummary, loadWall, stopWall } from './pages.js';
+import { loadSummary, loadWall, stopWall, wall } from './pages.js';
 import { setNetworkView } from './floorplan.js';
 
 // ------------------------------------------------------------------ tabs
@@ -17,11 +17,19 @@ import { setNetworkView } from './floorplan.js';
 export const TABS = ['dashboard', 'devices', 'network', 'charts', 'updates', 'images', 'builds', 'console', 'settings'];
 export const PAGES = ['wall', 'summary'];  // pages without a tab
 
+// Device pages opened from the wall display get a button back to it, until another tab is shown
+let previousTab = null;
+let fromWall = false;
+
 // A route is a tab name, or "device/<id>" for one device's page.
 export function showTab(route) {
   const [name, ...rest] = route.split('/');
   const known = name === 'device' || TABS.includes(name) || PAGES.includes(name);
   const tab = known ? name : 'dashboard';
+  if (previousTab === 'wall' && tab !== 'wall') wall.wasFullscreen = Boolean(document.fullscreenElement);
+  fromWall = tab === 'device' && (fromWall || previousTab === 'wall');
+  document.getElementById('device-to-wall').classList.toggle('d-none', !fromWall);
+  previousTab = tab;
   for (const link of document.querySelectorAll('#tabs a')) {
     link.classList.toggle('active', link.dataset.tab === (tab === 'device' ? 'devices' : tab));
   }

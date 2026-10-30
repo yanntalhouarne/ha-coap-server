@@ -45,7 +45,7 @@ First version: the plan's phases 0, 1, 2, 5 and 6. Tested against a simulated de
 - **Data limits:** how long readings, network history and backups are kept, the data folder's size, and compacting the database.
 - **Watering forecast:** when each plant will need water at its drying rate, a "soon" list on the dashboard, and what a pump run raises the soil by.
 - **Photo timeline:** several dated photos per plant, with a slider and the soil at each date.
-- **Wall display:** full screen, every plant big, for a spare monitor; all of them on one page that scrolls, with the header kept at the top; click a plant to open its page.
+- **Wall display:** full screen, every plant big, for a spare monitor; all of them on one page that scrolls, with the header kept at the top; click a plant to open its page, and **← wall display** on that page to come back.
 - **Weekly summary:** what happened over a week, to print.
 - **Demo:** a second app with simulated boards and two weeks of history, in a throwaway data folder.
 - **Getting started** checklist on the dashboard, and a pulse on the map when a board answers.
