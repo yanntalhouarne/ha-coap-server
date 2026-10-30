@@ -79,6 +79,9 @@ def test_schema_from_the_repository():
     assert [o["name"] for o in suffix["options"]][:2] == ["HACOAP_SRP_SUFFIX_DEVICE_ID", "HACOAP_SRP_SUFFIX_RANDOM"]
     assert schema["HACOAP_SRP_MANUAL_ID"]["depends_on"] == "HACOAP_SRP_SUFFIX_MANUAL"
     assert schema["OPENTHREAD_POLL_PERIOD"]["default"] == 3000  # from prj.conf
+    remote_log = schema["HACOAP_REMOTE_LOG"]                     # a box in the profile form
+    assert (remote_log["type"], remote_log["default"]) == ("bool", None)
+    assert schema["HACOAP_REMOTE_LOG_BUFFER_SIZE"]["depends_on"] == "HACOAP_REMOTE_LOG"
     assert "COAP_SERVER_LOG_LEVEL" not in schema
 
 

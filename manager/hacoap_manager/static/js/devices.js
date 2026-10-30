@@ -4,6 +4,7 @@ import { ago, api, busy, h, notify, pct, photoUrl, shortHash, state, svg, when }
 import { currentRoute, showTab } from './tabs.js';
 import { net, redrawNetwork } from './network.js';
 import { renderStatusDevices } from './live.js';
+import { renderConsoleBoards } from './console.js';
 import { statusClass } from './updates.js';
 
 // ------------------------------------------------------------------ devices
@@ -19,6 +20,7 @@ export async function loadDevices() {
   if (currentRoute().split('/')[0] === 'network' && net.state) {
     redrawNetwork();
   }
+  if (currentRoute().split('/')[0] === 'console') renderConsoleBoards();
 }
 
 export function deviceName(device) { return device.name || device.device_id; }

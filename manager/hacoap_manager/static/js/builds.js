@@ -69,7 +69,8 @@ export function settingField(symbol) {
   }
   input.dataset.symbol = symbol.name;
   input.addEventListener('input', updateChangeCount);
-  const dependency = symbol.depends_on ? builds.schema.flatMap((s) => s.options || []).find((o) => o.name === symbol.depends_on) : null;
+  const dependency = symbol.depends_on
+    ? builds.schema.flatMap((s) => [s, ...(s.options || [])]).find((o) => o.name === symbol.depends_on) : null;
   return h('div', { class: 'col-md-6' },
     h('label', { class: 'form-label small', for: id, title: `CONFIG_${symbol.name}` }, symbol.prompt),
     input,

@@ -324,6 +324,42 @@ uint16_t otMessageRead(const otMessage *message, uint16_t offset, void *buf, uin
 	return count;
 }
 
+/* The fake message only has Uri-Query options. */
+otError otCoapOptionIteratorInit(otCoapOptionIterator *iterator, const otMessage *message)
+{
+	memset(iterator, 0, sizeof(*iterator));
+	iterator->mMessage = message;
+	return OT_ERROR_NONE;
+}
+
+const otCoapOption *otCoapOptionIteratorGetNextOptionMatching(otCoapOptionIterator *iterator, uint16_t option)
+{
+	if ((option != OT_COAP_OPTION_URI_QUERY) || (iterator->mNextOptionOffset >= iterator->mMessage->query_count))
+	{
+		return NULL;
+	}
+	iterator->mOption.mNumber = option;
+	iterator->mOption.mLength = (uint16_t)strlen(iterator->mMessage->queries[iterator->mNextOptionOffset]);
+	iterator->mNextOptionOffset++;
+	return &iterator->mOption;
+}
+
+const otCoapOption *otCoapOptionIteratorGetFirstOptionMatching(otCoapOptionIterator *iterator, uint16_t option)
+{
+	iterator->mNextOptionOffset = 0;
+	return otCoapOptionIteratorGetNextOptionMatching(iterator, option);
+}
+
+otError otCoapOptionIteratorGetOptionValue(otCoapOptionIterator *iterator, void *value)
+{
+	if (iterator->mNextOptionOffset == 0)
+	{
+		return OT_ERROR_INVALID_ARGS;
+	}
+	memcpy(value, iterator->mMessage->queries[iterator->mNextOptionOffset - 1], iterator->mOption.mLength);
+	return OT_ERROR_NONE;
+}
+
 void otCoapSetDefaultHandler(otInstance *instance, otCoapRequestHandler handler, void *context)
 {
 	(void)instance;
@@ -356,6 +392,14 @@ void fake_request_init(otMessage *request, otCoapType type, otCoapCode code, con
 	{
 		request->length = (uint16_t)strlen(payload);
 		memcpy(request->bytes, payload, request->length);
+	}
+}
+
+void fake_request_add_query(otMessage *request, const char *query)
+{
+	if (request->query_count < FAKE_MAX_QUERIES)
+	{
+		request->queries[request->query_count++] = query;
 	}
 }
 

@@ -38,12 +38,35 @@ config HACOAP_MCUMGR_POLL_PERIOD_MS
 	  with a long CONFIG_OPENTHREAD_POLL_PERIOD every mcumgr request (each
 	  chunk of an image upload) would wait up to a full period. The device
 	  polls at this period from the first mcumgr request until
-	  HACOAP_MCUMGR_POLL_TIMEOUT_S after the last one.
+	  HACOAP_MCUMGR_POLL_TIMEOUT_S after the last one. Reading the 'log'
+	  resource (HACOAP_REMOTE_LOG) does the same.
 
 config HACOAP_MCUMGR_POLL_TIMEOUT_S
 	int "Return to the normal poll period after this long without mcumgr requests (s)"
 	range 1 3600
 	default 30
+
+config HACOAP_REMOTE_LOG
+	bool "Log over the air (the 'log' CoAP resource)"
+	select LOG
+	help
+	  Keeps the latest log output in RAM (HACOAP_REMOTE_LOG_BUFFER_SIZE)
+	  for the 'log' CoAP resource, which the fleet manager's console reads
+	  over Thread. While someone reads it, the device polls its parent
+	  fast, as during an update, so a console costs battery only while it
+	  is open. Turns logging on, which adds about 27 KB of flash and 10 KB
+	  of RAM to the battery variant, and a little power for each log line.
+	  Without it, 'log' answers 4.04 Not Found.
+
+config HACOAP_REMOTE_LOG_BUFFER_SIZE
+	int "Log output kept for the 'log' resource (bytes)"
+	depends on HACOAP_REMOTE_LOG
+	range 512 16384
+	default 4096
+	help
+	  The latest log output the device keeps: what a console shows when it
+	  opens (the log since boot, until it fills), and how much a reader
+	  can fall behind without missing lines.
 
 menu "Pump"
 

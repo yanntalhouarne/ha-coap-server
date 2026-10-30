@@ -175,7 +175,9 @@ While a device is being updated, it polls its parent every 100 ms instead of eve
 
   Under the build, a line says which key its bootloader takes: the same key that signed its application. A board flashed with a development-key bootloader accepts updates from anyone who has that public key, so that needs a confirmation. The log shows under **Set up this computer**; only one of these jobs, or a build, runs at a time. Not yet tried with a real J-Link: the commands follow Nordic's `nrfutil device` documentation.
 
-**Console.** Shows what a board prints over a USB serial port, live, with a line to send commands. On the **usb-logging** variant, the logs are on the board's second USB serial port (the first one is mcumgr, for updates). On **uart-console**, use a USB-to-UART adapter on J4. The battery variant prints nothing. A port open in the console can't be used for a USB update at the same time: close it first.
+**Console.** Shows what a board prints, live, from one of two places:
+- **USB:** a USB serial port, with a line to send commands. On the **usb-logging** variant, the logs are on the board's second USB serial port (the first one is mcumgr, for updates). On **uart-console**, use a USB-to-UART adapter on J4. The battery variant prints nothing. A port open in the console can't be used for a USB update at the same time: close it first.
+- **Over the air:** a board's log, over Thread, from firmware built with **Log over the air** (a build profile setting, `CONFIG_HACOAP_REMOTE_LOG`; any variant, the battery one included). Choose the board, or click **Log** on its page. The board keeps its last 4 KB of log, so the console opens on its log since it started (until that fills), then asks for new lines every second. It says when the board restarts (and shows its new log from the start), stops answering, or has firmware without the log. While it's open, the board polls its parent fast, as during an update, which uses more battery: close it when you're done. Nothing can be sent this way, and what happens before the board joins the network, or as it crashes, still needs USB.
 
 **Alerts.** The app raises an alert when:
 - a device stops answering (once the app has asked every device since it started)
@@ -253,7 +255,7 @@ A whole fleet: `python -m hacoap_manager.simdevice --count 9 --border-router api
 | `hacoap_manager/inventory.py` | Discovery, adding devices, refreshing their status |
 | `hacoap_manager/updates.py` | Update jobs: upload, test, reset, check, confirm |
 | `hacoap_manager/mcumgr.py` | mcumgr over UDP or USB serial, through [smpclient](https://github.com/intercreate/smpclient) |
-| `hacoap_manager/coap.py` | A small CoAP client for `info`, `data` and `ping` |
+| `hacoap_manager/coap.py` | A small CoAP client for `info`, `data`, `ping` and `log` |
 | `hacoap_manager/discovery.py` | mDNS/DNS-SD (zeroconf) |
 | `hacoap_manager/mcuboot.py` | Reads an image's version and hash |
 | `hacoap_manager/builds.py`, `kconfig.py` | Build profiles (from `application/Kconfig`), checks, the build runner |
@@ -272,7 +274,7 @@ A whole fleet: `python -m hacoap_manager.simdevice --count 9 --border-router api
 | `hacoap_manager/demo.py` | The demo: simulated boards following a plant model, two weeks of history, starting it from the app |
 | `hacoap_manager/setup_tools.py` | The Builds tab's setup buttons (toolchain, signing key, PSKd, SWD tools), and runs SWD flashes |
 | `hacoap_manager/swd.py` | Flashing a board over SWD: J-Link probes, the builds to flash, the `nrfutil device` commands |
-| `hacoap_manager/console.py` | The serial console |
+| `hacoap_manager/console.py` | The console: a serial port, or a board's log over the air |
 | `hacoap_manager/backup.py` | Backups, restore, the device list as CSV |
 | `hacoap_manager/otbr.py`, `network.py` | The border router's REST API (both generations), the Network page's map and change log |
 | `hacoap_manager/simborder.py` | A simulated border router REST API, with a small made-up network |

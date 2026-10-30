@@ -6,12 +6,13 @@
  * Startup, and the glue between the CoAP resources, the hardware modules and OpenThread.
  *
  * Modules:
- *     - coap_resources: the CoAP API ('pumpdc', 'pump', 'data', 'info', 'ping')
+ *     - coap_resources: the CoAP API ('pumpdc', 'pump', 'data', 'info', 'ping', 'log')
  *     - pump:           timed pump runs, from CoAP or the S1 button
  *     - sensors:        soil, battery and air readings, sampled periodically
  *     - buzzer:         beep patterns
  *     - status_led:     network and error states on the module's RGB LED
- *     - mcumgr_poll:    faster Thread polling while mcumgr updates the device
+ *     - mcumgr_poll:    faster Thread polling while mcumgr updates the device or the log is read
+ *     - log_buffer:     the latest log output, for 'log' (with remote_log, CONFIG_HACOAP_REMOTE_LOG)
  *     - srp:            service registration, so Home Assistant can discover the device
  *     - watchdog:       resets the SoC if the system work queue stalls
  */
@@ -27,6 +28,7 @@
 
 #include "buzzer.h"
 #include "coap_resources.h"
+#include "log_buffer.h"
 #include "mcumgr_poll.h"
 #include "pump.h"
 #include "sensors.h"
@@ -116,6 +118,15 @@ static void on_ping_put(uint8_t command)
 	}
 }
 
+#ifdef CONFIG_HACOAP_REMOTE_LOG
+static size_t on_log_get(uint32_t from, char *payload, size_t size)
+{
+	/* Someone is reading the log: poll fast for their next request, as during an update. */
+	mcumgr_poll_hold();
+	return log_buffer_read(from, payload, size);
+}
+#endif
+
 static const struct coap_resources_handlers coap_handlers = {
 	.pumpdc_get = on_pumpdc_get,
 	.pumpdc_put = on_pumpdc_put,
@@ -124,6 +135,9 @@ static const struct coap_resources_handlers coap_handlers = {
 	.data_get = on_data_get,
 	.info_get = on_info_get,
 	.ping_put = on_ping_put,
+#ifdef CONFIG_HACOAP_REMOTE_LOG
+	.log_get = on_log_get,
+#endif
 };
 
 /* Called after each successful SRP registration: announce the first one. */

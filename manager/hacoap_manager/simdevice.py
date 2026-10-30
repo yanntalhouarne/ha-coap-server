@@ -1,6 +1,6 @@
 """A simulated ha-coap device, for tests and for trying the app without a board.
 
-It answers mcumgr (SMP) over UDP and CoAP ('info', 'data', 'ping') like the firmware, and
+It answers mcumgr (SMP) over UDP and CoAP ('info', 'data', 'ping', 'log') like the firmware, and
 models MCUboot's two slots: upload to slot 1, test, reset (swap), confirm, and revert
 when a tested image isn't confirmed before the next reset.
 
@@ -20,6 +20,7 @@ import argparse
 import asyncio
 import hashlib
 import math
+import random
 import struct
 import time
 from dataclasses import dataclass, field
@@ -35,6 +36,13 @@ GROUP_OS, GROUP_IMAGE = 0, 1
 OS_ECHO, OS_RESET, OS_MCUMGR_PARAMS = 0, 5, 6
 IMAGE_STATE, IMAGE_UPLOAD, IMAGE_ERASE = 0, 1, 5
 RC_OK, RC_EUNKNOWN, RC_EINVAL, RC_ENOTSUP, RC_EBADSTATE = 0, 1, 3, 8, 6
+
+# The log over the air, as the firmware keeps it (CONFIG_HACOAP_REMOTE_LOG_BUFFER_SIZE, and
+# LOG_PAYLOAD_MAX_SIZE in application/include/coap_resources.h)
+LOG_KEEP = 4096
+LOG_PAYLOAD_MAX = coap.LOG_PAYLOAD_MAX
+SIM_SAMPLE_S = 20      # the sensors are sampled every 15 min on a board; faster here
+SIM_FAST_POLL_S = 30   # CONFIG_HACOAP_MCUMGR_POLL_TIMEOUT_S
 
 
 @dataclass
@@ -68,10 +76,20 @@ class SimulatedDevice:
     pings: int = 0
     resets: int = 0
     smp_requests: int = 0
+    remote_log: bool = True          # the 'log' resource (firmware built with HACOAP_REMOTE_LOG)
     _upload: bytearray = None
     _upload_size: int = 0
     _rebooting_until: float = 0.0
     _started: float = field(default_factory=time.time)
+    _log: bytearray = field(default_factory=bytearray)  # the last LOG_KEEP bytes
+    _log_written: int = 0
+    _boot_id: str = ""
+    _booted: float = 0.0
+    _last_sample: float = 0.0
+    _last_log_read: float = 0.0
+
+    def __post_init__(self):
+        self._boot_log()
 
     @classmethod
     def with_image(cls, image, **kwargs):
@@ -119,6 +137,57 @@ class SimulatedDevice:
         self.resets += 1
         self.boot()
         self._rebooting_until = asyncio.get_running_loop().time() + self.reboot_s
+        self._boot_log()
+
+    # ------------------------------------------------------------ the log over the air
+
+    def log(self, text, level="inf", module="coap_server"):
+        """Adds a line to the log, formatted like the firmware's remote_log backend."""
+        uptime = time.time() - self._booted
+        hours, rest = divmod(uptime, 3600)
+        minutes, seconds = divmod(rest, 60)
+        stamp = f"[{int(hours):02d}:{int(minutes):02d}:{seconds:06.3f},{int(uptime * 1e6) % 1000:03d}]"
+        data = f"{stamp} <{level}> {module}: {text}\n".encode() if level else f"{text}\n".encode()
+        self._log += data
+        self._log_written += len(data)
+        del self._log[:-LOG_KEEP]
+
+    def _boot_log(self):
+        self._log = bytearray()
+        self._log_written = 0
+        self._boot_id = f"{random.getrandbits(32) | 1:08x}"
+        self._booted = self._last_sample = time.time()
+        self.log("*** Booting nRF Connect SDK v2.4.3 ***", level=None)
+        self.log("Set up user button at gpio@50000000 pin 15")
+        self.log("Start CoAP-server sample")
+        self.log("CoAP server has started", module="coap_resources")
+        self.log("Initialization done. Starting OpenThread...")
+        self.log(f"hostname is: ha-coap-{self.device_id}")
+        self.log(f"service instance is: ha-coap-{self.device_id}")
+        self.log("Adding SRP client service...")
+        self.log("SRP callback: OK")
+        self._sample_log()
+
+    def _sample_log(self):
+        soil, battery, humidity, temperature = self.readings()
+        temperature = temperature - 256 if temperature > 127 else temperature
+        self.log(f"soil_voltage = {2200 - soil * 12} mV, soil_humidity = {soil} %")
+        self.log(f"Temp = {temperature}.250000 C, RH = {humidity}.500000 %")
+        self.log(f"soil_humidity = {soil}, battery = {battery}, air_humidity = {humidity}, temperature = {temperature}")
+
+    def read_log(self, offset):
+        """The 'log' payload for a reader that has the log up to 'offset' (like log_buffer_read())."""
+        now = time.time()
+        while now - self._last_sample >= SIM_SAMPLE_S:  # sampling, sped up
+            self._last_sample += SIM_SAMPLE_S
+            self._sample_log()
+        if now - self._last_log_read > SIM_FAST_POLL_S:
+            self.log("mcumgr or log reader: poll period 100 ms")
+        self._last_log_read = now
+        oldest = self._log_written - len(self._log)
+        start = oldest if offset < oldest or offset > self._log_written else offset
+        header = f"{self._boot_id} {start}\n".encode()
+        return header + bytes(self._log[start - oldest:])[:LOG_PAYLOAD_MAX - len(header)]
 
     # ------------------------------------------------------------ SMP
 
@@ -238,11 +307,19 @@ class SimulatedDevice:
 
         if message.path == "info" and message.code == coap.GET:
             text = f"{self.fw_version},{self.hw_version},{self.device_id}"
+            self.log(f"Device info is: {text}", module="coap_resources")
             return reply(coap.CONTENT, text.encode() + b"\0")
         if message.path == "data" and message.code == coap.GET:
+            self.log("Received 'data' GET request", module="coap_resources")
             return reply(coap.CONTENT, self.readings())
+        if message.path == "log" and message.code == coap.GET:
+            if not self.remote_log:
+                return reply(coap.NOT_FOUND)
+            offset = next((int(q[5:]) for q in message.query if q.startswith("from=") and q[5:].isdigit()), 0)
+            return reply(coap.CONTENT, self.read_log(offset))
         if message.path == "pump":
             if message.code == coap.PUT and message.type == coap.TYPE_CON and message.payload in (b"0", b"1"):
+                self.log(f"Received 'pump' PUT request: {message.payload.decode()}", module="coap_resources")
                 self.pump_running = message.payload == b"1"
                 if self.pump_running:
                     asyncio.get_running_loop().call_later(self.pump_duration, self._pump_off)
@@ -256,6 +333,7 @@ class SimulatedDevice:
                     self.pump_duration = seconds
             return reply(coap.CONTENT, bytes([self.pump_duration]))
         if message.path == "ping" and message.code == coap.PUT:
+            self.log("Received 'ping' PUT request", module="coap_resources")
             if message.payload == b"1":
                 self.pings += 1
             return reply(coap.CHANGED)

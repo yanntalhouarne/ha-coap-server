@@ -627,23 +627,33 @@
   <!-- Console -->
   <section id="tab-console" class="tab d-none">
     <div class="d-flex flex-wrap gap-2 mb-3 align-items-center">
-      <select class="form-select w-auto" id="console-port"></select>
-      <select class="form-select w-auto" id="console-baud">
+      <div class="map-seg view-switch" role="group" aria-label="Where from">
+        <button type="button" id="console-from-usb" class="active" title="A USB serial port"><svg class="icon" aria-hidden="true"><use href="#i-plug"/></svg>USB</button>
+        <button type="button" id="console-from-air" title="A board's log, over Thread"><svg class="icon" aria-hidden="true"><use href="#i-wifi"/></svg>over the air</button>
+      </div>
+      <select class="form-select w-auto console-usb" id="console-port"></select>
+      <select class="form-select w-auto console-usb" id="console-baud">
         <option>115200</option><option>9600</option><option>38400</option><option>57600</option><option>230400</option>
       </select>
-      <button class="btn btn-outline-secondary" id="console-ports-refresh" type="button">Refresh</button>
+      <button class="btn btn-outline-secondary console-usb" id="console-ports-refresh" type="button">Refresh</button>
+      <select class="form-select w-auto console-air d-none" id="console-device" aria-label="Board"></select>
       <button class="btn btn-primary" id="console-open" type="button">Open</button>
       <button class="btn btn-outline-danger d-none" id="console-close" type="button">Close</button>
       <button class="btn btn-outline-secondary ms-auto" id="console-clear" type="button">Clear</button>
     </div>
     <pre class="console-log" id="console-log"></pre>
-    <form class="d-flex gap-2 mt-2" id="console-send">
+    <form class="d-flex gap-2 mt-2 console-usb" id="console-send">
       <input class="form-control" id="console-input" placeholder="send a line" autocomplete="off">
       <button class="btn btn-outline-secondary" type="submit">Send</button>
     </form>
-    <p class="form-text mt-2">Shows what a board prints. On the <b>usb-logging</b> variant, the logs are on its
+    <p class="form-text mt-2 console-usb">Shows what a board prints. On the <b>usb-logging</b> variant, the logs are on its
       <b>second</b> USB serial port (the first one is mcumgr, for updates). On <b>uart-console</b>, use a USB-to-UART
       adapter on J4. The battery variant prints nothing.</p>
+    <p class="form-text mt-2 console-air d-none">Shows a board's log over Thread, from firmware built with
+      <b>Log over the air</b> (a build profile on the Builds tab). The board keeps its last 4 KB of log, so the console
+      opens on its log since it started, until that fills; then it asks for new lines every second. While the console is
+      open, the board polls its parent fast (as during an update), which uses more battery: close it when you're done.
+      What happens before the board joins the network, or as it crashes, still needs USB.</p>
   </section>
 
   <!-- Wall display: full screen, for a spare monitor -->

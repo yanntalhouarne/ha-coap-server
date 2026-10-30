@@ -12,7 +12,7 @@ The firmware runs on the [ha-coap-pcb](https://github.com/yanntalhouarne/ha-coap
 
 - It joins a Thread network as a **sleepy end device** (battery operation).
 - It registers itself with the border router's **SRP** server as `ha-coap-<device id>._ot._udp`, so Home Assistant discovers it.
-- It serves a small **CoAP API** on port 5683: sensor data, device info, pump control and a ping.
+- It serves a small **CoAP API** on port 5683: sensor data, device info, pump control and a ping, and (optionally) its log.
 - It can be updated over **USB** or **over the air** (mcumgr over Thread), through the MCUboot bootloader.
 
 Contents:
@@ -158,6 +158,7 @@ All resources are on UDP port 5683 at the device's IPv6 address. Payloads are ra
 | `pump` | GET, confirmable PUT | `'1'` start, `'0'` stop | 1 byte: 1 while the pump runs, else 0 |
 | `pumpdc` | GET, confirmable PUT | One ASCII digit: the pump run time in seconds (1 to `CONFIG_HACOAP_PUMP_MAX_DURATION`) | 1 byte: the run time in use. Out-of-range values keep the current one. Not kept across resets. |
 | `ping` | PUT | `'1'` beep, `'0'` quiet | none (2.04 Changed) |
+| `log` | GET, with the query `from=<offset>` | — | ASCII `<boot id> <start>` and a line feed, then the log output from byte `start` (at most 512 bytes in all). Only with `CONFIG_HACOAP_REMOTE_LOG`; otherwise 4.04 Not Found. See [Logs](#logs). |
 
 `data` returns the latest readings without waiting on the sensors. They are sampled at boot and then every `CONFIG_HACOAP_SENSOR_SAMPLE_PERIOD_S` (900 s by default), so a reading can be up to one period old.
 
@@ -170,7 +171,7 @@ coap-client -m put -e 5 coap://[fd49:969:3c3c:1:88a2:4c28:69ec:34f7]/pumpdc
 coap-client -m put -e 1 coap://[fd49:969:3c3c:1:88a2:4c28:69ec:34f7]/ping
 ```
 
-As a sleepy end device, the board picks up messages from its parent once per poll period (`CONFIG_OPENTHREAD_POLL_PERIOD`, 3 s), so responses can take up to 3 seconds. The integration waits 10 s for a reply, so this is within its limits. While mcumgr is in use, the device polls every 100 ms instead (see [Keeping updates compatible](#keeping-updates-compatible)).
+As a sleepy end device, the board picks up messages from its parent once per poll period (`CONFIG_OPENTHREAD_POLL_PERIOD`, 3 s), so responses can take up to 3 seconds. The integration waits 10 s for a reply, so this is within its limits. While mcumgr is in use, or someone reads `log`, the device polls every 100 ms instead (see [Keeping updates compatible](#keeping-updates-compatible)).
 
 ### SRP registration
 - The SRP host name and service instance are `ha-coap-<suffix>`, and the service is `_ot._udp`. The integration uses the part after the `-` as the device's unique ID.
@@ -205,7 +206,8 @@ The application's settings are Kconfig options, declared in `application/Kconfig
 | `CONFIG_HACOAP_HW_VERSION` | `"v2.0"` | Board revision reported in `info` |
 | `CONFIG_HACOAP_BOOT_DELAY_MS` | 2150 | Delay at the start of `main()` |
 | `CONFIG_HACOAP_STATUS_LED_TIMEOUT_S` | 300 | How long the RGB LED flashes a state (s). 0 flashes for as long as the state lasts. |
-| `CONFIG_HACOAP_MCUMGR_POLL_PERIOD_MS` / `CONFIG_HACOAP_MCUMGR_POLL_TIMEOUT_S` | 100 / 30 | Thread poll period while mcumgr is in use, and how long it lasts after the last request |
+| `CONFIG_HACOAP_MCUMGR_POLL_PERIOD_MS` / `CONFIG_HACOAP_MCUMGR_POLL_TIMEOUT_S` | 100 / 30 | Thread poll period while mcumgr is in use (or `log` is read), and how long it lasts after the last request |
+| `CONFIG_HACOAP_REMOTE_LOG` / `CONFIG_HACOAP_REMOTE_LOG_BUFFER_SIZE` | n / 4096 | The log over the air (the `log` resource), and how much of it the board keeps (bytes). See [Logs](#logs). |
 | `CONFIG_HACOAP_PUMP_DEFAULT_DURATION` | 1 | Pump run time after boot (s) |
 | `CONFIG_HACOAP_PUMP_MAX_DURATION` | 9 | Longest run time `pumpdc` can set (s, at most 9) |
 | `CONFIG_HACOAP_SENSOR_SAMPLE_PERIOD_S` | 900 | Sensor sampling period (s). Shorter means fresher data and more power. |
@@ -332,7 +334,8 @@ Older versions of this repository had a Thread network key and network name in `
 | `src/sensors.c` | Soil, battery and air readings, sampled periodically and cached |
 | `src/buzzer.c` | Beep patterns |
 | `src/status_led.c` | Network and error states on the module's RGB LED (as short flashes), and the user LED |
-| `src/mcumgr_poll.c` | Faster Thread polling while mcumgr is in use |
+| `src/mcumgr_poll.c` | Faster Thread polling while mcumgr is in use, or the log is read |
+| `src/log_buffer.c`, `src/remote_log.c` | The log over the air (`CONFIG_HACOAP_REMOTE_LOG` only): the latest log output in RAM, and the log backend that fills it |
 | `src/srp.c` | SRP service registration |
 | `src/watchdog.c` | Hardware watchdog |
 
@@ -354,6 +357,8 @@ To test a new module, add `application/tests/unit/test_<module>.c`: include the 
 
 ### Logs
 Build the `usb-logging` variant and open the second USB serial port, or `uart-console` and use the J4 UART (115200 baud). Log levels are set in `overlay-logging.conf` (`CONFIG_COAP_SERVER_LOG_LEVEL_*` for the application, `CONFIG_COAP_RESOURCES_LOG_LEVEL_*` for the CoAP layer).
+
+**Over the air:** build any variant with `CONFIG_HACOAP_REMOTE_LOG=y` (in the fleet manager, a build profile with **Log over the air**), and open the board in the fleet manager's **Console**, **over the air**. The board keeps its latest log output in RAM (`CONFIG_HACOAP_REMOTE_LOG_BUFFER_SIZE`, 4 KB), and the `log` resource returns it from a byte offset: a reader asks from where its last answer ended, and gets each byte once. Each boot draws a new boot id, so a reader can tell the board restarted. Reading `log` switches the board to fast polling, like mcumgr does, until 30 s after the last read: a console costs battery only while it's open. It turns logging on, which costs about 27 KB of flash and 10 KB of RAM in the battery variant (87.6 % of the slot instead of 82.2 %; the `usb-logging` variant with it: 96.9 %). What happens before the board joins the network, or as it crashes, still needs USB. The code: `src/log_buffer.c` (the buffer), `src/remote_log.c` (the log backend that fills it), `handle_log()` in `src/coap_resources.c`.
 
 ### Updating the SDK
 The SDK comes from forks of `sdk-nrf` and `sdk-zephyr`, pinned to exact commits in `application/west.yml`. To move to newer commits, update both `revision:` lines, run the setup script, build every variant, and push: CI checks the result on a clean machine. Every other PC picks up the change by running the setup script again.

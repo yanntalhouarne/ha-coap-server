@@ -1,4 +1,4 @@
-"""A small CoAP client (RFC 7252) for the device's resources: 'info', 'data' and 'ping'.
+"""A small CoAP client (RFC 7252) for the device's resources: 'info', 'data', 'ping' and 'log'.
 
 Only what the devices need: GET and PUT, confirmable requests with retransmission,
 piggybacked or separate responses. Timeouts are long because a sleepy device only
@@ -16,8 +16,8 @@ COAP_PORT = 5683
 
 TYPE_CON, TYPE_NON, TYPE_ACK, TYPE_RST = 0, 1, 2, 3
 GET, PUT = 1, 3
-CHANGED, CONTENT = 0x44, 0x45
-OPTION_URI_PATH = 11
+CHANGED, CONTENT, NOT_FOUND = 0x44, 0x45, 0x84
+OPTION_URI_PATH, OPTION_URI_QUERY = 11, 15
 
 ACK_TIMEOUT_S = 4.0  # longer than the device's poll period
 MAX_RETRANSMIT = 2
@@ -25,6 +25,10 @@ MAX_RETRANSMIT = 2
 
 class CoapError(Exception):
     pass
+
+
+class NoLog(CoapError):
+    """The device keeps no log over the air (firmware built without HACOAP_REMOTE_LOG)."""
 
 
 @dataclass
@@ -59,12 +63,15 @@ def _option(delta, value):
     return bytes([(delta_nibble << 4) | length_nibble]) + delta_ext + length_ext + value
 
 
-def encode(msg_type, code, message_id, token, path="", payload=b""):
+def encode(msg_type, code, message_id, token, path="", payload=b"", query=()):
     data = bytes([0x40 | (msg_type << 4) | len(token), code]) + struct.pack(">H", message_id) + token
     last = 0
     for segment in [s for s in path.split("/") if s]:
         data += _option(OPTION_URI_PATH - last, segment.encode())
         last = OPTION_URI_PATH
+    for item in query:
+        data += _option(OPTION_URI_QUERY - last, item.encode())
+        last = OPTION_URI_QUERY
     if payload:
         data += b"\xff" + payload
     return data
@@ -78,6 +85,7 @@ class Message:
     token: bytes
     path: str
     payload: bytes
+    query: tuple = ()
 
 
 def decode(data):
@@ -94,6 +102,7 @@ def decode(data):
     i = 4 + token_length
     number = 0
     segments = []
+    query = []
     payload = b""
     while i < len(data):
         if data[i] == 0xFF:
@@ -118,7 +127,9 @@ def decode(data):
         i += values[1]
         if number == OPTION_URI_PATH:
             segments.append(value.decode(errors="replace"))
-    return Message(msg_type, code, message_id, token, "/".join(segments), payload)
+        elif number == OPTION_URI_QUERY:
+            query.append(value.decode(errors="replace"))
+    return Message(msg_type, code, message_id, token, "/".join(segments), payload, tuple(query))
 
 
 class _Protocol(asyncio.DatagramProtocol):
@@ -136,7 +147,7 @@ class _Protocol(asyncio.DatagramProtocol):
         self.queue.put_nowait(exc)
 
 
-async def request(host, path, method=GET, payload=b"", *, port=COAP_PORT,
+async def request(host, path, method=GET, payload=b"", *, port=COAP_PORT, query=(),
                   ack_timeout=ACK_TIMEOUT_S, max_retransmit=MAX_RETRANSMIT, timeout=None):
     """Sends a confirmable request and returns (code, payload) of the response.
 
@@ -147,7 +158,7 @@ async def request(host, path, method=GET, payload=b"", *, port=COAP_PORT,
     transport, protocol = await loop.create_datagram_endpoint(_Protocol, remote_addr=(host, port), family=family)
     message_id = random.randrange(0x10000)
     token = os.urandom(4)
-    data = encode(TYPE_CON, method, message_id, token, path, payload)
+    data = encode(TYPE_CON, method, message_id, token, path, payload, query)
     if timeout is None:
         timeout = ack_timeout * (2 ** (max_retransmit + 1) - 1)
     deadline = loop.time() + timeout
@@ -254,3 +265,34 @@ async def ping(host, beep=True, **kwargs):
     code, _ = await request(host, "ping", PUT, b"1" if beep else b"0", **kwargs)
     if code != CHANGED:
         raise CoapError(f"'ping' answered {code_name(code)}")
+
+
+LOG_PAYLOAD_MAX = 512  # LOG_PAYLOAD_MAX_SIZE in application/include/coap_resources.h
+
+
+@dataclass
+class LogChunk:
+    boot_id: str  # new at every boot of the device
+    start: int    # offset of the first byte of 'text' in the device's log since boot
+    text: bytes
+    full: bool = False  # the answer was as long as it can be: there's probably more to read
+
+
+def parse_log(payload):
+    """The 'log' payload: "<boot id> <start>\\n<text>" (application/include/log_buffer.h)."""
+    header, newline, text = payload.partition(b"\n")
+    parts = header.decode("ascii", errors="replace").split()
+    if not newline or len(parts) != 2 or not parts[1].isdigit():
+        raise CoapError(f"unexpected 'log' payload: {payload[:40]!r}")
+    return LogChunk(parts[0], int(parts[1]), text, len(payload) >= LOG_PAYLOAD_MAX)
+
+
+async def get_log(host, offset=0, **kwargs):
+    """The device's log from byte 'offset' on (as much as fits in one answer). Raises NoLog
+    when its firmware keeps no log over the air."""
+    code, payload = await request(host, "log", GET, query=(f"from={offset}",), **kwargs)
+    if code == NOT_FOUND:
+        raise NoLog("this board's firmware keeps no log over the air")
+    if code != CONTENT:
+        raise CoapError(f"'log' answered {code_name(code)}")
+    return parse_log(payload)

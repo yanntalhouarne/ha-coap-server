@@ -14,6 +14,7 @@
 #include <zephyr/net/openthread.h>
 #include <zephyr/sys/util.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "coap_resources.h"
@@ -208,12 +209,61 @@ static void handle_ping(otMessage *request, const otMessageInfo *response_info, 
 	response_send(request, response_info, OT_COAP_CODE_CHANGED, NULL, 0);
 }
 
+/* The number in the "from=<n>" Uri-Query option of 'request', or 0 without one. */
+static uint32_t query_from(otMessage *request)
+{
+	static const char prefix[] = "from=";
+	otCoapOptionIterator iterator;
+	const otCoapOption *option;
+	char value[24];
+
+	if (otCoapOptionIteratorInit(&iterator, request) != OT_ERROR_NONE)
+	{
+		return 0U;
+	}
+	for (option = otCoapOptionIteratorGetFirstOptionMatching(&iterator, OT_COAP_OPTION_URI_QUERY); option != NULL;
+	     option = otCoapOptionIteratorGetNextOptionMatching(&iterator, OT_COAP_OPTION_URI_QUERY))
+	{
+		if ((option->mLength >= sizeof(value)) ||
+		    (otCoapOptionIteratorGetOptionValue(&iterator, value) != OT_ERROR_NONE))
+		{
+			continue;
+		}
+		value[option->mLength] = '\0';
+		if (strncmp(value, prefix, sizeof(prefix) - 1) == 0)
+		{
+			return (uint32_t)strtoul(&value[sizeof(prefix) - 1], NULL, 10);
+		}
+	}
+
+	return 0U;
+}
+
+/* 'log' GET: the latest log output, from the offset in its "from=<n>" query (see log_buffer.h).
+ * Nothing is logged here, or every read would add to the log it reads. */
+static void handle_log(otMessage *request, const otMessageInfo *response_info, otCoapCode code)
+{
+	static char payload[LOG_PAYLOAD_MAX_SIZE]; // only used from the OpenThread thread
+	size_t length;
+
+	ARG_UNUSED(code);
+
+	if (app->log_get == NULL)
+	{
+		response_send(request, response_info, OT_COAP_CODE_NOT_FOUND, NULL, 0);
+		return;
+	}
+	length = app->log_get(query_from(request), payload, sizeof(payload));
+	response_send(request, response_info, OT_COAP_CODE_CONTENT, payload, (uint16_t)length);
+}
+
 static struct coap_resource resources[] = {
 	{.ot = {.mUriPath = "pumpdc"}, .allowed = ALLOW_GET | ALLOW_PUT_CON, .handle = handle_pumpdc},
 	{.ot = {.mUriPath = "pump"}, .allowed = ALLOW_GET | ALLOW_PUT_CON, .handle = handle_pump},
 	{.ot = {.mUriPath = "data"}, .allowed = ALLOW_GET, .handle = handle_data},
 	{.ot = {.mUriPath = "info"}, .allowed = ALLOW_GET, .handle = handle_info},
 	{.ot = {.mUriPath = "ping"}, .allowed = ALLOW_PUT, .handle = handle_ping},
+	{.ot = {.mUriPath = "log"}, .allowed = ALLOW_GET, .handle = handle_log},
 };
 
 /* Returns true if 'resource' accepts a request of this type and code. */

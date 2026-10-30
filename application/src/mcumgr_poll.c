@@ -3,9 +3,9 @@
  *
  * mcumgr_poll.c
  *
- * Polls the Thread parent faster while mcumgr is in use. A sleepy device only receives a
- * message when it polls, so at the normal poll period each request of an image upload
- * would wait for up to a full period.
+ * Polls the Thread parent faster while mcumgr is in use, or the 'log' resource is read. A
+ * sleepy device only receives a message when it polls, so at the normal poll period each
+ * request of an image upload would wait for up to a full period.
  */
 
 #include <zephyr/kernel.h>
@@ -48,7 +48,7 @@ static void on_fast_poll_work(struct k_work *work)
 	{
 		fast_polling = true;
 		set_poll_period(CONFIG_HACOAP_MCUMGR_POLL_PERIOD_MS);
-		LOG_INF("mcumgr in use: poll period %d ms", CONFIG_HACOAP_MCUMGR_POLL_PERIOD_MS);
+		LOG_INF("mcumgr or log reader: poll period %d ms", CONFIG_HACOAP_MCUMGR_POLL_PERIOD_MS);
 	}
 }
 
@@ -58,11 +58,17 @@ static void on_normal_poll_work(struct k_work *work)
 
 	fast_polling = false;
 	set_poll_period(CONFIG_OPENTHREAD_POLL_PERIOD);
-	LOG_INF("mcumgr idle: poll period %d ms", CONFIG_OPENTHREAD_POLL_PERIOD);
+	LOG_INF("mcumgr and log idle: poll period %d ms", CONFIG_OPENTHREAD_POLL_PERIOD);
 }
 
 static K_WORK_DEFINE(fast_poll_work, on_fast_poll_work);
 static K_WORK_DELAYABLE_DEFINE(normal_poll_work, on_normal_poll_work);
+
+void mcumgr_poll_hold(void)
+{
+	k_work_submit(&fast_poll_work);
+	k_work_reschedule(&normal_poll_work, K_SECONDS(CONFIG_HACOAP_MCUMGR_POLL_TIMEOUT_S));
+}
 
 /* Called for every mcumgr request (USB or UDP), from the mcumgr thread */
 static int32_t on_mcumgr_request(uint32_t event, int32_t rc, bool *abort_more, void *data,
@@ -74,8 +80,7 @@ static int32_t on_mcumgr_request(uint32_t event, int32_t rc, bool *abort_more, v
 	ARG_UNUSED(data);
 	ARG_UNUSED(data_size);
 
-	k_work_submit(&fast_poll_work);
-	k_work_reschedule(&normal_poll_work, K_SECONDS(CONFIG_HACOAP_MCUMGR_POLL_TIMEOUT_S));
+	mcumgr_poll_hold();
 
 	return MGMT_ERR_EOK;
 }

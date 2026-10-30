@@ -114,6 +114,9 @@ export function renderDeviceHero(device) {
         svg('svg', { class: 'icon', 'aria-hidden': 'true' }, svg('use', { href: '#i-droplets' })), ' Run the pump'),
       h('button', { class: 'btn btn-sm btn-outline-secondary', type: 'button', onclick: () => pingDevice(device) },
         svg('svg', { class: 'icon', 'aria-hidden': 'true' }, svg('use', { href: '#i-bell-ring' })), ' Beep'),
+      h('a', { class: 'btn btn-sm btn-outline-secondary', href: `#console/${encodeURIComponent(device.device_id)}`,
+        title: 'Its log over the air, in the console' },
+        svg('svg', { class: 'icon', 'aria-hidden': 'true' }, svg('use', { href: '#i-terminal' })), ' Log'),
       h('button', { class: 'btn btn-sm btn-outline-secondary', type: 'button', onclick: (e) => busy(e.target, async () => {
         await refreshDevice(device);
         await loadDevicePage(device.device_id);

@@ -3,6 +3,7 @@ checks that it shows the data, which catches script errors a syntax check can't.
 when no such browser is installed (GitHub's runners have Chrome)."""
 
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -196,6 +197,10 @@ def test_floorplan_view(page):
 def test_console_tab(page):
     dom = page("console")
     assert 'id="console-port"><option' in dom                         # the ports were listed
+    assert 'id="console-from-air"' in dom
+    dom = page("console/1a2b3c4d")                                    # a board's log, from its page
+    assert re.search(r'<button type="button" id="console-from-air"[^>]*class="active"', dom)
+    assert '<option value="1a2b3c4d">basil' in dom
 
 
 def test_wall_display(page):

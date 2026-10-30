@@ -339,11 +339,15 @@ typedef enum
 	OT_COAP_CODE_DELETE = 4,
 	OT_COAP_CODE_CHANGED = 0x44,
 	OT_COAP_CODE_CONTENT = 0x45,
+	OT_COAP_CODE_NOT_FOUND = 0x84,
 } otCoapCode;
+
+#define OT_COAP_OPTION_URI_QUERY 15
 
 #define OT_DEFAULT_COAP_PORT 5683
 
-#define FAKE_MESSAGE_SIZE 128
+#define FAKE_MESSAGE_SIZE 600
+#define FAKE_MAX_QUERIES 4
 
 typedef struct otMessage
 {
@@ -354,7 +358,22 @@ typedef struct otMessage
 	bool payload_marker;
 	bool initialized;
 	bool freed;
+	const char *queries[FAKE_MAX_QUERIES]; // Uri-Query options
+	int query_count;
 } otMessage;
+
+typedef struct otCoapOption
+{
+	uint16_t mNumber;
+	uint16_t mLength;
+} otCoapOption;
+
+typedef struct otCoapOptionIterator
+{
+	const otMessage *mMessage;
+	otCoapOption mOption;
+	uint16_t mNextOptionOffset; // here, the index of the next query
+} otCoapOptionIterator;
 
 typedef struct
 {
@@ -406,12 +425,18 @@ otError otCoapSendResponse(otInstance *instance, otMessage *message, const otMes
 void otMessageFree(otMessage *message);
 uint16_t otMessageGetOffset(const otMessage *message);
 uint16_t otMessageRead(const otMessage *message, uint16_t offset, void *buf, uint16_t length);
+otError otCoapOptionIteratorInit(otCoapOptionIterator *iterator, const otMessage *message);
+const otCoapOption *otCoapOptionIteratorGetFirstOptionMatching(otCoapOptionIterator *iterator, uint16_t option);
+const otCoapOption *otCoapOptionIteratorGetNextOptionMatching(otCoapOptionIterator *iterator, uint16_t option);
+otError otCoapOptionIteratorGetOptionValue(otCoapOptionIterator *iterator, void *value);
 void otCoapSetDefaultHandler(otInstance *instance, otCoapRequestHandler handler, void *context);
 void otCoapAddResource(otInstance *instance, otCoapResource *resource);
 otError otCoapStart(otInstance *instance, uint16_t port);
 
 /* Builds a request with an optional payload (NULL for none). */
 void fake_request_init(otMessage *request, otCoapType type, otCoapCode code, const char *payload);
+/* Adds a Uri-Query option ("from=12"). 'query' must stay valid. */
+void fake_request_add_query(otMessage *request, const char *query);
 
 /* Link */
 extern uint32_t fake_poll_period_ms; // last value passed to otLinkSetPollPeriod()

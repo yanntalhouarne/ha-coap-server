@@ -107,7 +107,7 @@ export function renderActivity() {
   } else if (state.setup && state.setup.state === 'running') {
     text = state.setup.name;
   }
-  if (state.console && state.console.open) text += ` · console ${state.console.port}`;
+  if (state.console && state.console.open) text += ` · console ${state.console.port || state.console.device_name}`;
   element.textContent = text;
   element.parentElement.classList.toggle('busy', text !== 'idle');  // the whole segment, with its icon
 }

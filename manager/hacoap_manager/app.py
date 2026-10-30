@@ -647,6 +647,17 @@ def create_app(services, background_tasks=True, on_quit=None):
 
     @app.post("/api/console/open")
     async def console_open(body: dict):
+        if body.get("device_id"):
+            # Over the air: the board's 'log' resource
+            device = s.db.device(str(body["device_id"]))
+            if device is None:
+                raise HTTPException(404, "No such device")
+            options = {"port": s.settings.coap_port, "ack_timeout": s.settings.coap_timeout_s, "max_retransmit": 1}
+            try:
+                s.console.open_air(device, options)
+            except ConsoleError as exc:
+                raise _bad_request(exc)
+            return s.console.state()
         job = s.updates.running_job()
         port = str(body.get("port", ""))
         if job and any(t.transport == "serial" and t.address == port for t in job.targets):

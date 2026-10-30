@@ -85,6 +85,25 @@ static void test_poll_period_is_set_once_per_session(void)
 	CHECK_EQ(fake_poll_period_sets, 3);
 }
 
+static void test_hold_polls_fast_like_an_mcumgr_request(void)
+{
+	reset_module();
+	mcumgr_poll_hold();
+	CHECK(fast_poll_work.pending);
+	CHECK(normal_poll_work.scheduled);
+	CHECK_EQ(normal_poll_work.delay_ms, (int64_t)CONFIG_HACOAP_MCUMGR_POLL_TIMEOUT_S * 1000);
+
+	fake_work_run(&fast_poll_work);
+	CHECK_EQ(fake_poll_period_ms, CONFIG_HACOAP_MCUMGR_POLL_PERIOD_MS);
+
+	/* Log reads and mcumgr requests share one session. */
+	fake_mgmt_notify(MGMT_EVT_OP_CMD_RECV);
+	mcumgr_poll_hold();
+	fake_work_run(&fast_poll_work);
+	CHECK_EQ(fake_poll_period_sets, 1);
+	CHECK_EQ(normal_poll_work.schedules, 3);
+}
+
 int main(void)
 {
 	RUN_TEST(test_registers_for_mcumgr_requests);
@@ -92,5 +111,6 @@ int main(void)
 	RUN_TEST(test_polling_goes_back_to_normal_after_the_timeout);
 	RUN_TEST(test_each_request_restarts_the_timeout);
 	RUN_TEST(test_poll_period_is_set_once_per_session);
+	RUN_TEST(test_hold_polls_fast_like_an_mcumgr_request);
 	return TEST_RESULT();
 }

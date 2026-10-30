@@ -30,7 +30,7 @@ export function showTab(route) {
   if (tab === 'summary') loadSummary().catch(() => {});
   if (tab === 'dashboard') loadDashboard().catch(() => {});
   if (tab === 'device') loadDevicePage(decodeURIComponent(rest.join('/'))).catch(() => {});
-  if (tab === 'console') loadConsole().catch(() => {});
+  if (tab === 'console') loadConsole(rest.length ? decodeURIComponent(rest.join('/')) : null).catch(() => {});
   if (tab === 'updates') { renderUpdateForm(); loadHistory(); }
   if (name === 'images') { loadImages(); loadBuilds(); }
   if (name === 'builds') loadBuildsTab();

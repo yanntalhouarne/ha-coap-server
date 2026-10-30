@@ -24,6 +24,9 @@ static struct
 	struct coap_info info;
 	int ping_puts;
 	uint8_t ping_command;
+	int log_gets;
+	uint32_t log_from;
+	size_t log_size;
 } fake_app;
 
 static uint8_t app_pumpdc_get(void)
@@ -66,6 +69,15 @@ static void app_ping_put(uint8_t command)
 	fake_app.ping_command = command;
 }
 
+static size_t app_log_get(uint32_t from, char *payload, size_t size)
+{
+	fake_app.log_gets++;
+	fake_app.log_from = from;
+	fake_app.log_size = size;
+	return (size_t)snprintf(payload, size, "0000002a %u\nline\n", (unsigned int)from);
+}
+
+/* A device built without HACOAP_REMOTE_LOG: no log_get */
 static const struct coap_resources_handlers handlers = {
 	.pumpdc_get = app_pumpdc_get,
 	.pumpdc_put = app_pumpdc_put,
@@ -74,6 +86,17 @@ static const struct coap_resources_handlers handlers = {
 	.data_get = app_data_get,
 	.info_get = app_info_get,
 	.ping_put = app_ping_put,
+};
+
+static const struct coap_resources_handlers handlers_with_log = {
+	.pumpdc_get = app_pumpdc_get,
+	.pumpdc_put = app_pumpdc_put,
+	.pump_get = app_pump_get,
+	.pump_put = app_pump_put,
+	.data_get = app_data_get,
+	.info_get = app_info_get,
+	.ping_put = app_ping_put,
+	.log_get = app_log_get,
 };
 
 /* ---------------------------------------------------------------- helpers */
@@ -85,6 +108,15 @@ static void setup(void)
 	CHECK_EQ(coap_resources_init(&handlers), 0);
 }
 
+static void setup_with_log(void)
+{
+	memset(&fake_app, 0, sizeof(fake_app));
+	CHECK_EQ(coap_resources_init(&handlers_with_log), 0);
+}
+
+/* Uri-Query options for the next request() (NULL-terminated), or NULL */
+static const char *const *next_queries;
+
 /* Sends a request to the resource at 'uri', as OpenThread would. */
 static void request(const char *uri, otCoapType type, otCoapCode code, const char *payload)
 {
@@ -95,6 +127,11 @@ static void request(const char *uri, otCoapType type, otCoapCode code, const cha
 	memset(info.mSockAddr.m8, 0xfd, sizeof(info.mSockAddr.m8));
 	memset(info.mPeerAddr.m8, 0xab, sizeof(info.mPeerAddr.m8));
 	fake_request_init(&message, type, code, payload);
+	for (int i = 0; (next_queries != NULL) && (next_queries[i] != NULL); i++)
+	{
+		fake_request_add_query(&message, next_queries[i]);
+	}
+	next_queries = NULL;
 
 	for (int i = 0; i < fake_coap_resource_count; i++)
 	{
@@ -126,7 +163,7 @@ static void check_response(otCoapType type, otCoapCode code, const void *payload
 
 static void test_init_registers_every_resource(void)
 {
-	static const char *const uris[] = {"pumpdc", "pump", "data", "info", "ping"};
+	static const char *const uris[] = {"pumpdc", "pump", "data", "info", "ping", "log"};
 
 	setup();
 	CHECK_EQ(fake_coap_resource_count, ARRAY_SIZE(uris));
@@ -185,6 +222,7 @@ static void test_disallowed_requests_get_no_response(void)
 	request("data", OT_COAP_TYPE_RESET, OT_COAP_CODE_GET, NULL);
 	request("info", NON, OT_COAP_CODE_PUT, "1");
 	request("ping", CON, OT_COAP_CODE_GET, NULL);
+	request("log", CON, OT_COAP_CODE_PUT, "1");
 	CHECK_EQ(fake_responses_sent, 0);
 }
 
@@ -304,6 +342,58 @@ static void test_unknown_resource_gets_no_response(void)
 	CHECK_EQ(fake_responses_sent, 0);
 }
 
+static void test_log_without_a_log_answers_not_found(void)
+{
+	setup();
+	request("log", CON, OT_COAP_CODE_GET, NULL);
+	check_response(ACK, OT_COAP_CODE_NOT_FOUND, NULL, 0);
+}
+
+static void test_log_get_reads_from_the_query_offset(void)
+{
+	static const char *const queries[] = {"from=1234", NULL};
+	static const char expected[] = "0000002a 1234\nline\n";
+
+	setup_with_log();
+	next_queries = queries;
+	request("log", CON, OT_COAP_CODE_GET, NULL);
+	CHECK_EQ(fake_app.log_gets, 1);
+	CHECK_EQ(fake_app.log_from, 1234);
+	CHECK_EQ(fake_app.log_size, LOG_PAYLOAD_MAX_SIZE);
+	check_response(ACK, OT_COAP_CODE_CONTENT, expected, sizeof(expected) - 1);
+}
+
+static void test_log_get_without_an_offset_reads_from_0(void)
+{
+	static const char *const others[] = {"x=1", "fromage", NULL};
+
+	setup_with_log();
+	request("log", NON, OT_COAP_CODE_GET, NULL);
+	CHECK_EQ(fake_app.log_from, 0);
+	CHECK_EQ(fake_response.type, NON);
+
+	fake_app.log_from = 99;
+	next_queries = others;
+	request("log", CON, OT_COAP_CODE_GET, NULL);
+	CHECK_EQ(fake_app.log_gets, 2);
+	CHECK_EQ(fake_app.log_from, 0);
+}
+
+static void test_log_get_finds_the_offset_among_other_queries(void)
+{
+	static const char *const queries[] = {"x=1", "from=7", NULL};
+	static const char *const too_long[] = {"from=123456789012345678901234567890", NULL};
+
+	setup_with_log();
+	next_queries = queries;
+	request("log", CON, OT_COAP_CODE_GET, NULL);
+	CHECK_EQ(fake_app.log_from, 7);
+
+	next_queries = too_long;
+	request("log", CON, OT_COAP_CODE_GET, NULL);
+	CHECK_EQ(fake_app.log_from, 0);
+}
+
 int main(void)
 {
 	RUN_TEST(test_init_registers_every_resource);
@@ -323,5 +413,9 @@ int main(void)
 	RUN_TEST(test_ping_accepts_both_put_types);
 	RUN_TEST(test_no_buffers_means_no_response);
 	RUN_TEST(test_unknown_resource_gets_no_response);
+	RUN_TEST(test_log_without_a_log_answers_not_found);
+	RUN_TEST(test_log_get_reads_from_the_query_offset);
+	RUN_TEST(test_log_get_without_an_offset_reads_from_0);
+	RUN_TEST(test_log_get_finds_the_offset_among_other_queries);
 	return TEST_RESULT();
 }

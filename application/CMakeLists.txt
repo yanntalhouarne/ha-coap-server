@@ -82,8 +82,11 @@ endif()
 project(openthread_coap_server)
 
 FILE(GLOB app_sources src/*.c)
+# The log over the air only when it's on (CONFIG_HACOAP_REMOTE_LOG)
+list(FILTER app_sources EXCLUDE REGEX "/(log_buffer|remote_log)\\.c$")
 # NORDIC SDK APP START
 target_sources(app PRIVATE ${app_sources})
+target_sources_ifdef(CONFIG_HACOAP_REMOTE_LOG app PRIVATE src/log_buffer.c src/remote_log.c)
 target_include_directories(app PRIVATE include)
 # NORDIC SDK APP END
 
