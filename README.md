@@ -128,24 +128,31 @@ Both write MCUboot and the application together, so the bootloader and the image
 
 ## 🧵 Joining a Thread network
 
-The device joins with Thread commissioning: at boot, if it has no network credentials, it starts the **Joiner** with its pre-shared key (PSKd). That's the value of `CONFIG_OPENTHREAD_JOINER_PSKD` in your `application/local.conf`, or the public `J01NU5` without it. The Thread network key itself comes from the border router when the device joins; no network credentials are built into the firmware.
+The device joins with Thread commissioning: when it has no network credentials, it runs the **Joiner** with its pre-shared key (PSKd), at boot and then again every 30 s for 10 minutes, then every 2 minutes, until it joins (`CONFIG_HACOAP_JOIN_RETRY_*`, `src/joining.c`). So the board can be powered on before or after the commissioner is started. That's the value of `CONFIG_OPENTHREAD_JOINER_PSKD` in your `application/local.conf`, or the public `J01NU5` without it. The Thread network key itself comes from the border router when the device joins; no network credentials are built into the firmware.
 
-1. On the border router, start a commissioner and allow joiners with your PSKd:
+1. On the border router, start a commissioner and allow joiners with your PSKd for 5 minutes (300 s; without it, 120 s):
    ```
    ot-ctl commissioner start
-   ot-ctl commissioner joiner add * <your PSKd>
+   ot-ctl commissioner joiner add * <your PSKd> 300
    ```
    On a standalone OTBR, run these as they are. With the Home Assistant OpenThread Border Router add-on, `ot-ctl` runs inside the add-on's container. From a shell on the Home Assistant host (on Home Assistant OS, the *Advanced SSH & Web Terminal* add-on with protection mode off), find the container's name, then prefix each command with `docker exec <name>`:
    ```
    docker ps --format '{{.Names}}' | grep -i openthread    # usually addon_core_openthread_border_router
    docker exec addon_core_openthread_border_router ot-ctl commissioner start
-   docker exec addon_core_openthread_border_router ot-ctl commissioner joiner add * <your PSKd>
+   docker exec addon_core_openthread_border_router ot-ctl commissioner joiner add * <your PSKd> 300
    ```
-2. Reset or power-cycle the board. The joiner only runs at boot, so start the commissioner first. Joining can take a minute or two.
+2. Power the board on (or leave it on: a board without a network tries again by itself). It joins at its next try: within 30 s in its first 10 minutes, then within 2 minutes. Joining itself can take a minute.
 3. Once attached, the device registers with SRP (blue flashes, then three beeps) and the ha-coap integration discovers it.
-4. **Stop the commissioner** as soon as the device has joined, so nothing else can join with the PSKd: `ot-ctl commissioner stop` (with the `docker exec` prefix on Home Assistant). The joiner entry also expires on its own after 120 s.
+4. **Stop the commissioner** as soon as the device has joined, so nothing else can join with the PSKd: `ot-ctl commissioner stop` (with the `docker exec` prefix on Home Assistant). The joiner entry also expires on its own after its timeout.
 
-The credentials are stored in flash and survive resets, firmware updates and SWD flashing without `--erase`. A board only forgets them with a full chip erase.
+The credentials are stored in flash and survive resets and firmware updates. A board that already joined never runs the joiner again: if its border router goes away, it keeps its network and waits for it.
+
+**To move a board to another network** (for example after making a new network in Home Assistant), make it forget its network, then commission it as above:
+- **With the button:** hold S1 while you reset or power on the board, and keep holding it until two long, low beeps (about 5 s after power on), then let go. It forgets its network and restarts, and starts joining.
+- **From the fleet manager:** a device's page, **Settings on the board**, **Forget its network…** (over the air or USB; the `hacoap` mcumgr group's command 2).
+- Or erase the whole chip over SWD.
+
+Only OpenThread's data is erased (its `ot/` settings): the board's own settings and boot count stay.
 
 ## 📨 CoAP API
 
@@ -187,7 +194,8 @@ To save the battery, the RGB LED never stays on. It shows each state as a short 
 | Indication | Meaning |
 |---|---|
 | Green blinks with three rising beeps | Initialization done, starting Thread |
-| Red + green (yellow) flashes | Not on a Thread network: not commissioned yet, or detached |
+| Red + green (yellow) flashes | Not on a Thread network: not commissioned yet (it keeps trying to join), or detached |
+| Two long, low beeps (S1 held at boot) | Forgetting its network: let go of S1. It restarts and joins again |
 | Blue flashes | Attached, waiting for the first SRP registration |
 | No flashes, three beeps | Registered with SRP: normal operation |
 | 2 red blinks at boot, then red flashes | HDC1080 (air sensor) not found |
@@ -233,6 +241,7 @@ A `pumpdc` PUT changes `pump_s` too, so the run time Home Assistant sets is now 
 - command 0, read: `{"settings": {"<name>": [value, default, min, max], ...}, "soil_mv": <latest soil sensor output>, "samples": <samples since boot>}`
 - command 0, write: `{"set": {"<name>": value, ...}}`: all of them or none (`MGMT_ERR_EINVAL` for an unknown name, a value out of range, or dry at or below wet); answers like a read
 - command 1, write: `{}`: takes a sensor sample now (for calibrating); answers `{"samples": <the count before it>}`
+- command 2, write: `{}`: forgets the Thread network and resets a second later, to join another one (see [Joining a Thread network](#-joining-a-thread-network)); answers `{}` first
 
 A change applies at once, and is written to flash from the system work queue. Erasing the board's flash (SWD, **Erase everything**) brings back the defaults.
 
@@ -349,6 +358,7 @@ Older versions of this repository had a Thread network key and network name in `
 | `src/main.c` | Startup order, Thread state handling, and the glue between the CoAP API and the modules |
 | `src/coap_resources.c` | The CoAP API: one table entry per resource, and a shared dispatcher that checks request types |
 | `src/pump.c` | Timed pump runs, from CoAP or the S1 button |
+| `src/joining.c` | Joining the Thread network again until it has one, and forgetting it (S1 at boot, or mcumgr) |
 | `src/sensors.c` | Soil, battery and air readings, sampled periodically and cached |
 | `src/buzzer.c` | Beep patterns |
 | `src/status_led.c` | Network and error states on the module's RGB LED (as short flashes), and the user LED |
@@ -411,7 +421,7 @@ The SDK comes from forks of `sdk-nrf` and `sdk-zephyr`, pinned to exact commits 
 | `CONFIG_OPENTHREAD_JOINER_PSKD (...) must be 6 to 32 characters` | Fix the PSKd in `application/local.conf`: A–Z and 0–9 only, without I, O, Q and Z |
 | Warning: `No private signing key` | This build is signed with the public development key. Create your key with `scripts/keygen`, or copy it into `application/keys/` from your backup. |
 | `region 'FLASH' overflowed` | The image doesn't fit the 483 KB application slot. `-Og` (`overlay-debug.conf`) and logging don't fit together. |
-| The device doesn't join (red + green flashes) | Start the commissioner on the border router with the PSKd the firmware was built with, then reset the board: the joiner only runs at boot |
+| The device doesn't join (red + green flashes) | Start the commissioner on the border router with the PSKd the firmware was built with, for 300 s; the board tries again within 2 minutes. Still no join: the PSKd differs, or the board already has another network (make it forget it, see [Joining a Thread network](#-joining-a-thread-network)) |
 | An update uploads fine, but the board keeps running the old firmware | The image is signed with a different key than the board's bootloader (for example, built on a PC without your key, or taken from CI). Rebuild with your key. |
 | Blue flashes, and no three beeps | SRP registration isn't succeeding: check that the border router is running, and look for a duplicate host name |
 | A new board doesn't boot after the first flash | Try with DC/DC disabled (see [Board notes](#board-notes)) |

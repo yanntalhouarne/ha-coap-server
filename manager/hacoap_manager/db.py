@@ -125,7 +125,7 @@ CREATE TABLE IF NOT EXISTS activity (
     id        INTEGER PRIMARY KEY AUTOINCREMENT,
     time      REAL NOT NULL,
     device_id TEXT NOT NULL,
-    kind      TEXT NOT NULL,                   -- pump (started from the app), restart, settings
+    kind      TEXT NOT NULL,                   -- pump (started from the app), restart, settings, network
     message   TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS activity_device_time ON activity (device_id, time);

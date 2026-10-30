@@ -195,6 +195,7 @@ def test_device_page(page):
     assert "the watchdog: it stopped responding" in dom and "0x6800 · -64 dBm" in dom   # its health
     assert "chart-event event-restart" in dom                         # the restart on the charts
     assert "Read from the board" in dom                               # its settings
+    assert "Forget its network…" in dom
 
 
 def test_floorplan_view(page):

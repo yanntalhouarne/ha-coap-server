@@ -28,7 +28,11 @@ static struct
 	int pump_stops;
 	uint32_t missing_sensors;
 	struct sensors_data sensors;
-	int sounds[3];        // plays per enum buzzer_sound
+	int sounds[4];        // plays per enum buzzer_sound
+	int64_t s1_released_at; // S1 reads pressed until then (uptime, ms); 0: never pressed
+	int joining_starts;
+	int forgets;
+	int forget_delay_ms;
 	bool buzzer_busy;     // buzzer_play() fails
 	int srp_starts;
 	const char *srp_device_id;
@@ -168,6 +172,22 @@ void mcumgr_poll_init(void)
 	fake_mod.mcumgr_poll_inits++;
 }
 
+bool pump_button_pressed(void)
+{
+	return fake_uptime_ms < fake_mod.s1_released_at;
+}
+
+void joining_start(void)
+{
+	fake_mod.joining_starts++;
+}
+
+void joining_forget(int delay_ms)
+{
+	fake_mod.forgets++;
+	fake_mod.forget_delay_ms = delay_ms;
+}
+
 void mcumgr_poll_set_normal_period(uint32_t period_ms)
 {
 	fake_mod.normal_poll_ms = period_ms;
@@ -259,6 +279,8 @@ static void test_boot_reaches_openthread(void)
 	CHECK(fake_mod.coap == &coap_handlers);
 	CHECK_EQ(fake_mod.mcumgr_poll_inits, 1);
 	CHECK_EQ(fake_mod.hacoap_mgmt_inits, 1);
+	CHECK_EQ(fake_mod.joining_starts, 1); // after OpenThread started
+	CHECK_EQ(fake_mod.forgets, 0);
 	CHECK(fake_ot_state_cb != NULL);
 	CHECK(fake_ot_started);
 	CHECK_STR(device_id, "1a2b3c4d");
@@ -312,6 +334,27 @@ static void test_pumpdc_put_takes_one_ascii_digit(void)
 	CHECK_EQ(on_pumpdc_put('0'), 5);
 	CHECK_EQ(fake_mod.pump_set_durations, 1);
 	CHECK_EQ(on_pumpdc_get(), 5);
+}
+
+static void test_s1_held_at_boot_forgets_the_network(void)
+{
+	reset_module();
+	/* Held from power on, released 6 s later */
+	fake_mod.s1_released_at = CONFIG_HACOAP_BOOT_DELAY_MS + FORGET_HOLD_MS + 3000;
+	(void)firmware_main();
+	CHECK_EQ(fake_mod.sounds[BUZZER_FORGET], 1);
+	CHECK_EQ(fake_mod.forgets, 1);
+	CHECK_EQ(fake_mod.forget_delay_ms, 0);
+}
+
+static void test_a_short_press_at_boot_forgets_nothing(void)
+{
+	reset_module();
+	fake_mod.s1_released_at = CONFIG_HACOAP_BOOT_DELAY_MS + 1000; // let go a second after the check
+	(void)firmware_main();
+	CHECK_EQ(fake_mod.forgets, 0);
+	CHECK_EQ(fake_mod.sounds[BUZZER_FORGET], 0);
+	CHECK(fake_ot_started);
 }
 
 static void test_settings_are_applied(void)
@@ -452,6 +495,8 @@ int main(void)
 	RUN_TEST(test_boot_continues_with_missing_sensors);
 	RUN_TEST(test_usb_already_enabled_is_not_an_error);
 	RUN_TEST(test_pumpdc_put_takes_one_ascii_digit);
+	RUN_TEST(test_s1_held_at_boot_forgets_the_network);
+	RUN_TEST(test_a_short_press_at_boot_forgets_nothing);
 	RUN_TEST(test_settings_are_applied);
 	RUN_TEST(test_a_sample_period_from_flash_waits_for_the_sensors);
 	RUN_TEST(test_diag_reports_the_link_and_the_soil_voltage);

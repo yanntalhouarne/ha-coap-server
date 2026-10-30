@@ -2,6 +2,7 @@
 to their parent, and their settings (the firmware's 'hacoap' mcumgr group). Also: removing
 the simulated boards."""
 
+import asyncio
 import time
 
 import httpx
@@ -159,7 +160,7 @@ async def test_older_firmware_has_no_settings(client, services, start_sim):
     server = await start_sim(dynamic=False, diag=False)
     await add_board(client, services, server)
     response = await client.post("/api/devices/1a2b3c4d/board-settings/read", json={}, headers=CHANGE)
-    assert response.status_code == 400 and "no settings to change" in response.json()["detail"]
+    assert response.status_code == 400 and "firmware can't do this" in response.json()["detail"]
 
 
 async def test_the_same_settings_on_several_boards(client, services, start_sim):
@@ -238,3 +239,13 @@ async def test_the_pump_run_time_is_remembered(client, services, start_sim):
     # Changed as a setting: the record follows
     await client.put("/api/devices/1a2b3c4d/board-settings", json={"values": {"pump_s": 7}}, headers=CHANGE)
     assert services.db.device("1a2b3c4d")["pump_s"] == 7
+
+
+async def test_forgetting_the_network(client, services, start_sim):
+    server = await start_sim(dynamic=False)
+    await add_board(client, services, server)
+    device = (await client.post("/api/devices/1a2b3c4d/forget-network", json={}, headers=CHANGE)).json()
+    assert device["last_error"].startswith("Forgot its network")
+    assert services.db.recent_activity("1a2b3c4d", "network", 5)[0]["message"].startswith("Told to forget")
+    await asyncio.sleep(0.3)  # the board answers, then resets
+    assert server.device.resets == 1 and server.device.boots == 2

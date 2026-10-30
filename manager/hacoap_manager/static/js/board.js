@@ -81,10 +81,21 @@ export function renderBoardSettings(device) {
     const how = { transport: transport.value, serial_port: device.serial_port };
     renderSettingsForm(device, await api('POST', `/api/devices/${encodeURIComponent(device.device_id)}/board-settings/read`, how), how);
   }) }, 'Read from the board');
+  const forget = h('button', { class: 'btn btn-sm btn-outline-danger ms-auto', type: 'button',
+    title: 'To move it to another Thread network', onclick: (e) => {
+      if (!confirm(`${device.name || device.device_id} forgets its Thread network and restarts. It drops off the network ` +
+        'until a commissioner lets it join again (on your border router: commissioner start, then joiner add with its PSKd). ' +
+        'Its settings stay. Go ahead?')) return;
+      busy(e.target, async () => {
+        await api('POST', `/api/devices/${encodeURIComponent(device.device_id)}/forget-network`,
+          { transport: transport.value, serial_port: device.serial_port });
+        notify('It forgot its network: open a commissioner for it to join again', 'success', 6000);
+      });
+    } }, 'Forget its network…');
   box.replaceChildren(
     h('p', { class: 'small text-body-secondary' }, 'The board keeps these through restarts and updates. Reading or ',
       'changing them makes it poll fast for 30 s, like an update.'),
-    h('div', { class: 'd-flex flex-wrap gap-2 align-items-center' }, read, transport));
+    h('div', { class: 'd-flex flex-wrap gap-2 align-items-center' }, read, transport, forget));
 }
 
 function renderSettingsForm(device, result, how) {

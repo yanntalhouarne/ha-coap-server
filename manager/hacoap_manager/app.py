@@ -351,6 +351,15 @@ def create_app(services, background_tasks=True, on_quit=None):
         except InventoryError as exc:
             raise _bad_request(exc)
 
+    @app.post("/api/devices/{device_id}/forget-network")
+    async def forget_network(device_id: str, body: dict = None):
+        body = body or {}
+        _not_updating([device_id])
+        try:
+            return await s.inventory.forget_network(device_id, body.get("transport", "udp"), body.get("serial_port", ""))
+        except InventoryError as exc:
+            raise _bad_request(exc)
+
     @app.post("/api/board-settings")
     async def set_fleet_settings(body: dict):
         device_ids = [str(d) for d in body.get("device_ids", [])]

@@ -104,6 +104,7 @@ struct device fake_fuel_gauge_dev = {.name = "max17048", .ready = true};
 /* ---------------------------------------------------------------- GPIO */
 
 int fake_gpio_value[FAKE_PIN_COUNT];
+int fake_gpio_input[FAKE_PIN_COUNT];
 gpio_flags_t fake_gpio_flags[FAKE_PIN_COUNT];
 gpio_flags_t fake_gpio_int_flags[FAKE_PIN_COUNT];
 struct gpio_callback *fake_gpio_callback;
@@ -122,6 +123,11 @@ int gpio_pin_set_dt(const struct gpio_dt_spec *spec, int value)
 {
 	fake_gpio_value[spec->pin] = value;
 	return 0;
+}
+
+int gpio_pin_get_dt(const struct gpio_dt_spec *spec)
+{
+	return fake_gpio_input[spec->pin];
 }
 
 int gpio_pin_interrupt_configure_dt(const struct gpio_dt_spec *spec, gpio_flags_t flags)
@@ -566,6 +572,67 @@ int32_t fake_mgmt_notify(uint32_t event)
 	return fake_mgmt_callback->callback(event, MGMT_ERR_EOK, &abort_more, NULL, 0);
 }
 
+/* ---------------------------------------------------------------- OpenThread joiner, dataset, instance */
+
+bool fake_commissioned;
+otJoinerState fake_joiner_state;
+int fake_joiner_starts;
+const char *fake_joiner_pskd;
+otJoinerCallback fake_joiner_callback;
+void *fake_joiner_context;
+otError fake_joiner_start_error;
+int fake_thread_enables;
+int fake_factory_resets;
+
+bool otDatasetIsCommissioned(otInstance *instance)
+{
+	(void)instance;
+	return fake_commissioned;
+}
+
+otJoinerState otJoinerGetState(otInstance *instance)
+{
+	(void)instance;
+	return fake_joiner_state;
+}
+
+otError otJoinerStart(otInstance *instance, const char *pskd, const char *provisioning_url, const char *vendor_name,
+		      const char *vendor_model, const char *vendor_sw_version, const char *vendor_data,
+		      otJoinerCallback callback, void *context)
+{
+	(void)instance;
+	(void)provisioning_url;
+	(void)vendor_name;
+	(void)vendor_model;
+	(void)vendor_sw_version;
+	(void)vendor_data;
+	fake_joiner_starts++;
+	fake_joiner_pskd = pskd;
+	fake_joiner_callback = callback;
+	fake_joiner_context = context;
+	if (fake_joiner_start_error == OT_ERROR_NONE)
+	{
+		fake_joiner_state = OT_JOINER_STATE_DISCOVER;
+	}
+	return fake_joiner_start_error;
+}
+
+otError otThreadSetEnabled(otInstance *instance, bool enabled)
+{
+	(void)instance;
+	if (enabled)
+	{
+		fake_thread_enables++;
+	}
+	return OT_ERROR_NONE;
+}
+
+void otInstanceFactoryReset(otInstance *instance)
+{
+	(void)instance;
+	fake_factory_resets++;
+}
+
 /* ---------------------------------------------------------------- OpenThread parent */
 
 uint16_t fake_rloc16;
@@ -816,6 +883,17 @@ void fake_reset(void)
 	memset(&fake_ficr, 0, sizeof(fake_ficr));
 	fake_usb_enable_ret = 0;
 	fake_random = 0;
+
+	fake_commissioned = false;
+	fake_joiner_state = OT_JOINER_STATE_IDLE;
+	fake_joiner_starts = 0;
+	fake_joiner_pskd = NULL;
+	fake_joiner_callback = NULL;
+	fake_joiner_context = NULL;
+	fake_joiner_start_error = OT_ERROR_NONE;
+	fake_thread_enables = 0;
+	fake_factory_resets = 0;
+	memset(fake_gpio_input, 0, sizeof(fake_gpio_input));
 
 	fake_rloc16 = 0;
 	memset(&fake_parent, 0, sizeof(fake_parent));

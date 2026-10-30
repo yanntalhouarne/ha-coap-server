@@ -180,7 +180,7 @@ class Inventory:
     @staticmethod
     def _settings_error(exc):
         if "ENOTSUP" in str(exc):
-            return InventoryError("This board's firmware has no settings to change: update it to a newer firmware first")
+            return InventoryError("This board's firmware can't do this: update it to a newer firmware first")
         if "EINVAL" in str(exc):
             return InventoryError("The board refused these values (out of range, or the soil sensor's dry value "
                                   "not above its wet one): nothing changed")
@@ -242,6 +242,18 @@ class Inventory:
             raise InventoryError("The board didn't take a new sample")
         self._changed(self.db.upsert_device(device_id, **self._known(result), last_seen=time.time()))
         return result
+
+    async def forget_network(self, device_id, transport="udp", serial_port=""):
+        """Makes the board forget its Thread network: it resets and joins again, with a
+        commissioner (any network that accepts its PSKd)."""
+        device, link = self._link(device_id, transport, serial_port)
+        try:
+            async with link:
+                await link.forget_network()
+        except McumgrError as exc:
+            raise self._settings_error(exc) from exc
+        self.db.add_activity(device_id, "network", "Told to forget its Thread network: it joins again with a commissioner")
+        return self._changed(self.db.upsert_device(device_id, last_error="Forgot its network: waiting to join again"))
 
     async def set_fleet_settings(self, device_ids, values):
         """The same settings on several boards, over the air, one after the other.

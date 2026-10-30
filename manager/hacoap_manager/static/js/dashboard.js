@@ -131,7 +131,7 @@ export async function loadDashboard() {
 // ------------------------------------------------------------------ the activity feed
 
 const feedIcons = { update: 'upload', alert: 'triangle-alert', parent: 'network', pump: 'droplets', photo: 'camera', build: 'hammer',
-  restart: 'power', settings: 'sliders-horizontal' };
+  restart: 'power', settings: 'sliders-horizontal', network: 'network' };
 const feed = { entries: [] };
 
 export async function loadFeed(older = false) {

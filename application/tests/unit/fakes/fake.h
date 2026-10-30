@@ -219,6 +219,7 @@ struct gpio_callback
 };
 
 extern int fake_gpio_value[FAKE_PIN_COUNT];       // last value set on each pin
+extern int fake_gpio_input[FAKE_PIN_COUNT];       // what gpio_pin_get_dt() reads
 extern gpio_flags_t fake_gpio_flags[FAKE_PIN_COUNT]; // last configuration of each pin
 extern gpio_flags_t fake_gpio_int_flags[FAKE_PIN_COUNT];
 extern struct gpio_callback *fake_gpio_callback;  // last callback added
@@ -230,6 +231,7 @@ static inline bool gpio_is_ready_dt(const struct gpio_dt_spec *spec)
 
 int gpio_pin_configure_dt(const struct gpio_dt_spec *spec, gpio_flags_t flags);
 int gpio_pin_set_dt(const struct gpio_dt_spec *spec, int value);
+int gpio_pin_get_dt(const struct gpio_dt_spec *spec);
 int gpio_pin_interrupt_configure_dt(const struct gpio_dt_spec *spec, gpio_flags_t flags);
 void gpio_init_callback(struct gpio_callback *callback, gpio_callback_handler_t handler, uint32_t pin_mask);
 int gpio_add_callback(const struct device *port, struct gpio_callback *callback);
@@ -549,6 +551,34 @@ extern struct mgmt_callback *fake_mgmt_callback; // last callback registered
 void mgmt_callback_register(struct mgmt_callback *callback);
 /* Delivers an mcumgr event to the registered callback, as mcumgr would. */
 int32_t fake_mgmt_notify(uint32_t event);
+
+/* ---------------------------------------------------------------- OpenThread joiner, dataset, instance */
+
+typedef enum
+{
+	OT_JOINER_STATE_IDLE = 0,
+	OT_JOINER_STATE_DISCOVER = 1,
+} otJoinerState;
+
+typedef void (*otJoinerCallback)(otError error, void *context);
+
+extern bool fake_commissioned;            // otDatasetIsCommissioned()
+extern otJoinerState fake_joiner_state;
+extern int fake_joiner_starts;
+extern const char *fake_joiner_pskd;
+extern otJoinerCallback fake_joiner_callback;
+extern void *fake_joiner_context;
+extern otError fake_joiner_start_error;
+extern int fake_thread_enables;
+extern int fake_factory_resets;
+
+bool otDatasetIsCommissioned(otInstance *instance);
+otJoinerState otJoinerGetState(otInstance *instance);
+otError otJoinerStart(otInstance *instance, const char *pskd, const char *provisioning_url, const char *vendor_name,
+		      const char *vendor_model, const char *vendor_sw_version, const char *vendor_data,
+		      otJoinerCallback callback, void *context);
+otError otThreadSetEnabled(otInstance *instance, bool enabled);
+void otInstanceFactoryReset(otInstance *instance);
 
 /* ---------------------------------------------------------------- OpenThread parent */
 

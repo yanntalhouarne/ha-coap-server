@@ -122,6 +122,19 @@ class HacoapSample(smpmessage.WriteRequest):
     _ErrorV2 = _HacoapErrorV2
 
 
+class HacoapForgetNetworkResponse(smpmessage.WriteResponse):
+    _GROUP_ID = HACOAP_GROUP
+    _COMMAND_ID = 2
+
+
+class HacoapForgetNetwork(smpmessage.WriteRequest):
+    _GROUP_ID = HACOAP_GROUP
+    _COMMAND_ID = 2
+    _Response = HacoapForgetNetworkResponse
+    _ErrorV1 = _HacoapErrorV1
+    _ErrorV2 = _HacoapErrorV2
+
+
 def _board_settings(response):
     """{"settings": {name: {value, default, min, max}}, "soil_mv": mV or None, "samples": n}"""
     return {"settings": {name: dict(zip(("value", "default", "min", "max"), values))
@@ -239,6 +252,11 @@ class DeviceLink:
     async def sample(self):
         """Takes a sensor sample now. Returns the sample count before it."""
         return (await self._request(HacoapSample())).samples
+
+    async def forget_network(self):
+        """The board forgets its Thread network and resets a second later, then joins again
+        (with a commissioner). Over the air, it's gone until then."""
+        await self._request(HacoapForgetNetwork(), retries=0)
 
     async def reset(self):
         """Resets the device. A lost answer is ignored: whether the device reset (and which

@@ -12,6 +12,8 @@
  *                     name, a value out of range, or a soil calibration with dry at or below wet.
  *   command 1, write: {}: takes a sensor sample now. {"samples": <the count before it>}: read
  *                     command 0 until 'samples' is higher for the new 'soil_mv'.
+ *   command 2, write: {}: forgets the Thread network and resets a second later (joining.h): the
+ *                     device then joins again, with a commissioner. Answers {} first.
  *
  * Settings: see device_settings.h.
  */
@@ -26,10 +28,13 @@
 
 #include "device_settings.h"
 #include "hacoap_mgmt.h"
+#include "joining.h"
 #include "sensors.h"
 
 #define HACOAP_MGMT_ID_SETTINGS 0
 #define HACOAP_MGMT_ID_SAMPLE 1
+#define HACOAP_MGMT_ID_FORGET_NETWORK 2
+#define FORGET_DELAY_MS 1000 // the answer goes out first
 
 struct settings_change
 {
@@ -132,9 +137,18 @@ static int sample_write(struct smp_streamer *ctxt)
 		       : MGMT_ERR_EMSGSIZE;
 }
 
+static int forget_network_write(struct smp_streamer *ctxt)
+{
+	ARG_UNUSED(ctxt);
+
+	joining_forget(FORGET_DELAY_MS);
+	return MGMT_ERR_EOK;
+}
+
 static const struct mgmt_handler handlers[] = {
 	[HACOAP_MGMT_ID_SETTINGS] = {.mh_read = settings_read, .mh_write = settings_write},
 	[HACOAP_MGMT_ID_SAMPLE] = {.mh_read = NULL, .mh_write = sample_write},
+	[HACOAP_MGMT_ID_FORGET_NETWORK] = {.mh_read = NULL, .mh_write = forget_network_write},
 };
 
 static struct mgmt_group group = {

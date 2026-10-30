@@ -23,6 +23,9 @@ void pump_stop(void);
 
 bool pump_is_running(void);
 
+/* True while S1 is pressed. */
+bool pump_button_pressed(void);
+
 /* Run time in seconds */
 uint8_t pump_get_duration(void);
 

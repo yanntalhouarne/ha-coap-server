@@ -68,6 +68,38 @@ config HACOAP_REMOTE_LOG_BUFFER_SIZE
 	  opens (the log since boot, until it fills), and how much a reader
 	  can fall behind without missing lines.
 
+menu "Joining the network"
+
+config HACOAP_JOIN_RETRY_S
+	int "Try joining again every (s), at first"
+	range 10 3600
+	default 30
+	help
+	  A device without a network runs the Thread joiner at boot. If no
+	  commissioner accepts joiners at that moment, it tries again this
+	  often for the first HACOAP_JOIN_RETRY_FAST_FOR_S after boot, so a
+	  commissioner started after the board was powered on still gets it.
+	  Each try listens on every channel for a few seconds.
+
+config HACOAP_JOIN_RETRY_FAST_FOR_S
+	int "For this long after boot (s)"
+	range 0 86400
+	default 600
+
+config HACOAP_JOIN_RETRY_SLOW_S
+	int "Then try every (s)"
+	range 10 86400
+	default 120
+	help
+	  How often a device that still has no network tries to join, after
+	  the first HACOAP_JOIN_RETRY_FAST_FOR_S: often enough to join within
+	  a commissioner's window of a few minutes (open it for 300 s), seldom
+	  enough to spare the battery of a board left without a network. Only
+	  a device that never joined (or forgot its network) tries: one that
+	  lost its border router keeps its network and waits for it.
+
+endmenu
+
 menu "Pump"
 
 config HACOAP_PUMP_DEFAULT_DURATION

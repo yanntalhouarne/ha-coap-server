@@ -24,6 +24,7 @@ static const struct buzzer_pattern patterns[] = {
 	[BUZZER_PUMP] = {.frequency_khz = 4, .period_ms = 100, .beeps = 1},
 	[BUZZER_CONNECTED] = {.frequency_khz = 6, .period_ms = 100, .beeps = 3},
 	[BUZZER_PING] = {.frequency_khz = 10, .period_ms = 75, .beeps = 6},
+	[BUZZER_FORGET] = {.frequency_khz = 2, .period_ms = 400, .beeps = 2},
 };
 
 static const struct pwm_dt_spec pwm_buzzer = PWM_DT_SPEC_GET(DT_ALIAS(pwm_buzzer));

@@ -175,6 +175,13 @@ class SimulatedDevice:
         self.samples = 1
         self._boot_log()
 
+    def forget_network(self, rejoin_s=3.0):
+        """Forgets its network and resets; it answers again once it 'joined' again (as if a
+        commissioner accepted it at once)."""
+        self.log("Forgetting the Thread network, then resetting", level="wrn")
+        self.reset()
+        self._rebooting_until = asyncio.get_running_loop().time() + rejoin_s
+
     def crash(self, reason=3, address=0x0001A2B4):
         """A fatal error: the board records it and resets (application/src/diag.c)."""
         self.log(f"Fatal error {reason} at 0x{address:08x}: resetting", level="err")
@@ -307,6 +314,8 @@ class SimulatedDevice:
                 return self._settings_write(request), None
             if command == 1 and op == OP_WRITE:
                 return self._sample_now(), None
+            if command == 2 and op == OP_WRITE:
+                return {}, self.forget_network
         if group == GROUP_OS and command == OS_ECHO:
             return {"r": request.get("d", "")}, None
         if group == GROUP_OS and command == OS_RESET:

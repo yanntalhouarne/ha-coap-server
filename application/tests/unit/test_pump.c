@@ -134,6 +134,13 @@ static void test_button_starts_the_pump_from_the_work_queue(void)
 	check_pump(true);
 }
 
+static void test_s1_can_be_read(void)
+{
+	CHECK(!pump_button_pressed());
+	fake_gpio_input[FAKE_PIN_usrbutton] = 1;
+	CHECK(pump_button_pressed());
+}
+
 int main(void)
 {
 	RUN_TEST(test_init_configures_the_pump_off_and_the_button);
@@ -144,5 +151,6 @@ int main(void)
 	RUN_TEST(test_run_time_range);
 	RUN_TEST(test_start_uses_the_new_run_time);
 	RUN_TEST(test_button_starts_the_pump_from_the_work_queue);
+	RUN_TEST(test_s1_can_be_read);
 	return TEST_RESULT();
 }

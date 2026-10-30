@@ -13,6 +13,7 @@
  *     - status_led:     network and error states on the module's RGB LED
  *     - mcumgr_poll:    faster Thread polling while mcumgr updates the device or the log is read
  *     - log_buffer:     the latest log output, for 'log' (with remote_log, CONFIG_HACOAP_REMOTE_LOG)
+ *     - joining:        joins the Thread network again until it has one, and forgets it on request
  *     - device_settings: the settings that can change without a new firmware, in flash
  *     - hacoap_mgmt:    the 'hacoap' mcumgr group, to read and write them
  *     - diag:           restart and crash records, and the link to the parent, for 'diag'
@@ -34,6 +35,7 @@
 #include "device_settings.h"
 #include "diag.h"
 #include "hacoap_mgmt.h"
+#include "joining.h"
 #include "log_buffer.h"
 #include "mcumgr_poll.h"
 #include "pump.h"
@@ -46,6 +48,9 @@ LOG_MODULE_REGISTER(coap_server, CONFIG_COAP_SERVER_LOG_LEVEL);
 
 #define FW_VERSION GIT_COMMIT_HASH
 #define BOOT_JINGLE_STEP_MS 100
+#define FORGET_HOLD_MS 3000          // S1 held this long at boot forgets the network
+#define FORGET_RELEASE_WAIT_MS 10000 // then how long to wait for it to be released
+#define FORGET_POLL_MS 100
 
 /* Device ID (FICR DEVICEID[0] in hex), reported in 'info' and appended to the SRP hostname */
 static char device_id[9];
@@ -241,6 +246,36 @@ static void on_thread_state_changed(otChangedFlags flags, struct openthread_cont
 
 static struct openthread_state_changed_cb ot_state_changed_cb = {.state_changed_cb = on_thread_state_changed};
 
+/* S1 held at boot, until two long low beeps (FORGET_HOLD_MS after the board starts): forgets
+ * the Thread network, so that the board joins another one. Then resets. */
+static void forget_network_if_held(void)
+{
+	int ms;
+
+	if (!pump_button_pressed())
+	{
+		return;
+	}
+	for (ms = 0; ms < FORGET_HOLD_MS; ms += FORGET_POLL_MS)
+	{
+		k_sleep(K_MSEC(FORGET_POLL_MS));
+		if (!pump_button_pressed())
+		{
+			return; // a short press: nothing to do
+		}
+	}
+
+	LOG_WRN("S1 held at boot: forgetting the Thread network");
+	buzzer_play(BUZZER_FORGET);
+	/* Wait for the release, so that the next boot doesn't forget again (and the beeps end). */
+	for (ms = 0; (ms < FORGET_RELEASE_WAIT_MS) && pump_button_pressed(); ms += FORGET_POLL_MS)
+	{
+		k_sleep(K_MSEC(FORGET_POLL_MS));
+	}
+	joining_forget(0);
+	k_sleep(K_SECONDS(5)); // the reset comes from the work queue
+}
+
 /* Green LED blinks with a rising three-tone beep. */
 static void boot_jingle(void)
 {
@@ -293,6 +328,10 @@ int main(void)
 		LOG_ERR("Could not configure the pump or the user button (error: %d)", ret);
 		status_led_error();
 	}
+	else
+	{
+		forget_network_if_held();
+	}
 
 	ret = watchdog_init();
 	if (ret)
@@ -344,6 +383,7 @@ int main(void)
 		LOG_ERR("Could not start OpenThread");
 		status_led_error();
 	}
+	joining_start();
 
 	return 0;
 }

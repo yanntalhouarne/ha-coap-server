@@ -17,6 +17,7 @@ enum buzzer_sound
 	BUZZER_PUMP,      // the pump starts
 	BUZZER_CONNECTED, // first successful SRP registration
 	BUZZER_PING,      // 'ping' PUT with payload '1'
+	BUZZER_FORGET,    // S1 held at boot: the network is forgotten
 };
 
 /* Plays 'sound' in the background. Returns false if another sound is already playing. */

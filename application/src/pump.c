@@ -69,6 +69,11 @@ bool pump_is_running(void)
 	return atomic_get(&running) != 0;
 }
 
+bool pump_button_pressed(void)
+{
+	return gpio_pin_get_dt(&usr_button) > 0;
+}
+
 uint8_t pump_get_duration(void)
 {
 	return duration_s;
