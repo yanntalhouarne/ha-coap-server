@@ -81,6 +81,22 @@ async def test_refresh_records_history_and_the_dashboard_sees_it(client, service
     assert [d["device_id"] for d in board["low_battery"]] == ["1a2b3c4d"]
 
 
+async def test_older_firmware_shortened_id(client, services, start_sim):
+    # Firmware up to d98bac1 gives 7 of its ID's 8 characters in 'info'; its name has all 8
+    server = await start_sim(short_info_id=True)
+    fast_settings(services.settings, server)
+    services.db.upsert_device("1a2b3c4d", address="127.0.0.1", name="ha-coap-1a2b3c4d")  # found by its name
+    device = (await client.post("/api/devices/1a2b3c4d/refresh", headers=CHANGE)).json()
+    assert device["last_error"] == "" and device["online"] and device["battery"] == 87
+    # Added by its address: the board already known there, not a second one
+    await client.post("/api/devices", json={"address": "127.0.0.1"}, headers=CHANGE)
+    assert [d["device_id"] for d in (await client.get("/api/devices")).json()] == ["1a2b3c4d"]
+    # Another board at that address is still told apart
+    services.db.upsert_device("99887766", address="127.0.0.1")
+    other = (await client.post("/api/devices/99887766/refresh", headers=CHANGE)).json()
+    assert other["last_error"] == "127.0.0.1 is now device 1a2b3c4"
+
+
 async def test_release_and_outdated(client, services, start_sim):
     server = await start_sim()
     fast_settings(services.settings, server)

@@ -28,6 +28,12 @@ RESET_CAUSES = {
 BAD_RESETS = ("watchdog", "lockup", "crash")
 
 
+def same_board(reported, device_id):
+    """Whether the ID a board gives in 'info' is this device's. Firmware up to d98bac1 cut it to
+    7 characters there (an 8-byte buffer), while its name on the network has all 8."""
+    return reported == device_id or (len(reported) == 7 and len(device_id) == 8 and device_id.startswith(reported))
+
+
 def reset_text(cause, fault=""):
     text = RESET_CAUSES.get(cause, cause or "an unknown reason")
     if cause == "crash" and fault:
@@ -89,11 +95,14 @@ class Inventory:
             info = await coap.get_info(address, **self._coap_options())
         except (coap.CoapError, TimeoutError, OSError) as exc:
             raise InventoryError(f"No answer from {address}: {exc}") from exc
-        existing = self.db.device(info.device_id)
-        name = existing["name"] if existing and existing["name"] else f"{discovery.NAME_PREFIX}-{info.device_id}"
-        self.db.upsert_device(info.device_id, address=address, name=name, fw_version=info.fw_version,
+        # Older firmware's shortened ID: the device already known at that address, if it's this one
+        device_id = next((d["device_id"] for d in self.db.devices()
+                          if d["address"] == address and same_board(info.device_id, d["device_id"])), info.device_id)
+        existing = self.db.device(device_id)
+        name = existing["name"] if existing and existing["name"] else f"{discovery.NAME_PREFIX}-{device_id}"
+        self.db.upsert_device(device_id, address=address, name=name, fw_version=info.fw_version,
                               hw_version=info.hw_version, last_seen=time.time(), last_error="")
-        return await self.refresh(info.device_id)
+        return await self.refresh(device_id)
 
     def _device(self, device_id):
         device = self.db.device(device_id)
@@ -119,7 +128,7 @@ class Inventory:
                 if not isinstance(answer, (coap.CoapError, TimeoutError, OSError)):
                     raise answer
                 return self._changed(self.db.upsert_device(device_id, last_error=f"No answer: {answer}"))
-        if info.device_id != device_id:
+        if not same_board(info.device_id, device_id):
             return self._changed(self.db.upsert_device(
                 device_id, last_error=f"{device['address']} is now device {info.device_id}"))
         self.db.add_reading(device_id, data.battery, data.soil_moisture, data.air_humidity, data.temperature)

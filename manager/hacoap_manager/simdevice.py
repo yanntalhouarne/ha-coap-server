@@ -131,6 +131,7 @@ class SimulatedDevice:
     srp_key: str = field(default_factory=lambda: os.urandom(8).hex())  # kept when it forgets its network
     srp_state: str = "off"
     forget_wipes_srp_key: bool = False      # as the firmware did before: a new key after forgetting
+    short_info_id: bool = False             # as firmware up to d98bac1: 7 characters of its ID in 'info'
     on_srp_change: object = None            # called with (device, advertised) when it (un)registers
     _upload: bytearray = None
     _upload_size: int = 0
@@ -476,7 +477,7 @@ class SimulatedDevice:
             return coap.encode(reply_type, code, message.message_id, message.token, payload=payload)
 
         if message.path == "info" and message.code == coap.GET:
-            text = f"{self.fw_version},{self.hw_version},{self.device_id}"
+            text = f"{self.fw_version},{self.hw_version},{self.device_id[:7] if self.short_info_id else self.device_id}"
             self.log(f"Device info is: {text}", module="coap_resources")
             return reply(coap.CONTENT, text.encode() + b"\0")
         if message.path == "data" and message.code == coap.GET:
