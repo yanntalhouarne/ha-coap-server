@@ -40,6 +40,11 @@ def _free_port(preferred):
     for port in list(range(preferred, preferred + 10)) + [0]:
         with socket.socket() as sock:
             try:
+                if os.name != "nt":
+                    # As the server binds (uvicorn): a port whose last connections are closing
+                    # (TIME_WAIT, right after a restart) is free. On Windows this option would
+                    # take a port in use, so not there.
+                    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
                 sock.bind(("127.0.0.1", port))
                 return sock.getsockname()[1]
             except OSError:

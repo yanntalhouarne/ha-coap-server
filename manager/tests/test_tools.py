@@ -277,3 +277,22 @@ async def client_without_quit(services):
     app = create_app(services, background_tasks=False)
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://127.0.0.1:8710") as client:
         return await client.post("/api/quit", headers=CHANGE)
+
+@pytest.mark.skipif(sys.platform == "win32", reason="Windows doesn't hold a closing port (TIME_WAIT) against a new server")
+def test_the_port_is_kept_across_a_restart():
+    # Right after a restart, the old server's last connections hold its port (TIME_WAIT): it's
+    # still free for the new one, which mustn't move to the next port (the service's address)
+    import socket
+    from hacoap_manager.__main__ import _free_port
+
+    server = socket.socket()
+    server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    server.bind(("127.0.0.1", 0))
+    server.listen()
+    port = server.getsockname()[1]
+    client = socket.create_connection(("127.0.0.1", port))
+    connection, _ = server.accept()
+    connection.close()  # the server's side closes first: TIME_WAIT on its port
+    server.close()
+    client.close()
+    assert _free_port(port) == port
