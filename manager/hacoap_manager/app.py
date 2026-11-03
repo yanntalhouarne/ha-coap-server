@@ -1,9 +1,11 @@
 """The web server: the API under /api, the live event WebSocket, and the page itself.
 
-It only listens on this computer (127.0.0.1). Two checks keep other websites open in the
-same browser from using it: the Host header must name this computer (against DNS
-rebinding), and every change must carry an 'X-HACoap: 1' header, which a page from
-another site can't add without the server's permission (against cross-site requests).
+It listens on this computer (127.0.0.1), and also on its addresses in the networks chosen
+for other devices when that's on (remote.py): those must sign in first. Two checks keep
+other websites open in the same browser from using it: the Host header must name this
+computer (against DNS rebinding), and every change must carry an 'X-HACoap: 1' header,
+which a page from another site can't add without the server's permission (against
+cross-site requests).
 """
 
 import asyncio
@@ -22,7 +24,7 @@ from fastapi.staticfiles import StaticFiles
 import re
 
 from . import (__version__, autostart, backup, config, demo, discovery, feed, fleet, homeassistant, housekeeping, kconfig,
-               mcuboot, report, serial_ports, signing, summary, swd)
+               mcuboot, remote, report, serial_ports, signing, summary, swd)
 from .alerts import AlertService
 from .appupdate import UpdateCheck
 from .builds import VARIANTS, BuildError, BuildRunner
@@ -42,6 +44,9 @@ log = logging.getLogger(__name__)
 STATIC = Path(__file__).parent / "static"
 LOCAL_HOSTS = {"127.0.0.1", "localhost", "[::1]"}
 CHANGE_HEADER = "x-hacoap"
+SIGNED_OUT_PATHS = ("/login", "/api/login", "/static/", "/v/")  # the sign-in page and what it loads
+LOCAL_ONLY_PATHS = ("/api/remote-access", "/api/quit")         # never from another device
+EVENTS_SESSION_CHECK_S = 15  # how soon a signed-out device's live events stop
 DAY_S = 86400
 
 
@@ -67,6 +72,7 @@ class Services:
     ha_token: homeassistant.TokenStore
     launch: dict = None   # how this app was started (for starting it with the computer)
     demo: bool = False    # this app is the demo (simulated boards, a throwaway data folder)
+    remote: "remote.RemoteAccess" = None  # other devices (off unless chosen)
 
 
 def create_services(data_dir, discover=discovery.discover):
@@ -94,7 +100,7 @@ def create_services(data_dir, discover=discovery.discover):
     return Services(data_dir, settings, db, events, inventory, images, updates, repository, builds, network,
                     SerialConsole(events), setup, alerts, signing.SigningCheck(repository, data_dir),
                     PhotoStore(data_dir), UpdateCheck(), Doctor(db, settings, discover),
-                    homeassistant.TokenStore(data_dir))
+                    homeassistant.TokenStore(data_dir), remote=remote.RemoteAccess(data_dir))
 
 
 def _host_name(host_header):
@@ -107,16 +113,53 @@ def _bad_request(exc):
     return HTTPException(status_code=400, detail=str(exc))
 
 
-def create_app(services, background_tasks=True, on_quit=None):
+def _is_ip(text):
+    try:
+        ipaddress.ip_address(text)
+        return True
+    except ValueError:
+        return False
+
+
+def _access(services, client, host_header, cookies):
+    """'local' for this computer (and SSH tunnels to it), 'remote' for a signed-in device on a
+    chosen network, 'sign-in' for one that isn't signed in yet, or None."""
+    host = _host_name(host_header)
+    address = client.host if client else ""
+    if host in LOCAL_HOSTS and (remote.is_loopback(address) or not _is_ip(address)):  # not an IP: a test client
+        return "local"
+    access = services.remote
+    if access is None or not access.allows(address) or host not in access.addresses():
+        return None
+    return "remote" if access.session(cookies.get(remote.COOKIE)) else "sign-in"
+
+
+def create_app(services, background_tasks=True, on_quit=None, port=None):
+    listener = None
+
+    async def follow_remote_access():
+        """Listens for other devices on this computer's addresses in the chosen networks, as
+        they come and go."""
+        while True:
+            with contextlib.suppress(Exception):
+                await listener.apply(services.remote.addresses())
+            await asyncio.sleep(30)
+
     @contextlib.asynccontextmanager
     async def lifespan(app):
+        nonlocal listener
         tasks = []
         if background_tasks:
             tasks = [asyncio.create_task(_auto_refresh(services)), asyncio.create_task(_auto_backup(services)),
                      asyncio.create_task(_auto_alerts(services))]
+            if port and services.remote is not None:
+                listener = remote.RemoteListener(app, port)
+                tasks.append(asyncio.create_task(follow_remote_access()))
         yield
         for task in tasks:
             task.cancel()
+        if listener is not None:
+            await listener.stop()
         services.db.close()
 
     app = FastAPI(title="HA-CoAP Fleet Manager", version=__version__, lifespan=lifespan,
@@ -124,11 +167,20 @@ def create_app(services, background_tasks=True, on_quit=None):
     s = services
 
     @app.middleware("http")
-    async def local_only(request: Request, call_next):
-        if _host_name(request.headers.get("host", "")) not in LOCAL_HOSTS:
+    async def guard(request: Request, call_next):
+        path = request.url.path
+        access = _access(s, request.client, request.headers.get("host", ""), request.cookies)
+        if access is None:
             return JSONResponse({"detail": "This app only answers on this computer (127.0.0.1)"}, status_code=403)
+        if access == "sign-in" and not path.startswith(SIGNED_OUT_PATHS):
+            if path.startswith("/api/"):
+                return JSONResponse({"detail": "Sign in first"}, status_code=401)
+            return Response(status_code=303, headers={"Location": "/login"})
+        if access != "local" and path.startswith(LOCAL_ONLY_PATHS):
+            return JSONResponse({"detail": "Only on the computer the app runs on"}, status_code=403)
         if request.method not in ("GET", "HEAD") and request.headers.get(CHANGE_HEADER) != "1":
             return JSONResponse({"detail": f"Missing {CHANGE_HEADER} header"}, status_code=403)
+        request.state.access = access
         response = await call_next(request)
         if request.url.path.startswith(("/static/", "/v/")):
             # The browser checks with the app each time (a 304 when unchanged), so a new
@@ -139,10 +191,11 @@ def create_app(services, background_tasks=True, on_quit=None):
     # ------------------------------------------------------------ status and settings
 
     @app.get("/api/status")
-    async def status():
+    async def status(request: Request):
         return {
             "version": __version__,
             "demo": s.demo,
+            "access": request.state.access,  # "remote" on another device (signed in)
             "data_dir": str(s.data_dir),
             "repository": str(s.repository) if s.repository else None,
             "discovery_available": discovery.discovery_available(),
@@ -1034,20 +1087,85 @@ def create_app(services, background_tasks=True, on_quit=None):
         asyncio.get_running_loop().call_later(0.5, on_quit)  # after answering
         return {"stopping": True}
 
+    # ------------------------------------------------------------ other devices
+
+    @app.get("/login")
+    async def login_page(request: Request):
+        if request.state.access != "sign-in":
+            return Response(status_code=303, headers={"Location": "/"})
+        page = (STATIC / "login.html").read_text(encoding="utf-8").replace('="/static/', f'="/v/{static_version()}/')
+        return Response(page, media_type="text/html", headers={"Cache-Control": "no-cache"})
+
+    @app.post("/api/login")
+    async def login(request: Request, body: dict):
+        if request.state.access != "sign-in":
+            return {"signed_in": True}
+        try:
+            token = await asyncio.to_thread(s.remote.sign_in, request.client.host, str(body.get("password", "")),
+                                            request.headers.get("user-agent", ""))
+        except remote.RemoteError as exc:
+            raise HTTPException(status_code=401, detail=str(exc))
+        response = JSONResponse({"signed_in": True})
+        response.set_cookie(remote.COOKIE, token, max_age=remote.SESSION_DAYS * DAY_S, httponly=True, samesite="strict")
+        return response
+
+    @app.post("/api/logout")
+    async def logout(request: Request):
+        s.remote.sign_out(token=request.cookies.get(remote.COOKIE))
+        response = JSONResponse({"signed_out": True})
+        response.delete_cookie(remote.COOKIE)
+        return response
+
+    @app.get("/api/remote-access")
+    async def remote_access():
+        return await asyncio.to_thread(s.remote.describe, port)
+
+    @app.put("/api/remote-access")
+    async def put_remote_access(body: dict):
+        password = body.get("password") or None
+        try:
+            await asyncio.to_thread(s.remote.configure, body.get("enabled"), body.get("networks"), password)
+        except remote.RemoteError as exc:
+            raise _bad_request(exc)
+        if listener is not None:
+            await listener.apply(s.remote.addresses())
+        return await remote_access()
+
+    @app.delete("/api/remote-access/sessions")
+    async def sign_everyone_out():
+        s.remote.sign_out(everyone=True)
+        return await remote_access()
+
+    @app.delete("/api/remote-access/sessions/{session_id}")
+    async def sign_one_out(session_id: str):
+        s.remote.sign_out(session_id=session_id)
+        return await remote_access()
+
     # ------------------------------------------------------------ live events
 
     @app.websocket("/api/events")
     async def events(websocket: WebSocket):
         origin = websocket.headers.get("origin", "")
         host = websocket.headers.get("host", "")
-        if _host_name(host) not in LOCAL_HOSTS or (origin and origin.split("//", 1)[-1] != host):
+        access = _access(s, websocket.client, host, websocket.cookies)
+        if access not in ("local", "remote") or (origin and origin.split("//", 1)[-1] != host):
             await websocket.close(code=1008)
             return
+        token = websocket.cookies.get(remote.COOKIE)
         await websocket.accept()
         with s.events.subscribe() as queue:
             try:
                 while True:
-                    await websocket.send_json(await queue.get())
+                    try:
+                        event = await asyncio.wait_for(queue.get(), timeout=EVENTS_SESSION_CHECK_S)
+                    except asyncio.TimeoutError:
+                        event = None
+                    # Another device signed out (or other devices turned off) stops getting events
+                    if access == "remote" and s.remote.session(token) is None:
+                        await websocket.close(code=1008)
+                        break
+                    if event is not None:
+                        await websocket.send_json(event)
             except (WebSocketDisconnect, RuntimeError):
                 pass
 

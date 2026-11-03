@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en" data-theme="tokyo-night" data-bs-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sign in · HA-CoAP Fleet Manager</title>
+  <link rel="stylesheet" href="/static/vendor/bootstrap.min.css">
+  <link rel="stylesheet" href="/static/themes.css">
+  <link rel="stylesheet" href="/static/style.css">
+  <link rel="icon" href="/static/icon.svg" type="image/svg+xml">
+  <meta name="theme-color" content="#18bcf2">
+  <script src="/static/theme.js"></script>
+</head>
+<body>
+<!-- Signing in from another device (Settings → Other devices on the computer the app runs on) -->
+<main class="login">
+  <form class="login-card" id="login-form">
+    <div class="brand login-brand"><span class="logo" aria-hidden="true"></span>ha-coap<span>::fleet</span></div>
+    <p class="small text-body-secondary mb-3">This device opens the fleet manager over the network. Sign in with the
+      password set on the computer it runs on.</p>
+    <label class="form-label small mb-1" for="login-password">Password</label>
+    <input class="form-control mb-3" id="login-password" type="password" autocomplete="current-password" required autofocus>
+    <button class="btn btn-primary w-100" type="submit">Sign in</button>
+    <div class="small mt-3" id="login-error" role="alert"></div>
+  </form>
+</main>
+<script>
+  document.getElementById('login-form').addEventListener('submit', async function (event) {
+    event.preventDefault();
+    var error = document.getElementById('login-error');
+    var button = event.target.querySelector('button');
+    error.textContent = '';
+    button.disabled = true;
+    try {
+      var response = await fetch('/api/login', {
+        method: 'POST', headers: { 'Content-Type': 'application/json', 'X-HACoap': '1' },
+        body: JSON.stringify({ password: document.getElementById('login-password').value }),
+      });
+      var data = await response.json().catch(function () { return {}; });
+      if (response.ok) { window.location.replace('/'); return; }
+      error.className = 'small mt-3 text-danger';
+      error.textContent = data.detail || 'Couldn’t sign in';
+    } catch (e) {
+      error.className = 'small mt-3 text-danger';
+      error.textContent = 'The app didn’t answer: is it running?';
+    } finally {
+      button.disabled = false;
+    }
+  });
+</script>
+</body>
+</html>

@@ -128,7 +128,8 @@ def main(argv=None):
     if not args.demo:  # the demo never starts with the computer
         services.launch = {"workdir": os.getcwd(), "data_dir": args.data_dir,
                            "port": args.port if args.port != DEFAULT_PORT else None}
-    app = create_app(services, background_tasks=not args.self_test, on_quit=lambda: setattr(server, "should_exit", True))
+    app = create_app(services, background_tasks=not args.self_test, on_quit=lambda: setattr(server, "should_exit", True),
+                     port=None if args.demo else port)  # the demo stays on this computer
     url = f"http://127.0.0.1:{port}/"
     # Stopping waits at most 5 s for open connections (a page's live events) to close
     server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning",
@@ -156,7 +157,9 @@ def main(argv=None):
         return 0 if check.ok else 1
 
     print(f"HA-CoAP Fleet Manager {__version__}")
-    print(f"Open {url} (only from this computer). Data: {data_dir}")
+    print(f"Open {url} on this computer. Data: {data_dir}")
+    if services.remote.enabled:
+        print("Other devices can open it after signing in (Settings → Other devices).")
     print("Close this window or press Ctrl+C to stop." if not args.background else "Running in the background.")
     if not (args.no_browser or args.background):
         def open_browser():

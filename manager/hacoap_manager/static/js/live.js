@@ -78,7 +78,9 @@ export function connectEvents(delay = 1000) {
       }
     }
   });
-  socket.addEventListener('close', () => {
+  socket.addEventListener('close', (event) => {
+    // Refused (1008): another device signed out, which the next request turns into the sign-in page
+    if (event.code === 1008) api('GET', '/api/status', undefined, { quiet: true }).catch(() => {});
     indicator.className = 'down';
     indicator.title = 'Not connected to the app: is it still running?';
     document.getElementById('connection-text').textContent = 'offline';
@@ -126,6 +128,7 @@ export function renderClock() {
 export async function loadStatus() {
   state.status = await api('GET', '/api/status', undefined, { quiet: true });
   document.getElementById('demo-banner').classList.toggle('d-none', !state.status.demo);
+  document.getElementById('sign-out').classList.toggle('d-none', state.status.access !== 'remote');
   document.title = state.status.demo ? 'Demo · HA-CoAP Fleet Manager' : 'HA-CoAP Fleet Manager';
   return state.status;
 }

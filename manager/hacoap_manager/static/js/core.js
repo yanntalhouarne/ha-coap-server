@@ -51,6 +51,9 @@ export async function api(method, path, body, options = {}) {
     init.headers['Content-Type'] = 'application/json';
   }
   const response = await fetch(path, init);
+  if (response.status === 401 && path !== '/api/login') {
+    window.location.href = '/login';  // another device whose session ended
+  }
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
     const detail = typeof data.detail === 'string' ? data.detail : JSON.stringify(data.detail || response.statusText);

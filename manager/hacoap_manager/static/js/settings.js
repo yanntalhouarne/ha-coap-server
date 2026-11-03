@@ -246,6 +246,87 @@ document.getElementById('ha-import').addEventListener('click', (event) => busy(e
   loadStorage().catch(() => {});
 }));
 
+// ------------------------------------------------------------------ other devices
+
+const NETWORK_KINDS = { lan: 'home network', zerotier: 'ZeroTier' };
+
+// "Edge on Windows" from a browser's User-Agent
+function browserName(agent) {
+  const os = (agent.match(/iPhone|iPad|Android/) || [])[0]
+    || (/Windows/.test(agent) ? 'Windows' : /Mac OS X/.test(agent) ? 'macOS' : /Linux/.test(agent) ? 'Linux' : '');
+  const browser = /Edg\//.test(agent) ? 'Edge' : /Firefox\//.test(agent) ? 'Firefox' : /Chrome\//.test(agent) ? 'Chrome'
+    : /Safari\//.test(agent) ? 'Safari' : '';
+  return [browser, os].filter(Boolean).join(' on ') || 'a browser';
+}
+
+export async function loadRemoteAccess() {
+  const form = document.getElementById('remote-form');
+  let st;
+  try {
+    st = await api('GET', '/api/remote-access', undefined, { quiet: true });
+  } catch {
+    // Another device: these settings only change on the computer the app runs on
+    document.getElementById('remote-local-only').classList.remove('d-none');
+    form.classList.add('d-none');
+    return;
+  }
+  document.getElementById('remote-enabled').checked = st.wanted;
+  const chosen = new Set(st.networks);
+  const available = st.available.map((n) => n.network);
+  document.getElementById('remote-networks').replaceChildren(...st.available.map((n) => h('div', { class: 'form-check' },
+    h('input', { class: 'form-check-input', type: 'checkbox', id: `remote-net-${n.network}`, value: n.network,
+      checked: chosen.has(n.network) }),
+    h('label', { class: 'form-check-label', for: `remote-net-${n.network}` },
+      h('b', {}, NETWORK_KINDS[n.kind] || n.kind), ` ${n.network}`,
+      h('span', { class: 'text-body-secondary' }, ` · ${n.interface}, this computer is ${n.address}`)))));
+  if (!st.available.length) {
+    document.getElementById('remote-networks').replaceChildren(h('span', { class: 'small text-body-secondary' }, 'No network found on this computer.'));
+  }
+  document.getElementById('remote-custom').value = st.networks.filter((n) => !available.includes(n)).join(', ');
+  const password = document.getElementById('remote-password');
+  password.value = '';
+  password.placeholder = st.password_set ? 'set (type a new one to change it)' : `at least 8 characters`;
+  document.getElementById('remote-state').textContent = st.enabled ? 'On.'
+    : st.wanted ? 'Not on yet: it needs a password and a network.' : 'Off: only this computer opens the app.';
+  document.getElementById('remote-addresses').replaceChildren(...(st.addresses.length ? [
+    'Open it from the other devices at ',
+    ...st.addresses.flatMap((url, i) => [i ? ' or ' : '', h('span', { class: 'access-address' }, url)]), '.',
+  ] : []));
+  const sessions = document.getElementById('remote-sessions');
+  if (!st.sessions.length) {
+    sessions.replaceChildren(st.enabled ? h('span', { class: 'text-body-secondary' }, 'No device signed in.') : '');
+    return;
+  }
+  sessions.replaceChildren(h('div', { class: 'd-flex align-items-center gap-2 mb-1' }, h('b', {}, 'Signed in'),
+    h('button', { class: 'btn btn-sm btn-outline-danger ms-auto', type: 'button', onclick: (e) => busy(e.target, async () => {
+      await api('DELETE', '/api/remote-access/sessions');
+      loadRemoteAccess();
+    }) }, 'Sign everyone out')),
+  h('ul', { class: 'list-unstyled mb-0' }, st.sessions.map((session) => h('li', { class: 'd-flex align-items-center gap-2 py-1' },
+    h('div', { class: 'flex-grow-1 text-truncate', title: session.device }, `${browserName(session.device)} · ${session.address}`,
+      h('div', { class: 'text-body-secondary' }, `signed in ${when(session.created)}, last used ${when(session.last_used)}`)),
+    h('button', { class: 'btn btn-sm btn-outline-secondary text-nowrap', type: 'button', onclick: (e) => busy(e.target, async () => {
+      await api('DELETE', `/api/remote-access/sessions/${encodeURIComponent(session.id)}`);
+      loadRemoteAccess();
+    }) }, 'Sign out')))));
+}
+
+document.getElementById('remote-form').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const networks = [...document.querySelectorAll('#remote-networks input:checked')].map((input) => input.value)
+    .concat(document.getElementById('remote-custom').value.split(',').map((n) => n.trim()).filter(Boolean));
+  const password = document.getElementById('remote-password').value;
+  await api('PUT', '/api/remote-access', { enabled: document.getElementById('remote-enabled').checked, networks,
+    password: password || null })
+    .then(() => { notify(password ? 'Saved. The new password signed every other device out.' : 'Saved', 'success', 4000); loadRemoteAccess(); },
+      () => {});
+});
+
+document.getElementById('sign-out').addEventListener('click', async () => {
+  await api('POST', '/api/logout').catch(() => {});
+  window.location.href = '/login';
+});
+
 // ------------------------------------------------------------------ the demo
 
 document.getElementById('demo-start').addEventListener('click', (event) => busy(event.target, async () => {

@@ -127,6 +127,7 @@
             id="theme-button" title="Colour theme (T cycles)">theme</button>
     <ul class="dropdown-menu dropdown-menu-end" id="theme-menu"></ul>
   </div>
+  <button class="btn btn-sm btn-outline-secondary d-none" type="button" id="sign-out" title="Sign this device out">sign out</button>
 </header>
 
 <footer class="statusbar">
@@ -798,6 +799,40 @@
             </div>
             <div class="form-text">The token stays in its own file in the data folder: never in backups, problem reports or
               this page. Importing twice adds nothing new.</div>
+          </div>
+        </div>
+        <div class="card mb-4" id="section-other-devices" data-nav="Other devices">
+          <div class="card-header">Other devices</div>
+          <div class="card-body">
+            <p class="small text-body-secondary mb-2">By default only this computer opens the app (and SSH tunnels to
+              it). Allowed here, your phone or another computer on the networks you choose (your home network,
+              ZeroTier…) opens it too, after signing in with the password. Whoever signs in can update and flash your
+              boards, so choose a strong password. These settings only change on this computer.</p>
+            <div id="remote-local-only" class="small text-warning d-none">These settings only change on the computer
+              the app runs on (or through an SSH tunnel to it).</div>
+            <form id="remote-form" class="row g-2">
+              <div class="col-12">
+                <div class="form-check form-switch">
+                  <input class="form-check-input" type="checkbox" role="switch" id="remote-enabled">
+                  <label class="form-check-label" for="remote-enabled">Let other devices open the app</label>
+                </div>
+              </div>
+              <div class="col-12">
+                <div class="form-label small mb-1">From these networks</div>
+                <div id="remote-networks" class="d-flex flex-column gap-1"></div>
+                <input class="form-control form-control-sm mt-1" id="remote-custom" placeholder="other networks, such as 10.147.17.0/24 (comma-separated)">
+              </div>
+              <div class="col-sm-6">
+                <label class="form-label small mb-1" for="remote-password">Password</label>
+                <input class="form-control form-control-sm" id="remote-password" type="password" autocomplete="new-password">
+              </div>
+              <div class="col-12 d-flex flex-wrap gap-2 align-items-center">
+                <button class="btn btn-sm btn-primary" type="submit">Save</button>
+                <span class="small text-body-secondary" id="remote-state"></span>
+              </div>
+            </form>
+            <div id="remote-addresses" class="small mt-2"></div>
+            <div id="remote-sessions" class="small mt-2"></div>
           </div>
         </div>
         <div class="card mb-4" id="section-data-and-backups" data-nav="Data and backups">

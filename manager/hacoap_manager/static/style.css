@@ -868,7 +868,7 @@ button.net-figure:hover { border-color: var(--t-brand); }
 .settings-group:first-child { border-top: 0; margin-top: 0; padding-top: 0; }
 .settings-main .card { scroll-margin-top: 4.5rem; }
 @media (max-width: 991.98px) {
-  .settings-layout { grid-template-columns: 1fr; }
+  .settings-layout { grid-template-columns: minmax(0, 1fr); }  /* not 1fr: it would grow to the widest line instead of wrapping */
   .settings-nav { position: static; flex-direction: row; flex-wrap: wrap; gap: .3rem; }
   .settings-nav-link { border-left: 0; border: 1px solid var(--t-border-subtle); border-radius: 1rem; padding: .2rem .7rem; }
 }
@@ -1042,3 +1042,11 @@ td.flip { display: table-cell; animation: flip-cell 1.4s ease-out; }
 }
 #graph-metrics { flex-wrap: nowrap; overflow-x: auto; max-width: 100%; scrollbar-width: none; }
 #graph-metrics button { white-space: nowrap; }
+
+/* ---------------------------------------------------------------- signing in from another device */
+
+.login { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 1rem; }
+.login-card { width: 100%; max-width: 22rem; background: var(--t-surface); border: 1px solid var(--t-border-subtle);
+  border-radius: .8rem; padding: 1.5rem; }
+.login-brand { font-size: 1.3rem; margin-bottom: 1rem; }
+.access-address { font-family: var(--bs-font-monospace); user-select: all; }
