@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from smp import error as smperror
 from smp import message as smpmessage
 from smpclient import SMPClient
+from smpclient.exceptions import SMPBadSequence
 from smpclient.generics import error, success
 from smpclient.requests.image_management import ImageStatesRead, ImageStatesWrite, ImageUploadWrite
 from smpclient.requests.os_management import EchoWrite, ResetWrite
@@ -209,15 +210,18 @@ class DeviceLink:
         await self.disconnect()
 
     async def _request(self, request, timeout_s=None, retries=2):
-        """Sends a request, again after a timeout (these requests are all idempotent)."""
+        """Sends a request, again after a timeout or a late answer to an earlier request (such
+        as the parameters request at connect, from a board still waking up after a reset):
+        these requests are all idempotent."""
         for attempt in range(retries + 1):
             try:
                 response = await self._client.request(request, timeout_s=timeout_s)
                 break
-            except TimeoutError as exc:
+            except (TimeoutError, SMPBadSequence) as exc:
                 if attempt == retries:
                     raise McumgrError(f"no answer from {self.address}") from exc
-                log.info("%s: no answer, retrying", self.address)
+                log.info("%s: %s, retrying", self.address,
+                         "a late answer" if isinstance(exc, SMPBadSequence) else "no answer")
                 await self.reconnect()
         if _failed(response):
             raise McumgrError(f"{self.address}: {_describe(response)}")
@@ -289,7 +293,7 @@ class DeviceLink:
             timeout = self.settings.first_upload_timeout_s if offset == 0 else self.settings.timeout_s
             try:
                 response = await self._client.request(request, timeout_s=timeout)
-            except TimeoutError:
+            except (TimeoutError, SMPBadSequence):  # a late answer: the board says where it is at the next one
                 timeouts += 1
                 if timeouts > self.settings.upload_retries:
                     raise McumgrError(f"upload to {self.address} stopped at {offset} of {len(image)} bytes: no answer")

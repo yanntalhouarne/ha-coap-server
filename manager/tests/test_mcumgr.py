@@ -49,6 +49,19 @@ async def test_upload_resumes_after_lost_packets(start_sim):
     assert server.device.slots[1].info.hash == NEW_HASH
 
 
+async def test_a_late_answer_is_not_an_error(start_sim):
+    # A board waking up after a reset answers an earlier request late, on the same socket
+    server = await start_sim()
+    async with DeviceLink("udp", "127.0.0.1", settings_for(server)) as link:
+        await link.image_states()
+        server.device.late_smp_replies = 1
+        slots = await link.image_states()
+        assert slots[0].hash == OLD_HASH
+        server.device.late_smp_replies = 1
+        await link.upload(NEW_IMAGE)
+    assert server.device.slots[1].info.hash == NEW_HASH and server.device.late_smp_replies == 0
+
+
 async def test_upload_gives_up_when_the_device_is_gone(start_sim):
     server = await start_sim()
     async with DeviceLink("udp", "127.0.0.1", settings_for(server, timeout_s=0.2, first_upload_timeout_s=0.2,

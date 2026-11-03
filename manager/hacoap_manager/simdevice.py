@@ -109,6 +109,7 @@ class SimulatedDevice:
     reboot_s: float = 0.3            # unreachable for this long after a reset
     fail_boot: bool = False          # a tested image crashes: MCUboot reverts it
     drop_smp_every: int = 0          # drop every Nth SMP request (0: never)
+    late_smp_replies: int = 0        # the next N answers come after a copy of the one before (a late answer)
     drop_coap_first: int = 0         # drop the first N CoAP requests
     dynamic: bool = False            # readings change over time (battery drains), for trying the app
     battery_drain_per_hour: float = 0.5
@@ -531,6 +532,10 @@ class _SmpProtocol(asyncio.DatagramProtocol):
         if result is None:
             return
         response, after = result
+        previous, self._previous = getattr(self, "_previous", None), response
+        if self.device.late_smp_replies and previous is not None:
+            self.device.late_smp_replies -= 1
+            self.transport.sendto(previous, addr)
         self.transport.sendto(response, addr)
         if after is not None:
             asyncio.get_running_loop().call_later(0.05, after)
