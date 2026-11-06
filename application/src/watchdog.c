@@ -6,10 +6,10 @@
  * Resets the SoC if the system work queue stops running.
  *
  * The nRF52 watchdog keeps running across soft resets: after an update, it's still counting
- * down from the previous image's last feed, through the bootloader's swap. The new image has
- * to feed it at once, or it's reset before it can be confirmed, and the bootloader reverts
- * the update (seen on the boards: every update from watchdog firmware reverted, reset cause
- * "watchdog"). So it's fed before the kernel starts, and set up before main's boot delay.
+ * down from the previous image's last feed, through the bootloader's swap. So it's fed before
+ * the kernel starts, and set up before main's boot delay. (It also keeps the 32 kHz clock
+ * running, which is why prj.conf doesn't wait for that clock at boot: see
+ * CONFIG_SYSTEM_CLOCK_NO_WAIT there.)
  */
 
 #include <zephyr/drivers/watchdog.h>
