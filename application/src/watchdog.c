@@ -4,10 +4,18 @@
  * watchdog.c
  *
  * Resets the SoC if the system work queue stops running.
+ *
+ * The nRF52 watchdog keeps running across soft resets: after an update, it's still counting
+ * down from the previous image's last feed, through the bootloader's swap. The new image has
+ * to feed it at once, or it's reset before it can be confirmed, and the bootloader reverts
+ * the update (seen on the boards: every update from watchdog firmware reverted, reset cause
+ * "watchdog"). So it's fed before the kernel starts, and set up before main's boot delay.
  */
 
 #include <zephyr/drivers/watchdog.h>
+#include <zephyr/init.h>
 #include <zephyr/kernel.h>
+#include <hal/nrf_wdt.h>
 
 #include "watchdog.h"
 
@@ -25,6 +33,22 @@ static void on_wdt_feed_work(struct k_work *work)
 }
 
 static K_WORK_DELAYABLE_DEFINE(wdt_feed_work, on_wdt_feed_work);
+
+/* The first thing after a reset: a watchdog still running from before gets a full timeout
+ * again (every reload register: whichever channels the previous image enabled). */
+static int watchdog_early_feed(void)
+{
+	if (nrf_wdt_started(NRF_WDT))
+	{
+		for (uint32_t i = 0U; i < NRF_WDT_CHANNEL_NUMBER; i++)
+		{
+			nrf_wdt_reload_request_set(NRF_WDT, (nrf_wdt_rr_register_t)(NRF_WDT_RR0 + i));
+		}
+	}
+	return 0;
+}
+
+SYS_INIT(watchdog_early_feed, PRE_KERNEL_1, 0);
 
 int watchdog_init(void)
 {

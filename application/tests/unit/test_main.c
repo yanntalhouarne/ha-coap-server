@@ -40,6 +40,8 @@ static struct
 	int mcumgr_poll_inits;
 	uint32_t normal_poll_ms;
 	int power_inits;
+	int watchdog_init_call;
+	int64_t slept_before_watchdog_ms;
 	power_changed_cb_t power_changed;
 	enum power_source power;
 	int usb_power_sets;
@@ -169,6 +171,8 @@ void srp_start(otInstance *instance, const char *device_id, srp_registered_cb_t 
 
 int watchdog_init(void)
 {
+	fake_mod.watchdog_init_call = ++fake_mod.calls;
+	fake_mod.slept_before_watchdog_ms = fake_slept_ms;
 	return 0;
 }
 
@@ -308,8 +312,11 @@ static void test_boot_reaches_openthread(void)
 	fake_ficr.DEVICEID[0] = 0x1a2b3c4d;
 	CHECK_EQ(firmware_main(), 0);
 
-	CHECK_EQ(fake_mod.led_init_call, 1); // first, so that error indications work
-	CHECK_EQ(fake_mod.settings_init_call, 2); // before the modules that use the settings
+	/* The watchdog first, before the boot delay: after an update it may still be running */
+	CHECK_EQ(fake_mod.watchdog_init_call, 1);
+	CHECK_EQ(fake_mod.slept_before_watchdog_ms, 0);
+	CHECK_EQ(fake_mod.led_init_call, 2); // then the LEDs, so that error indications work
+	CHECK_EQ(fake_mod.settings_init_call, 3); // before the modules that use the settings
 	CHECK_EQ(fake_mod.diag_inits, 1);
 	CHECK(fake_mod.coap == &coap_handlers);
 	CHECK_EQ(fake_mod.mcumgr_poll_inits, 1);

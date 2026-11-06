@@ -307,6 +307,14 @@ int main(void)
 	uint32_t missing_sensors;
 	int ret;
 
+	/* Before the boot delay: after an update, the watchdog may still be running from the previous
+	 * image (see watchdog.c), and this one isn't confirmed until it answers the fleet manager. */
+	ret = watchdog_init();
+	if (ret)
+	{
+		LOG_ERR("Could not start the watchdog (error: %d)", ret);
+	}
+
 	k_sleep(K_MSEC(CONFIG_HACOAP_BOOT_DELAY_MS));
 
 	/* First, so that the error indications below work. */
@@ -340,12 +348,6 @@ int main(void)
 	else
 	{
 		forget_network_if_held();
-	}
-
-	ret = watchdog_init();
-	if (ret)
-	{
-		LOG_ERR("Could not start the watchdog (error: %d)", ret);
 	}
 
 	/* Missing sensors read 0. HDC1080: 2 red blinks, fuel gauge: 3, soil sensor: red on. */
