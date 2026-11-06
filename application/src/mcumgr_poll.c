@@ -5,7 +5,8 @@
  *
  * Polls the Thread parent faster while mcumgr is in use, or the 'log' resource is read. A
  * sleepy device only receives a message when it polls, so at the normal poll period each
- * request of an image upload would wait for up to a full period.
+ * request of an image upload would wait for up to a full period. On USB power, the normal
+ * period is at most CONFIG_HACOAP_USB_POLL_PERIOD_MS.
  */
 
 #include <zephyr/kernel.h>
@@ -27,6 +28,21 @@ static bool fast_polling;
 
 /* The poll period when not polling fast (the 'poll_ms' setting) */
 static atomic_t normal_period_ms = ATOMIC_INIT(CONFIG_OPENTHREAD_POLL_PERIOD);
+
+/* On USB power (power.c) */
+static atomic_t usb_powered = ATOMIC_INIT(0);
+
+/* The poll period when not polling fast: the setting, or shorter on USB power */
+static uint32_t normal_period(void)
+{
+	uint32_t period_ms = (uint32_t)atomic_get(&normal_period_ms);
+
+	if (atomic_get(&usb_powered) && (period_ms > CONFIG_HACOAP_USB_POLL_PERIOD_MS))
+	{
+		period_ms = CONFIG_HACOAP_USB_POLL_PERIOD_MS;
+	}
+	return period_ms;
+}
 
 static void set_poll_period(uint32_t period_ms)
 {
@@ -60,8 +76,8 @@ static void on_normal_poll_work(struct k_work *work)
 	ARG_UNUSED(work);
 
 	fast_polling = false;
-	set_poll_period((uint32_t)atomic_get(&normal_period_ms));
-	LOG_INF("mcumgr and log idle: poll period %d ms", (int)atomic_get(&normal_period_ms));
+	set_poll_period(normal_period());
+	LOG_INF("mcumgr and log idle: poll period %u ms", normal_period());
 }
 
 static void on_apply_work(struct k_work *work)
@@ -70,7 +86,7 @@ static void on_apply_work(struct k_work *work)
 
 	if (!fast_polling)
 	{
-		set_poll_period((uint32_t)atomic_get(&normal_period_ms));
+		set_poll_period(normal_period());
 	}
 }
 
@@ -81,6 +97,12 @@ static K_WORK_DEFINE(apply_work, on_apply_work);
 void mcumgr_poll_set_normal_period(uint32_t period_ms)
 {
 	atomic_set(&normal_period_ms, (long)period_ms);
+	k_work_submit(&apply_work);
+}
+
+void mcumgr_poll_set_usb_power(bool powered)
+{
+	atomic_set(&usb_powered, powered ? 1 : 0);
 	k_work_submit(&apply_work);
 }
 

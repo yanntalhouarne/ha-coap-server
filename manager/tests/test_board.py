@@ -93,6 +93,62 @@ async def test_a_refresh_reads_diag_and_records_restarts(client, services, start
     assert "restart" in kinds
 
 
+# ---------------------------------------------------------------- USB power and charging
+
+def test_parse_diag_power():
+    assert coap.parse_diag(b"boots=1,up=5,reset=power,role=child,soil_mv=900,power=charging").power == "charging"
+    assert coap.parse_diag(b"boots=1,up=5,reset=power,role=child,soil_mv=900").power == ""  # firmware before it
+
+
+async def test_plugging_in_and_unplugging(client, services, start_sim):
+    server = await start_sim(dynamic=False)
+    device = await add_board(client, services, server)
+    assert device["power"] == "battery"
+    assert services.db.recent_activity("1a2b3c4d", "power", 10) == []  # the first answer is no change
+
+    server.device.plug()
+    device = await refresh(client)
+    assert device["power"] == "charging"
+    assert services.db.recent_activity("1a2b3c4d", "power", 10)[0]["message"] == "Plugged in: charging"
+    assert services.db.readings("1a2b3c4d")[-1]["power"] == "charging"  # left out of the drain
+
+    server.device.plug(False)
+    device = await refresh(client)
+    assert device["power"] == "battery"
+    assert services.db.recent_activity("1a2b3c4d", "power", 10)[0]["message"] == "Unplugged: on its battery"
+    timeline = (await client.get("/api/devices/1a2b3c4d/timeline")).json()
+    assert len([e for e in timeline if e["kind"] == "power"]) == 2
+
+
+def test_a_charger_charges_until_full():
+    device = simdevice.SimulatedDevice(dynamic=True, battery_start=90, charge_per_hour=3600 * 50)  # fast
+    device.plug()
+    assert device.power == "charging"
+    time.sleep(0.25)
+    assert device.readings()[1] == 100 and device.power == "charged"
+    device.plug(False)
+    assert device.power == "battery" and device.readings()[1] == 100  # drains from there
+
+
+def test_drain_and_forecast_leave_usb_power_out():
+    now, hour = time.time(), 3600
+    # 12 h on the battery at 1 %/h, 6 h on a charger, then 12 h on the battery again
+    readings = [{"time": now - (30 - h) * hour, "battery": 80 - h, "power": "battery"} for h in range(12)]
+    readings += [{"time": now - (18 - h) * hour, "battery": 68 + 5 * h, "power": "charging"} for h in range(6)]
+    readings += [{"time": now - (12 - h) * hour, "battery": 98 - h, "power": "battery"} for h in range(12)]
+    assert fleet.drain_rate(readings)["per_day"] == pytest.approx(24, abs=0.5)  # both runs, not the charge
+    forecast = fleet.battery_forecast(readings)
+    assert forecast["per_day"] == pytest.approx(-24, abs=0.5)                  # since it was unplugged
+    assert fleet.battery_forecast(readings + [{"time": now, "battery": 87, "power": "charging"}]) is None
+
+
+def test_a_low_battery_on_usb_is_no_alert(services):
+    services.db.upsert_device("1a2b3c4d", address="127.0.0.1", battery=10, power="charging")
+    assert not [key for key in services.alerts.conditions() if key.startswith("battery:")]
+    services.db.upsert_device("1a2b3c4d", power="battery")
+    assert [key for key in services.alerts.conditions() if key.startswith("battery:")]
+
+
 async def test_a_crash_says_where(client, services, start_sim):
     server = await start_sim(dynamic=False)
     await add_board(client, services, server)

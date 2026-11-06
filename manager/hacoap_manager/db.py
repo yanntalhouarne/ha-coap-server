@@ -42,7 +42,8 @@ CREATE TABLE IF NOT EXISTS devices (
     diag_time     REAL,                       -- when 'diag' last answered
     no_diag_fw    TEXT NOT NULL DEFAULT '',   -- the firmware that didn't answer 'diag' (not asked again)
     pump_s        INTEGER,                    -- the pump run time the board last reported (s)
-    srp_state     TEXT NOT NULL DEFAULT ''    -- its name's registration with the border router ('diag')
+    srp_state     TEXT NOT NULL DEFAULT '',   -- its name's registration with the border router ('diag')
+    power         TEXT NOT NULL DEFAULT ''    -- battery, usb, charging or charged ('diag'), '' when not reported
 );
 CREATE TABLE IF NOT EXISTS images (
     hash     TEXT PRIMARY KEY,
@@ -86,7 +87,8 @@ CREATE TABLE IF NOT EXISTS readings (
     battery       INTEGER,
     soil_moisture INTEGER,
     air_humidity  INTEGER,
-    temperature   INTEGER
+    temperature   INTEGER,
+    power         TEXT NOT NULL DEFAULT ''    -- the device's power then (as devices.power)
 );
 CREATE INDEX IF NOT EXISTS readings_device_time ON readings (device_id, time);
 CREATE TABLE IF NOT EXISTS link_samples (
@@ -149,7 +151,7 @@ DEVICE_FIELDS = ("name", "address", "serial_port", "fw_version", "hw_version", "
                  "soil_moisture", "battery", "air_humidity", "temperature", "last_seen", "last_error", "notes",
                  "tags", "location", "plant", "water_below", "photo", "boots", "reset_cause", "fault", "uptime_s",
                  "role", "rloc16", "parent_rloc16", "parent_rssi", "link_quality", "soil_mv", "diag_time",
-                 "no_diag_fw", "pump_s", "srp_state")
+                 "no_diag_fw", "pump_s", "srp_state", "power")
 
 # Columns added after the first version: (table, column, definition), added to older databases
 ADDED_COLUMNS = [
@@ -174,6 +176,8 @@ ADDED_COLUMNS = [
     ("devices", "no_diag_fw", "TEXT NOT NULL DEFAULT ''"),
     ("devices", "pump_s", "INTEGER"),
     ("devices", "srp_state", "TEXT NOT NULL DEFAULT ''"),
+    ("devices", "power", "TEXT NOT NULL DEFAULT ''"),
+    ("readings", "power", "TEXT NOT NULL DEFAULT ''"),
 ]
 
 
@@ -374,10 +378,10 @@ class Database:
 
     # ------------------------------------------------------------ history: readings and links
 
-    def add_reading(self, device_id, battery, soil_moisture, air_humidity, temperature, when=None):
-        self._execute("INSERT INTO readings (device_id, time, battery, soil_moisture, air_humidity, temperature) "
-                      "VALUES (?, ?, ?, ?, ?, ?)",
-                      (device_id, when or time.time(), battery, soil_moisture, air_humidity, temperature))
+    def add_reading(self, device_id, battery, soil_moisture, air_humidity, temperature, when=None, power=""):
+        self._execute("INSERT INTO readings (device_id, time, battery, soil_moisture, air_humidity, temperature, power) "
+                      "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                      (device_id, when or time.time(), battery, soil_moisture, air_humidity, temperature, power or ""))
 
     def all_readings(self, since=0, device_id=None):
         """Readings of every device (or one), oldest first, with the device's name."""
@@ -386,11 +390,11 @@ class Database:
             where += " AND r.device_id = ?"
             params.append(device_id)
         return self._query("SELECT r.device_id, d.name, r.time, r.battery, r.soil_moisture, r.air_humidity, "
-                           "r.temperature FROM readings r LEFT JOIN devices d ON d.device_id = r.device_id "
+                           "r.temperature, r.power FROM readings r LEFT JOIN devices d ON d.device_id = r.device_id "
                            f"WHERE {where} ORDER BY r.time, r.device_id", params)
 
     def readings(self, device_id, since=0):
-        return self._query("SELECT time, battery, soil_moisture, air_humidity, temperature FROM readings "
+        return self._query("SELECT time, battery, soil_moisture, air_humidity, temperature, power FROM readings "
                            "WHERE device_id = ? AND time >= ? ORDER BY time", (device_id, since))
 
     def add_link_sample(self, device_id, parent, link_margin=None, average_rssi=None, link_quality=None, when=None):

@@ -39,6 +39,11 @@ static struct
 	srp_registered_cb_t srp_registered;
 	int mcumgr_poll_inits;
 	uint32_t normal_poll_ms;
+	int power_inits;
+	power_changed_cb_t power_changed;
+	enum power_source power;
+	int usb_power_sets;
+	bool usb_power;
 	int hacoap_mgmt_inits;
 	int reschedules;
 	device_settings_changed_cb settings_changed;
@@ -238,9 +243,33 @@ void diag_link_read(otInstance *instance, struct diag_link *link)
 	*link = (struct diag_link){.role = "child", .attached = true, .rloc16 = 0x5c01};
 }
 
-size_t diag_format(char *payload, size_t size, const struct diag_link *link, const char *srp, int32_t soil_mv)
+size_t diag_format(char *payload, size_t size, const struct diag_link *link, const char *srp, int32_t soil_mv,
+		   const char *power)
 {
-	return (size_t)snprintf(payload, size, "srp=%s,rloc=%04x,soil_mv=%d", srp, link->rloc16, (int)soil_mv);
+	return (size_t)snprintf(payload, size, "srp=%s,rloc=%04x,soil_mv=%d,power=%s", srp, link->rloc16, (int)soil_mv, power);
+}
+
+void mcumgr_poll_set_usb_power(bool powered)
+{
+	fake_mod.usb_power_sets++;
+	fake_mod.usb_power = powered;
+}
+
+int power_init(power_changed_cb_t on_changed)
+{
+	fake_mod.power_inits++;
+	fake_mod.power_changed = on_changed;
+	return 0;
+}
+
+enum power_source power_source(void)
+{
+	return fake_mod.power;
+}
+
+const char *power_name(enum power_source source)
+{
+	return (source == POWER_CHARGING) ? "charging" : "battery";
 }
 
 const char *srp_state(otInstance *instance)
@@ -392,8 +421,24 @@ static void test_diag_reports_the_link_and_the_soil_voltage(void)
 	reset_module();
 	fake_mod.sensors.soil_mv = 1696;
 	length = on_diag_get(payload, sizeof(payload));
-	CHECK_EQ(length, 37);
-	CHECK(memcmp(payload, "srp=registered,rloc=5c01,soil_mv=1696", 37) == 0);
+	CHECK_EQ(length, 51);
+	CHECK(memcmp(payload, "srp=registered,rloc=5c01,soil_mv=1696,power=battery", 51) == 0);
+
+	fake_mod.power = POWER_CHARGING;
+	length = on_diag_get(payload, sizeof(payload));
+	CHECK(memcmp(payload, "srp=registered,rloc=5c01,soil_mv=1696,power=charging", length) == 0);
+}
+
+static void test_usb_power_polls_faster(void)
+{
+	reset_module();
+	CHECK_EQ(firmware_main(), 0);
+	CHECK_EQ(fake_mod.power_inits, 1);
+	fake_mod.power_changed(POWER_CHARGING);
+	CHECK_EQ(fake_mod.usb_power_sets, 1);
+	CHECK(fake_mod.usb_power);
+	fake_mod.power_changed(POWER_BATTERY);
+	CHECK(!fake_mod.usb_power);
 }
 
 static void test_pump_put_only_acts_on_a_change(void)
@@ -506,6 +551,7 @@ int main(void)
 	RUN_TEST(test_settings_are_applied);
 	RUN_TEST(test_a_sample_period_from_flash_waits_for_the_sensors);
 	RUN_TEST(test_diag_reports_the_link_and_the_soil_voltage);
+	RUN_TEST(test_usb_power_polls_faster);
 	RUN_TEST(test_pump_put_only_acts_on_a_change);
 	RUN_TEST(test_data_sends_the_temperature_as_a_signed_byte);
 	RUN_TEST(test_info_reports_versions_and_device_id);

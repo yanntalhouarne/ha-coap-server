@@ -11,7 +11,8 @@
  *     - sensors:        soil, battery and air readings, sampled periodically
  *     - buzzer:         beep patterns
  *     - status_led:     network and error states on the module's RGB LED
- *     - mcumgr_poll:    faster Thread polling while mcumgr updates the device or the log is read
+ *     - mcumgr_poll:    faster Thread polling while mcumgr updates the device or the log is read, or on USB
+ *     - power:          whether the board is on USB power, and charging
  *     - log_buffer:     the latest log output, for 'log' (with remote_log, CONFIG_HACOAP_REMOTE_LOG)
  *     - joining:        joins the Thread network again until it has one, and forgets it on request
  *     - device_settings: the settings that can change without a new firmware, in flash
@@ -38,6 +39,7 @@
 #include "joining.h"
 #include "log_buffer.h"
 #include "mcumgr_poll.h"
+#include "power.h"
 #include "pump.h"
 #include "sensors.h"
 #include "srp.h"
@@ -166,7 +168,14 @@ static size_t on_diag_get(char *payload, size_t size)
 	struct diag_link link;
 
 	diag_link_read(openthread_get_default_instance(), &link);
-	return diag_format(payload, size, &link, srp_state(openthread_get_default_instance()), sensors_get().soil_mv);
+	return diag_format(payload, size, &link, srp_state(openthread_get_default_instance()), sensors_get().soil_mv,
+			   power_name(power_source()));
+}
+
+/* On USB power, poll fast: commands arrive quickly, and battery life doesn't matter */
+static void on_power_changed(enum power_source source)
+{
+	mcumgr_poll_set_usb_power(power_on_usb(source));
 }
 
 #ifdef CONFIG_HACOAP_REMOTE_LOG
@@ -358,6 +367,7 @@ int main(void)
 	sensors_start();
 	sampling = true;
 	mcumgr_poll_init();
+	(void)power_init(on_power_changed); // a failure only loses the charge state: it says so
 	hacoap_mgmt_init();
 
 	LOG_INF("Start CoAP-server sample");

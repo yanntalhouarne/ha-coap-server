@@ -34,6 +34,15 @@ def same_board(reported, device_id):
     return reported == device_id or (len(reported) == 7 and len(device_id) == 8 and device_id.startswith(reported))
 
 
+# Its power, as newer firmware's 'diag' reports it: what changed, in words
+POWER_CHANGES = {
+    "charging": "Plugged in: charging",
+    "charged": "Charged (still plugged in)",
+    "usb": "Plugged in",
+    "battery": "Unplugged: on its battery",
+}
+
+
 def reset_text(cause, fault=""):
     text = RESET_CAUSES.get(cause, cause or "an unknown reason")
     if cause == "crash" and fault:
@@ -131,7 +140,6 @@ class Inventory:
         if not same_board(info.device_id, device_id):
             return self._changed(self.db.upsert_device(
                 device_id, last_error=f"{device['address']} is now device {info.device_id}"))
-        self.db.add_reading(device_id, data.battery, data.soil_moisture, data.air_humidity, data.temperature)
         fields = dict(fw_version=info.fw_version, hw_version=info.hw_version, soil_moisture=data.soil_moisture,
                       battery=data.battery, air_humidity=data.air_humidity, temperature=data.temperature,
                       last_seen=time.time(), last_error="")
@@ -143,6 +151,9 @@ class Inventory:
                 fields["no_diag_fw"] = info.fw_version  # older firmware
             elif isinstance(diag, BaseException) and not isinstance(diag, OSError):
                 raise diag
+        # With its power then: readings on USB don't count in the battery's drain
+        self.db.add_reading(device_id, data.battery, data.soil_moisture, data.air_humidity, data.temperature,
+                            power=fields.get("power", ""))
         return self._changed(self.db.upsert_device(device_id, **fields))
 
     def _diagnostics(self, device, diag):
@@ -158,9 +169,11 @@ class Inventory:
             self.db.add_activity(device["device_id"], "restart", message, when=now - diag.uptime_s)
             if diag.reset in BAD_RESETS and self.on_restart is not None:
                 self.on_restart(device, diag.reset, diag.fault)
+        if diag.power and device["power"] and diag.power != device["power"] and diag.power in POWER_CHANGES:
+            self.db.add_activity(device["device_id"], "power", POWER_CHANGES[diag.power])
         return dict(boots=diag.boots, reset_cause=diag.reset, fault=diag.fault, uptime_s=diag.uptime_s,
                     role=diag.role, srp_state=diag.srp, rloc16=diag.rloc16, parent_rloc16=diag.parent, parent_rssi=diag.rssi,
-                    link_quality=diag.link_quality, soil_mv=diag.soil_mv, diag_time=now, no_diag_fw="")
+                    link_quality=diag.link_quality, soil_mv=diag.soil_mv, diag_time=now, no_diag_fw="", power=diag.power)
 
     async def refresh_all(self, concurrency=4):
         semaphore = asyncio.Semaphore(concurrency)

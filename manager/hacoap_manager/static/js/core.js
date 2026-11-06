@@ -63,6 +63,17 @@ export async function api(method, path, body, options = {}) {
   return data;
 }
 
+// Its power, from newer firmware ('diag'): on USB (charging, or charged), else its battery
+const USB_POWER = { charging: 'charging', charged: 'charged · on USB', usb: 'on USB' };
+export const onUsb = (device) => Object.hasOwn(USB_POWER, device.power || '');
+export const powerText = (device) => USB_POWER[device.power] || '';
+export function powerIcon(device) {
+  if (!onUsb(device)) return null;
+  return h('span', { class: `power-icon power-${device.power}`, title: powerText(device) },
+    svg('svg', { class: 'icon', role: 'img', 'aria-label': powerText(device) },
+      svg('use', { href: device.power === 'charging' ? '#i-battery-charging' : '#i-plug' })));
+}
+
 export function notify(message, kind = 'info', timeout = 6000) {
   const alert = h('div', { class: `alert alert-${kind} alert-dismissible fade show`, role: 'alert' },
     message, h('button', { type: 'button', class: 'btn-close', 'data-bs-dismiss': 'alert' }));

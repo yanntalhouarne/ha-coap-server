@@ -12,6 +12,7 @@ static void reset_module(void)
 {
 	fast_polling = false;
 	normal_period_ms = CONFIG_OPENTHREAD_POLL_PERIOD;
+	usb_powered = 0;
 	apply_work.pending = false;
 	fast_poll_work.pending = false;
 	normal_poll_work.scheduled = false;
@@ -123,6 +124,34 @@ static void test_the_normal_period_is_a_setting(void)
 	CHECK_EQ(fake_poll_period_ms, 20000);
 }
 
+static void test_usb_power_polls_faster(void)
+{
+	reset_module();
+	mcumgr_poll_set_usb_power(true);
+	fake_work_run(&apply_work);
+	CHECK_EQ(fake_poll_period_ms, CONFIG_HACOAP_USB_POLL_PERIOD_MS);
+
+	/* A shorter setting stays: USB only makes it faster */
+	mcumgr_poll_set_normal_period(200);
+	fake_work_run(&apply_work);
+	CHECK_EQ(fake_poll_period_ms, 200);
+	mcumgr_poll_set_normal_period(30000);
+	fake_work_run(&apply_work);
+	CHECK_EQ(fake_poll_period_ms, CONFIG_HACOAP_USB_POLL_PERIOD_MS);
+
+	/* After an update session on USB, back to the USB period */
+	mcumgr_poll_hold();
+	fake_work_run(&fast_poll_work);
+	CHECK_EQ(fake_poll_period_ms, CONFIG_HACOAP_MCUMGR_POLL_PERIOD_MS);
+	fake_dwork_run(&normal_poll_work);
+	CHECK_EQ(fake_poll_period_ms, CONFIG_HACOAP_USB_POLL_PERIOD_MS);
+
+	/* On the battery again: the setting */
+	mcumgr_poll_set_usb_power(false);
+	fake_work_run(&apply_work);
+	CHECK_EQ(fake_poll_period_ms, 30000);
+}
+
 int main(void)
 {
 	RUN_TEST(test_registers_for_mcumgr_requests);
@@ -132,5 +161,6 @@ int main(void)
 	RUN_TEST(test_poll_period_is_set_once_per_session);
 	RUN_TEST(test_hold_polls_fast_like_an_mcumgr_request);
 	RUN_TEST(test_the_normal_period_is_a_setting);
+	RUN_TEST(test_usb_power_polls_faster);
 	return TEST_RESULT();
 }

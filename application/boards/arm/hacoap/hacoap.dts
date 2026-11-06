@@ -96,6 +96,7 @@
 		usrbutton = &button0;
 		ot-mode = &button1;
 		sw2 = &button2;
+		charging = &button3; // STC4054 CHRG: low while charging (src/power.c)
 		bootloader-led0 = &radio_red_led;
 		mcuboot-button0 = &button0;
 		mcuboot-led0 = &radio_red_led;

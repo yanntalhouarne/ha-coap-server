@@ -8,12 +8,21 @@ DAY = 86400
 FORECAST_WINDOW_DAYS = 14   # battery readings used for the forecast
 LOW_BATTERY = 20            # %
 WEAK_MARGIN_DB = 10         # a link margin under this is weak (link quality 1 or less)
+ON_USB = ("usb", "charging", "charged")  # 'power' from newer firmware's 'diag', when not on the battery
 
+
+def on_usb(record):
+    """Whether a device, or a reading, is (was) on USB power: not draining its battery."""
+    return (record.get("power") or "") in ON_USB
 
 def battery_forecast(readings, empty_at=0):
     """Days until the battery reaches 'empty_at' %, from the trend of the readings (a
     least-squares line through battery % against time). None without a clear downward trend:
-    fewer than 3 readings, less than 6 hours of them, or a flat or rising battery (charging)."""
+    fewer than 3 readings, less than 6 hours of them, or a flat or rising battery (charging).
+    Only the readings since it was last on USB power count (none while it still is)."""
+    usb = [i for i, r in enumerate(readings) if on_usb(r)]
+    if usb:
+        readings = readings[usb[-1] + 1:]
     points = [(r["time"], r["battery"]) for r in readings if r.get("battery") is not None]
     if len(points) < 3 or points[-1][0] - points[0][0] < 6 * 3600:
         return None
@@ -44,10 +53,17 @@ def drain_rate(readings):
     """Battery % lost per day over these readings: {per_day, days, readings}, or None without
     enough of them. A jump between two readings splits them into runs: a rise of more than 2 %
     (charging), or a fall faster than 5 %/day plus 2 % (the reading drops when the charger is
-    unplugged). Each run of 3 readings or more over 6 hours or more counts, weighted by its length."""
-    points = [(r["time"], r["battery"]) for r in readings if r.get("battery") is not None]
+    unplugged). Readings on USB power (newer firmware says) end a run, and don't count. Each run
+    of 3 readings or more over 6 hours or more counts, weighted by its length."""
     runs, run = [], []
-    for point in points:
+    for r in readings:
+        if r.get("battery") is None:
+            continue
+        if on_usb(r):
+            runs.append(run)
+            run = []
+            continue
+        point = (r["time"], r["battery"])
         if run and (point[1] > run[-1][1] + 2 or point[1] < run[-1][1] - 2 - 5 * (point[0] - run[-1][0]) / DAY):
             runs.append(run)
             run = []
@@ -246,7 +262,7 @@ def trends(db, inventory, days=7, now=None):
         target = targets.get(r["device_id"])
         if target and r["soil_moisture"] is not None and r["soil_moisture"] < target:
             dry[i].add(r["device_id"])
-        if r["battery"] is not None and r["battery"] <= LOW_BATTERY:
+        if r["battery"] is not None and r["battery"] <= LOW_BATTERY and not on_usb(r):
             low[i].add(r["device_id"])
     for s in db.all_link_samples(start):
         margin, quality = s["link_margin"], s["link_quality"]
@@ -266,7 +282,7 @@ def wall(db, inventory, now=None):
         plants.append({"device_id": device["device_id"], "name": device["name"] or device["device_id"],
                        "plant": device["plant"], "location": device["location"], "photo": device["photo"],
                        "soil_moisture": device["soil_moisture"], "water_target": device["water_target"],
-                       "needs_water": device["needs_water"], "battery": device["battery"], "online": device["online"],
+                       "needs_water": device["needs_water"], "battery": device["battery"], "power": device["power"], "online": device["online"],
                        "water_forecast": water_forecast(readings, device["water_target"], now),
                        "battery_forecast": battery_forecast(readings)})
     soon = lambda p: (p["water_forecast"] or {}).get("days")  # noqa: E731
@@ -316,8 +332,8 @@ def dashboard(db, inventory, topology):
         elif health["image_status"] == "unknown":
             unknown.append(entry)
         forecast = health["battery_forecast"]
-        if (device["battery"] is not None and device["battery"] <= LOW_BATTERY) or \
-                (forecast and forecast["days_left"] < 30):
+        if not on_usb(device) and ((device["battery"] is not None and device["battery"] <= LOW_BATTERY) or
+                                   (forecast and forecast["days_left"] < 30)):
             low.append(entry)
         if not device["online"]:
             offline.append(entry)

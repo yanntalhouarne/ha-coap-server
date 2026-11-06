@@ -108,6 +108,7 @@ int fake_gpio_input[FAKE_PIN_COUNT];
 gpio_flags_t fake_gpio_flags[FAKE_PIN_COUNT];
 gpio_flags_t fake_gpio_int_flags[FAKE_PIN_COUNT];
 struct gpio_callback *fake_gpio_callback;
+bool fake_vbus;
 
 int gpio_pin_configure_dt(const struct gpio_dt_spec *spec, gpio_flags_t flags)
 {
@@ -903,6 +904,7 @@ void fake_reset(void)
 	memset(fake_gpio_flags, 0, sizeof(fake_gpio_flags));
 	memset(fake_gpio_int_flags, 0, sizeof(fake_gpio_int_flags));
 	fake_gpio_callback = NULL;
+	fake_vbus = false;
 
 	fake_adc_raw = 0;
 	fake_adc_read_err = 0;

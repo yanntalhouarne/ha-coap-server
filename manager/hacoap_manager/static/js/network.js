@@ -2,7 +2,7 @@
 // view), how strong each link is, each node's way to the border router, the highlight every view
 // and the node list share, the details drawer, loading and history, the heatmap, pulses.
 
-import { ago, api, busy, h, notify, pct, photoUrl, state, svg, when } from './core.js';
+import { ago, api, busy, h, notify, onUsb, pct, photoUrl, powerText, state, svg, when } from './core.js';
 import { currentRoute } from './tabs.js';
 import { daysText } from './dashboard.js';
 import { deviceName, devicePath, pingDevice } from './devices.js';
@@ -65,7 +65,7 @@ export function nodeBadge(node) {
   const device = node.device_id ? state.devices.get(node.device_id) : null;
   if (!device) return null;
   if (!device.online) return { icon: 'wifi-off', tone: 'bad', text: 'offline' };
-  if (device.battery !== null && device.battery !== undefined && device.battery <= LOW_BATTERY) return { icon: 'battery-low', tone: 'warn', text: 'battery low' };
+  if (device.battery !== null && device.battery !== undefined && device.battery <= LOW_BATTERY && !onUsb(device)) return { icon: 'battery-low', tone: 'warn', text: 'battery low' };
   if (device.needs_water) return { icon: 'droplet', tone: 'warn', text: 'needs water' };
   return null;
 }
@@ -467,7 +467,7 @@ export function showTip(id) {
   const badge = nodeBadge(node);
   const lines = device
     ? [device.plant && device.plant.toLowerCase() !== deviceName(device).toLowerCase() ? device.plant : null,
-      `soil ${pct(device.soil_moisture)} · battery ${pct(device.battery)}`, badge ? badge.text : null]
+      `soil ${pct(device.soil_moisture)} · battery ${pct(device.battery)}${onUsb(device) ? ` (${powerText(device)})` : ''}`, badge ? badge.text : null]
     : [nodeStyle(node).label];
   if (way) lines.push(`to ${node.parent ? 'its parent' : 'the next router'}: ${linkStrength(way).text}`);
   if (!node.border_router && hops !== undefined) lines.push(`${hops} hop${hops === 1 ? '' : 's'} from the border router`);
@@ -690,7 +690,7 @@ export function boardCard(device) {
         }, device.device_id) }, 'Run the pump') : null,
       h('button', { class: 'btn btn-sm btn-outline-secondary', type: 'button', onclick: (e) => pingDevice(device, e.currentTarget) }, 'Beep')));
   deviceHealth(device).then((health) => {
-    if (has(device.battery)) forecast.textContent = daysText(health.battery_forecast);
+    if (has(device.battery)) forecast.textContent = onUsb(device) ? powerText(device) : daysText(health.battery_forecast);
     if (!device.needs_water && health.water_forecast) water.textContent = `water ${waterIn(health.water_forecast)}`;
   }, () => {});
   return card;

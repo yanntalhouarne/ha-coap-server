@@ -1,6 +1,6 @@
 // The Devices tab: the list, groups, actions on the ticked devices, labels, the connection check.
 
-import { ago, api, busy, h, notify, pct, photoUrl, shortHash, state, svg, undoable, when } from './core.js';
+import { ago, api, busy, h, notify, onUsb, pct, photoUrl, powerIcon, shortHash, state, svg, undoable, when } from './core.js';
 import { changedFrom, countTo, pulse, reducedMotion, showPumping, slide, waitForBoard } from './motion.js';
 import { currentRoute, showTab } from './tabs.js';
 import { net, redrawNetwork } from './network.js';
@@ -144,9 +144,9 @@ function deviceCard(device) {
         device.location].filter(Boolean).join(' · ') || '\u00a0'),
       h('div', { class: 'card-stats' }, soilGauge(device.soil_moisture, device.water_target, 64, `card:${id}:soil`),
         h('div', { class: 'card-figures' },
-          h('div', {}, h('span', { class: 'card-label' }, 'battery'), battery),
+          h('div', {}, h('span', { class: 'card-label' }, 'battery'), battery, powerIcon(device)),
           h('div', { class: 'card-bar' }, h('i', { style: `width: ${missing(device.battery) ? 0 : device.battery}%`,
-            class: !missing(device.battery) && device.battery <= 20 ? 'low' : '' })),
+            class: onUsb(device) ? 'charging' : !missing(device.battery) && device.battery <= 20 ? 'low' : '' })),
           h('div', { class: `card-water${device.needs_water ? ' now' : ''}` }, water))),
       h('div', { class: 'card-foot' }, h('span', { class: `online-dot ${device.online ? 'on' : 'off'}` }), ago(device.last_seen),
         status === 'outdated' ? h('span', { class: 'badge text-bg-warning ms-auto' }, 'behind') : null,
@@ -238,7 +238,7 @@ export function deviceRow(device) {
     h('td', { class: 'mono' }, id),
     h('td', { class: 'mono small' }, device.address || '–'),
     firmware,
-    h('td', { class: 'text-end' }, pct(device.battery)),
+    h('td', { class: 'text-end text-nowrap' }, powerIcon(device), pct(device.battery)),
     h('td', { class: `text-end${device.needs_water ? ' text-warning' : ''}` }, pct(device.soil_moisture)),
     h('td', { class: 'text-end' }, pct(device.air_humidity)),
     h('td', { class: 'text-end' }, (device.temperature === null || device.temperature === undefined) ? '–' : `${device.temperature} °C`),
@@ -370,7 +370,7 @@ export function renderFleetHealth(visible) {
         d.reset_cause ? h('div', { class: 'small text-body-secondary' }, `last: ${d.reset_cause}`) : null),
       h('td', { class: srpClass }, srpText),
       h('td', { class: 'text-nowrap' }, signal(d)),
-      h('td', { class: !missing(d.battery) && d.battery <= 20 ? 'text-danger' : '' }, pct(d.battery)),
+      h('td', { class: `text-nowrap${!onUsb(d) && !missing(d.battery) && d.battery <= 20 ? ' text-danger' : ''}` }, pct(d.battery), powerIcon(d)),
       h('td', { class: 'text-nowrap' }, missing(r.drain_per_day) ? '–' : `${r.drain_per_day.toFixed(2)} %/day`),
       h('td', {}, h('span', { class: `badge text-bg-${fwClass}` }, fwText), d.image_version ? h('span', { class: 'small text-body-secondary ms-1' }, `v${d.image_version}`) : null),
       h('td', { class: 'text-nowrap' }, h('span', { class: `online-dot ${d.online ? 'on' : 'off'}` }), ago(d.last_seen)));

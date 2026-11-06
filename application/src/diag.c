@@ -164,7 +164,8 @@ void diag_link_read(otInstance *instance, struct diag_link *link)
 	(void)otThreadGetParentLastRssi(instance, &link->last_rssi);
 }
 
-size_t diag_format(char *payload, size_t size, const struct diag_link *link, const char *srp, int32_t soil_mv)
+size_t diag_format(char *payload, size_t size, const struct diag_link *link, const char *srp, int32_t soil_mv,
+		   const char *power)
 {
 	size_t length = 0U;
 	int written;
@@ -199,6 +200,7 @@ size_t diag_format(char *payload, size_t size, const struct diag_link *link, con
 		       link->parent_rssi, link->last_rssi, link->link_quality);
 	}
 	APPEND(",soil_mv=%d", (int)soil_mv);
+	APPEND(",power=%s", power);
 
 #undef APPEND
 

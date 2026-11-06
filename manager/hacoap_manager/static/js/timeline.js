@@ -6,10 +6,10 @@ import { statusClass } from './updates.js';
 
 const KINDS = [
   ['all', 'everything'], ['update', 'updates'], ['restart', 'restarts'], ['pump', 'pump runs'], ['settings', 'settings'],
-  ['network', 'network'], ['photo', 'photos'], ['alert', 'alerts'],
+  ['network', 'network'], ['power', 'power'], ['photo', 'photos'], ['alert', 'alerts'],
 ];
 const ICONS = { update: 'upload', restart: 'power', pump: 'droplets', settings: 'sliders-horizontal', parent: 'network',
-  network: 'network', photo: 'camera', alert: 'triangle-alert' };
+  network: 'network', power: 'plug', photo: 'camera', alert: 'triangle-alert' };
 
 const view = { id: null, entries: [], filter: 'all' };
 

@@ -313,6 +313,7 @@ class Diagnostics:
     last_rssi: int | None
     link_quality: int | None
     soil_mv: int | None   # the soil sensor's latest output, or None when it wasn't read
+    power: str = ""        # battery, usb, charging or charged ("" before this field)
 
 
 def parse_diag(payload):
@@ -336,7 +337,7 @@ def parse_diag(payload):
     soil_mv = number("soil_mv")
     return Diagnostics(number("boots") or 0, number("up") or 0, fields["reset"], fields.get("fault", ""),
                        fields.get("role", ""), fields.get("srp", ""), hex16("rloc"), hex16("parent"), number("rssi"), number("last_rssi"),
-                       number("lq"), soil_mv if soil_mv is not None and soil_mv >= 0 else None)
+                       number("lq"), soil_mv if soil_mv is not None and soil_mv >= 0 else None, fields.get("power", ""))
 
 
 async def get_diag(host, **kwargs):

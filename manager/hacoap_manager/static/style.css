@@ -1050,3 +1050,13 @@ td.flip { display: table-cell; animation: flip-cell 1.4s ease-out; }
   border-radius: .8rem; padding: 1.5rem; }
 .login-brand { font-size: 1.3rem; margin-bottom: 1rem; }
 .access-address { font-family: var(--bs-font-monospace); user-select: all; }
+
+/* ---------------------------------------------------------------- a board on USB power */
+
+.power-icon { display: inline-flex; vertical-align: -.15em; margin: 0 .25rem; color: var(--t-text-muted); }
+.power-icon .icon { width: 1em; height: 1em; }
+.power-icon.power-charging, .power-icon.power-charged { color: var(--t-green); }
+.power-icon.power-charging .icon { animation: charging 2.4s ease-in-out infinite; }
+.card-bar i.charging { background: var(--t-green); }
+@keyframes charging { 50% { opacity: .45; } }
+@media (prefers-reduced-motion: reduce) { .power-icon.power-charging .icon { animation: none; } }

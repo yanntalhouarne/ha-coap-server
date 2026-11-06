@@ -1,6 +1,6 @@
 // A device's page: status, firmware, controls, form, charts, plant photos and presets.
 
-import { ago, api, busy, h, notify, pct, photoUrl, shortHash, state, svg, when } from './core.js';
+import { ago, api, busy, h, notify, onUsb, pct, photoUrl, powerText, shortHash, state, svg, when } from './core.js';
 import { daysText, renderDeviceDrain } from './dashboard.js';
 import { detailsTable, waterIn } from './network.js';
 import { deviceName, devicePath, deviceTags, pingDevice, refreshDevice, removeDevice, runDoctor, showSlots, soilGauge } from './devices.js';
@@ -61,7 +61,8 @@ export function renderDeviceStatus(device) {
     ...deviceTags(device).map((t) => h('span', { class: 'tag ms-2' }, t)));
   document.getElementById('device-status').replaceChildren(detailsTable([
     ['Last seen', ago(device.last_seen)],
-    ['Battery', device.battery !== null && device.battery !== undefined ? `${device.battery} % · ${daysText(forecast)}` : ''],
+    ['Battery', device.battery !== null && device.battery !== undefined
+      ? `${device.battery} % · ${onUsb(device) ? powerText(device) : daysText(forecast)}` : powerText(device)],
     ['Soil moisture', pct(device.soil_moisture)],
     ['Air humidity', pct(device.air_humidity)],
     ['Temperature', device.temperature !== null && device.temperature !== undefined ? `${device.temperature} °C` : ''],
@@ -110,8 +111,9 @@ export function renderDeviceHero(device) {
       h('div', { class: 'hero-label text-center' }, device.water_target ? `soil · water under ${device.water_target} %` : 'soil')),
     h('div', { class: 'hero-figures' },
       figure('droplet', 'needs water', water, device.plant || '', device.needs_water ? 'warn' : ''),
-      figure('battery-medium', 'battery', battery, has(device.battery) ? daysText(health.battery_forecast) : '',
-        has(device.battery) && device.battery <= 20 ? 'bad' : ''),
+      figure(device.power === 'charging' ? 'battery-charging' : 'battery-medium', 'battery', battery,
+        onUsb(device) ? powerText(device) : has(device.battery) ? daysText(health.battery_forecast) : '',
+        !onUsb(device) && has(device.battery) && device.battery <= 20 ? 'bad' : ''),
       figure('signal-low', 'signal', signal, link ? `to its parent ${link.parent}` : 'read the network to see it'),
       figure('thermometer', 'air', air, `humidity ${pct(device.air_humidity)}`)),
     h('div', { class: 'hero-actions' },

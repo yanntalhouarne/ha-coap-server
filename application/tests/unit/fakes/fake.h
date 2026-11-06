@@ -202,6 +202,7 @@ enum fake_pin
 	FAKE_PIN_usrbutton,
 	FAKE_PIN_sensor_en,
 	FAKE_PIN_sensor_pwr,
+	FAKE_PIN_charging,
 	FAKE_PIN_COUNT,
 };
 
@@ -223,6 +224,7 @@ extern int fake_gpio_input[FAKE_PIN_COUNT];       // what gpio_pin_get_dt() read
 extern gpio_flags_t fake_gpio_flags[FAKE_PIN_COUNT]; // last configuration of each pin
 extern gpio_flags_t fake_gpio_int_flags[FAKE_PIN_COUNT];
 extern struct gpio_callback *fake_gpio_callback;  // last callback added
+extern bool fake_vbus;                            // the nRF52840's USB power detection (hal/nrf_power.h)
 
 static inline bool gpio_is_ready_dt(const struct gpio_dt_spec *spec)
 {

@@ -46,6 +46,21 @@ config HACOAP_MCUMGR_POLL_TIMEOUT_S
 	range 1 3600
 	default 30
 
+config HACOAP_USB_POLL_PERIOD_MS
+	int "Thread poll period on USB power (ms)"
+	range 10 600000
+	default 500
+	help
+	  On USB power, battery life doesn't matter: the device polls its parent at
+	  least this often, so commands reach it quickly. On the battery again, it
+	  goes back to the normal period (CONFIG_OPENTHREAD_POLL_PERIOD, or the
+	  'poll_ms' setting). mcumgr still polls faster (HACOAP_MCUMGR_POLL_PERIOD_MS).
+
+config HACOAP_POWER_CHECK_S
+	int "How often the device checks whether it's on USB power, and charging (s)"
+	range 1 3600
+	default 10
+
 config HACOAP_REMOTE_LOG
 	bool "Log over the air (the 'log' CoAP resource)"
 	select LOG

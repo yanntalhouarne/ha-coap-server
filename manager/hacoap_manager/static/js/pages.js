@@ -1,6 +1,6 @@
 // The wall display and the weekly summary.
 
-import { api, h, notify, pct, photoUrl, shortHash, svg, when } from './core.js';
+import { api, h, notify, pct, photoUrl, powerText, shortHash, svg, when } from './core.js';
 import { fullLasts, imageLabel, perDay } from './dashboard.js';
 import { waterIn } from './network.js';
 
@@ -58,7 +58,8 @@ export function renderWall() {
           p.water_target ? h('div', { class: 'wall-bar-target', style: `left: ${p.water_target}%`, title: `water under ${p.water_target} %` }) : null),
         h('div', { class: 'wall-note' }, p.needs_water ? 'needs water now'
           : p.water_forecast && p.water_forecast.days !== null ? `water ${waterIn(p.water_forecast)}` : ''),
-        h('div', { class: 'wall-meta' }, `battery ${pct(p.battery)}`, p.online ? '' : ' · offline')));
+        h('div', { class: 'wall-meta' }, `battery ${pct(p.battery)}`, powerText(p) ? ` · ${powerText(p)}` : '',
+          p.online ? '' : ' · offline')));
   }));
 }
 

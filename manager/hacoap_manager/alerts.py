@@ -31,7 +31,7 @@ class AlertService:
             # Only once the app has asked every device: at start, the last answers are old.
             if self.inventory.refreshed and not device["online"] and device["last_seen"] is not None:
                 found[f"offline:{device_id}"] = ("offline", device_id, f"{NAME} stopped answering")
-            if device["battery"] is not None and device["battery"] <= fleet.LOW_BATTERY:
+            if device["battery"] is not None and device["battery"] <= fleet.LOW_BATTERY and not fleet.on_usb(device):
                 found[f"battery:{device_id}"] = ("battery", device_id,
                                                  f"{NAME}'s battery is low (under {fleet.LOW_BATTERY + 1} %)")
             if device["needs_water"]:

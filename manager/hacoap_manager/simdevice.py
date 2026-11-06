@@ -114,6 +114,8 @@ class SimulatedDevice:
     dynamic: bool = False            # readings change over time (battery drains), for trying the app
     battery_drain_per_hour: float = 0.5
     battery_start: float = 87
+    power: str = "battery"           # battery, usb, charging or charged ('diag'): see plug()
+    charge_per_hour: float = 30.0    # % per hour on a charger (dynamic)
     phase: float = 0.0               # shifts the dynamic readings, so a fleet's devices differ
     pump_running: bool = False
     pings: int = 0
@@ -134,6 +136,7 @@ class SimulatedDevice:
     forget_wipes_srp_key: bool = False      # as the firmware did before: a new key after forgetting
     short_info_id: bool = False             # as firmware up to d98bac1: 7 characters of its ID in 'info'
     on_srp_change: object = None            # called with (device, advertised) when it (un)registers
+    _charge_from: tuple = None       # (time, battery %) when plugged in (dynamic)
     _upload: bytearray = None
     _upload_size: int = 0
     _rebooting_until: float = 0.0
@@ -209,10 +212,34 @@ class SimulatedDevice:
         if not self.dynamic:
             return bytes([soil]) + self.data[1:]
         hours = self._hours()
-        battery = max(3, round(self.battery_start - hours * self.battery_drain_per_hour))
+        battery = self._battery(hours)
         humidity = round(55 + 10 * math.sin(hours / 9 + 1 + self.phase))
         temperature = round(18 + 6 * math.sin(hours / 4 + self.phase))
         return bytes([soil, battery, humidity, temperature & 0xFF])
+
+    def _battery(self, hours):
+        """Draining on its battery, or rising on a charger until it's full (then 'charged')."""
+        if self._charge_from is None:
+            return max(3, round(self.battery_start - hours * self.battery_drain_per_hour))
+        since, level = self._charge_from
+        charged = min(100, round(level + (time.time() - since) / 3600 * self.charge_per_hour))
+        if charged >= 100 and self.power == "charging":
+            self.power = "charged"
+        return charged
+
+    def plug(self, usb=True):
+        """USB power on (it charges until full) or off (it drains from where it got to)."""
+        hours = self._hours()
+        level = self._battery(hours) if self.dynamic else self.data[1]
+        if usb:
+            self._charge_from = (time.time(), level)
+            self.power = "charging" if level < 100 else "charged"
+            self.log(f"Power: {self.power}")
+        else:
+            self._charge_from = None
+            self.battery_start = level + hours * self.battery_drain_per_hour
+            self.power = "battery"
+            self.log("Power: battery")
 
     @property
     def fw_version(self):
@@ -276,7 +303,7 @@ class SimulatedDevice:
             text += f",fault={self.fault}"
         text += (f",role=child,srp={self.srp_state},rloc={self.rloc16:04x},parent={self.parent_rloc16:04x},"
                  f"rssi=-62,last_rssi=-60,lq=3")
-        return (text + f",soil_mv={self.soil_mv()}").encode()
+        return (text + f",soil_mv={self.soil_mv()},power={self.power}").encode()
 
     def _settings_response(self):
         return {"settings": {name: [self.settings[name], *values] for name, values in SETTINGS.items()},
@@ -648,6 +675,8 @@ def fleet(count):
                                             battery_start=87 if i == 0 else 95 - (i * 37) % 80,
                                             battery_drain_per_hour=0.5 if i == 0 else 0.2 + (i % 4) * 0.25,
                                             phase=i * 0.7)
+        if i == 2:
+            device.plug()  # one on a charger
         result.append((f"127.0.0.{i + 1}", device))
     return result
 
