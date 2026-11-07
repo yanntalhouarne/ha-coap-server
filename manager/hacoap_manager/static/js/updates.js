@@ -45,11 +45,16 @@ document.getElementById('update-form').addEventListener('submit', (event) => {
   const image = state.images.find((i) => i.hash === imageHash);
   const refused = !!image && REFUSED_SIGNERS.includes(image.signer);
   if (refused && !confirm(`${image.detail}.\n\nSend it anyway? Only for the simulator, or a board with a development bootloader.`)) return;
+  const permanent = document.getElementById('permanent-update').checked;
+  if (permanent && !confirm('Permanent update: the bootloader won\'t go back to the current image, even if the new one '
+    + 'fails to start. If it never starts, the board stays offline until it\'s flashed over SWD.\n\n'
+    + 'Use it for boards whose first start after a restart fails (the watchdog resets them, then they start cleanly), '
+    + 'with an image known to run. Go on?')) return;
   busy(event.submitter, async () => {
     const job = await api('POST', '/api/updates', {
       image_hash: imageHash, targets, stop_on_failure: document.getElementById('stop-on-failure').checked,
       staged: document.getElementById('staged').checked, allow_unverified: refused,
-      ignore_battery: document.getElementById('ignore-battery').checked,
+      ignore_battery: document.getElementById('ignore-battery').checked, permanent,
     });
     state.jobs.set(job.id, job);
     renderJobs();
@@ -118,7 +123,8 @@ const uploads = new Map();  // when each upload started showing progress: for th
 
 // Where each step stands for this device: done, active, failed, skipped or (by default) waiting
 function stepStates(t) {
-  const at = STEPS.findIndex(([step]) => step === (t.status === 'failed' ? t.failed_at : t.step));
+  const current = t.status === 'failed' ? t.failed_at : t.step;
+  const at = STEPS.findIndex(([step]) => step === (current === 'making it permanent' ? 'testing' : current));
   if (t.status === 'updated') return STEPS.map(() => 'done');
   if (t.status === 'already-current') return STEPS.map((_, i) => (i === 0 ? 'done' : 'skipped'));
   if (t.status === 'running') return STEPS.map((_, i) => (i < at ? 'done' : i === at ? 'active' : 'waiting'));

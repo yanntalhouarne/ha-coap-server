@@ -235,9 +235,10 @@ class DeviceLink:
         response = await self._request(ImageStatesRead())
         return [_slot_state(image) for image in response.images]
 
-    async def test(self, image_hash):
-        """Marks the image in slot 1 to be tried at the next reset."""
-        response = await self._request(ImageStatesWrite(hash=bytes.fromhex(image_hash), confirm=False))
+    async def test(self, image_hash, permanent=False):
+        """Marks the image in slot 1 to be tried at the next reset, or (permanent) to replace the
+        running one for good: MCUboot won't go back to the old one if the new one doesn't start."""
+        response = await self._request(ImageStatesWrite(hash=bytes.fromhex(image_hash), confirm=permanent))
         return [_slot_state(image) for image in response.images]
 
     async def confirm(self):

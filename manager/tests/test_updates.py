@@ -94,6 +94,20 @@ async def test_a_reverted_update_fails_and_stops_the_rollout(fleet, start_sim):
     assert [h["result"] for h in fleet.db.updates()] == ["skipped", "failed"]
 
 
+async def test_a_permanent_update_isnt_reverted(fleet, start_sim):
+    # A board whose firmware can't start right after a soft reset: a test is reverted, a
+    # permanent image stays (it starts cleanly after the watchdog reset)
+    server = await start_sim(fail_boot=True)
+    fast_settings(fleet.settings, server)
+    fleet.db.upsert_device("aaaa", address="127.0.0.1")
+    job = await run(fleet, [{"device_id": "aaaa"}], permanent=True)
+    assert job.targets[0].status == "updated", job.targets[0].message
+    assert job.targets[0].message == "Updated (permanent)"
+    primary = server.device.slots[0]
+    assert primary.info.hash == NEW_HASH and primary.confirmed
+    assert job.as_dict()["permanent"] is True
+
+
 async def test_two_devices_one_after_the_other(fleet, start_sim):
     first = await start_sim()
     fast_settings(fleet.settings, first)

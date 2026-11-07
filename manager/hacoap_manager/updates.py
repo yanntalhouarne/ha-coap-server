@@ -55,6 +55,7 @@ class UpdateJob:
     stop_on_failure: bool = True
     staged: bool = False     # pause after the first device
     ignore_battery: bool = False  # update devices under the battery limit too
+    permanent: bool = False  # marked permanent before the reset: MCUboot never goes back to the old image
     state: str = "running"   # running, paused, done, failed, cancelled
     created: float = field(default_factory=time.time)
     cancel_requested: bool = False
@@ -80,9 +81,12 @@ class UpdateManager:
     def running_job(self):
         return next((j for j in self.jobs.values() if j.state in ("running", "paused")), None)
 
-    def start(self, image_hash, targets, stop_on_failure=True, staged=False, console=None, ignore_battery=False):
+    def start(self, image_hash, targets, stop_on_failure=True, staged=False, console=None, ignore_battery=False,
+              permanent=False):
         """Starts an update job. 'targets' are dicts with device_id, and transport ("udp" by
-        default) or serial_port."""
+        default) or serial_port. 'permanent': the image is marked permanent before the reset, not
+        for a test, so a first start that fails isn't reverted (for boards whose firmware can't
+        start right after a soft reset: the watchdog resets it, and it starts cleanly then)."""
         if self.running_job() is not None:
             raise UpdateError("An update is already running")
         image = self.db.image(image_hash)
@@ -114,7 +118,7 @@ class UpdateManager:
             job_targets.append(Target(device_id, transport, address, label=label))
 
         job = UpdateJob(uuid.uuid4().hex[:12], image_hash, image["version"], job_targets, stop_on_failure,
-                        staged=staged and len(job_targets) > 1, ignore_battery=ignore_battery)
+                        staged=staged and len(job_targets) > 1, ignore_battery=ignore_battery, permanent=permanent)
         self.jobs[job.id] = job
         self._tasks[job.id] = asyncio.create_task(self._run(job, data))
         self._publish(job)
@@ -244,8 +248,8 @@ class UpdateManager:
                     raise UpdateError("The image isn't in slot 1 after the upload")
             target.progress = 1.0
 
-            self._step(job, target, "testing")
-            await link.test(job.image_hash)
+            self._step(job, target, "making it permanent" if job.permanent else "testing")
+            await link.test(job.image_hash, permanent=job.permanent)
             self._step(job, target, "rebooting")
             await link.reset()
 
@@ -257,7 +261,7 @@ class UpdateManager:
             slots = {s.slot: s for s in await link.confirm()}
         if slots.get(0) is None or slots[0].hash != job.image_hash or not slots[0].confirmed:
             raise UpdateError("The device didn't confirm the new image")
-        return "updated", "Updated and confirmed"
+        return "updated", "Updated (permanent)" if job.permanent else "Updated and confirmed"
 
     async def _wait_for_new_image(self, target, image_hash, old_hash, settings):
         """Waits until the device runs the new image (slot 0) after the reset."""

@@ -484,7 +484,7 @@
               <button class="btn btn-sm btn-outline-secondary" type="button" id="refresh-ports">Refresh</button>
             </div>
           </div>
-          <div class="col-12 d-flex align-items-center gap-3">
+          <div class="col-12 d-flex flex-wrap align-items-center gap-3">
             <div class="form-check">
               <input class="form-check-input" type="checkbox" id="stop-on-failure" checked>
               <label class="form-check-label" for="stop-on-failure">Stop at the first failure</label>
@@ -496,6 +496,10 @@
             <div class="form-check">
               <input class="form-check-input" type="checkbox" id="ignore-battery">
               <label class="form-check-label" for="ignore-battery" id="ignore-battery-label">Update low batteries too</label>
+            </div>
+            <div class="form-check" title="For boards whose firmware can't start right after a restart while its watchdog runs: their first start fails, the watchdog resets them, and they start cleanly then. A test would be reverted at that reset; a permanent image stays. There's no going back to the old image if the new one never starts.">
+              <input class="form-check-input" type="checkbox" id="permanent-update">
+              <label class="form-check-label" for="permanent-update">Permanent: no going back</label>
             </div>
             <button class="btn btn-outline-secondary ms-auto" type="button" id="whats-new">What's new?</button>
             <button class="btn btn-success" type="submit" id="start-update">Start update</button>

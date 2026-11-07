@@ -687,7 +687,8 @@ def create_app(services, background_tasks=True, on_quit=None, port=None):
                                    "with a development bootloader.")
         try:
             job = s.updates.start(image_hash, list(body.get("targets", [])), bool(body.get("stop_on_failure", True)),
-                                  bool(body.get("staged", False)), s.console, bool(body.get("ignore_battery", False)))
+                                  bool(body.get("staged", False)), s.console, bool(body.get("ignore_battery", False)),
+                                  permanent=bool(body.get("permanent", False)))
         except UpdateError as exc:
             raise _bad_request(exc)
         return job.as_dict()
