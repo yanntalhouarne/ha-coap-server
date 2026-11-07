@@ -7,9 +7,9 @@
  *
  * The nRF52 watchdog keeps running across soft resets: after an update, it's still counting
  * down from the previous image's last feed, through the bootloader's swap. So it's fed before
- * the kernel starts, and set up before main's boot delay. (It also keeps the 32 kHz clock
- * running, which is why prj.conf doesn't wait for that clock at boot: see
- * CONFIG_SYSTEM_CLOCK_NO_WAIT there.)
+ * the kernel starts, and set up before main's boot delay. That isn't enough on the boards:
+ * an image started while the watchdog runs gets stuck before main (HACOAP_BOOT_PROBE), and only
+ * starts cleanly after the watchdog reset; see 'permanent' updates in the fleet manager.
  */
 
 #include <zephyr/drivers/watchdog.h>
