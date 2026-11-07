@@ -22,6 +22,8 @@ static void reset_module(void)
 	changes = 0;
 	last_change = POWER_BATTERY;
 	fake_gpio_input[FAKE_PIN_charging] = 0;
+	fake_gpio_dev.ready = true;
+	fake_vbus = false;
 	check_work.scheduled = false;
 	check_work.schedules = 0;
 }
@@ -66,6 +68,22 @@ static void test_charging_then_charged_then_unplugged(void)
 	CHECK(check_work.scheduled); // and it keeps checking
 }
 
+static void test_charging_without_vbus(void)
+{
+	/* A board whose module doesn't see the USB's 5 V: the charger still says it's charging */
+	reset_module();
+	fake_gpio_input[FAKE_PIN_charging] = 1; // CHRG low: charging
+	power_init(on_changed);
+	CHECK_EQ(power_source(), POWER_CHARGING);
+	CHECK(power_on_usb(power_source())); // so it polls fast, as on USB
+	CHECK_EQ(changes, 1);
+
+	fake_gpio_input[FAKE_PIN_charging] = 0; // full (or unplugged): nothing tells them apart
+	fake_dwork_run(&check_work);
+	CHECK_EQ(power_source(), POWER_BATTERY);
+	CHECK_EQ(changes, 2);
+}
+
 static void test_without_the_charge_pin_usb_is_still_known(void)
 {
 	reset_module();
@@ -88,6 +106,7 @@ int main(void)
 {
 	RUN_TEST(test_on_the_battery);
 	RUN_TEST(test_charging_then_charged_then_unplugged);
+	RUN_TEST(test_charging_without_vbus);
 	RUN_TEST(test_without_the_charge_pin_usb_is_still_known);
 	RUN_TEST(test_names);
 	return TEST_RESULT();

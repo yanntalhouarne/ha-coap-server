@@ -406,6 +406,8 @@ The board knows where its power comes from, and says so in `diag` (`power=`):
 - `charged`: on USB, and the charger is done.
 - `usb`: on USB, but CHRG can't be read.
 
+The charger only runs from USB, so a low CHRG means `charging` even when VBUS isn't seen: a board whose module doesn't get the USB's 5 V on its VBUS pad (seen on one board, 488bc4d9) still says it's charging, and polls fast. Once its battery is full it says `battery`: VBUS is the only sign of USB then.
+
 It checks every `CONFIG_HACOAP_POWER_CHECK_S` (10 s): a couple of register reads, nothing next to a Thread poll. On USB power, battery life doesn't matter, so the board polls its parent every `CONFIG_HACOAP_USB_POLL_PERIOD_MS` (500 ms) at least, and commands reach it at once; back on the battery, the normal period again (or the `poll_ms` setting). The fleet manager shows a charging or plug icon next to the battery, leaves the time on USB out of the battery's drain and forecast, and raises no low-battery alert while a board charges.
 
 ### Restarts and crashes

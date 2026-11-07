@@ -16,7 +16,7 @@ enum power_source
 {
 	POWER_BATTERY,  // no USB power
 	POWER_USB,      // USB power, charge state unknown (the charger's CHRG pin can't be read)
-	POWER_CHARGING, // USB power, the charger is charging the battery
+	POWER_CHARGING, // USB power, the charger is charging the battery (said even if VBUS isn't seen)
 	POWER_CHARGED,  // USB power, the charger is done (or has no battery)
 };
 

@@ -5,7 +5,7 @@
  *
  * Where the board's power comes from (see power.h). USB power is the nRF52840's own VBUS
  * detection; whether the battery is charging is the STC4054's CHRG output (P1.10, low while
- * charging, open drain with a pull-up). Both are read every CONFIG_HACOAP_POWER_CHECK_S
+ * charging, open drain with a pull-up). Charging also counts as USB power without VBUS. Both are read every CONFIG_HACOAP_POWER_CHECK_S
  * seconds from the system work queue: a few register reads, a negligible cost next to a
  * Thread poll, and simpler than interrupts on both.
  */
@@ -34,22 +34,21 @@ static power_changed_cb_t changed_cb;
 
 static enum power_source read_source(void)
 {
-	int charging;
+	bool vbus = nrf_power_usbregstatus_vbusdet_get(NRF_POWER);
+	int charging = charging_pin_ok ? gpio_pin_get_dt(&charging_gpio) : -ENODEV; // active low in the devicetree: 1 while charging
 
-	if (!nrf_power_usbregstatus_vbusdet_get(NRF_POWER))
+	/* The charger only runs from USB, so charging means USB power even when VBUS doesn't
+	 * show it (a board whose module doesn't get the USB's 5 V on its VBUS pad). Once the
+	 * battery is full such a board can't tell USB from the battery: VBUS is the only sign. */
+	if (charging == 1)
+	{
+		return POWER_CHARGING;
+	}
+	if (!vbus)
 	{
 		return POWER_BATTERY;
 	}
-	if (!charging_pin_ok)
-	{
-		return POWER_USB;
-	}
-	charging = gpio_pin_get_dt(&charging_gpio); // active low in the devicetree: 1 while charging
-	if (charging < 0)
-	{
-		return POWER_USB;
-	}
-	return charging ? POWER_CHARGING : POWER_CHARGED;
+	return (charging == 0) ? POWER_CHARGED : POWER_USB;
 }
 
 static void on_check(struct k_work *work);
@@ -85,7 +84,7 @@ int power_init(power_changed_cb_t on_changed)
 	}
 	else
 	{
-		/* The pull-up only draws current while the charger holds the pin low (on USB) */
+		/* The pull-up only draws current while the charger holds the pin low (charging, on USB) */
 		err = gpio_pin_configure_dt(&charging_gpio, GPIO_INPUT);
 		charging_pin_ok = (err == 0);
 	}
