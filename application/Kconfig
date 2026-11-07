@@ -190,9 +190,15 @@ menu "Watchdog"
 
 config HACOAP_WDT_TIMEOUT_MS
 	int "Watchdog timeout (ms)"
-	default 30000
+	default 120000
 	help
-	  The SoC resets if the watchdog is not fed within this time.
+	  The SoC resets if the watchdog is not fed within this time. The
+	  watchdog keeps running across a soft reset (an update's, mcumgr's),
+	  and the start that follows is slow while it runs: on the boards, a
+	  board answered again 15 to 40 s after a plain restart. With 30 s,
+	  the watchdog reset it first, and an update's test image was reverted
+	  every time. A running watchdog's timeout can't change: a new value
+	  applies from the next power-on or watchdog reset.
 
 config HACOAP_WDT_FEED_PERIOD_MS
 	int "Watchdog feed period (ms)"

@@ -229,7 +229,7 @@ The application's settings are Kconfig options, declared in `application/Kconfig
 | `CONFIG_HACOAP_SENSOR_SAMPLE_PERIOD_S` | 900 | Sensor sampling period (s). Shorter means fresher data and more power. |
 | `CONFIG_HACOAP_SOIL_POWER_UP_MS` | 200 | Soil sensor settling time before sampling |
 | `CONFIG_HACOAP_SOIL_DRY_MV` / `CONFIG_HACOAP_SOIL_WET_MV` | 2200 / 980 | Soil sensor calibration: output at 0% and 100% |
-| `CONFIG_HACOAP_WDT_TIMEOUT_MS` / `CONFIG_HACOAP_WDT_FEED_PERIOD_MS` | 30000 / 10000 | Watchdog timeout and feed period |
+| `CONFIG_HACOAP_WDT_TIMEOUT_MS` / `CONFIG_HACOAP_WDT_FEED_PERIOD_MS` | 120000 / 10000 | Watchdog timeout and feed period. Not under about a minute: see Watchdog below. |
 | `CONFIG_HACOAP_SRP_*` | see [SRP registration](#srp-registration) | SRP names |
 
 Standard Zephyr and OpenThread options work the same way, for example `CONFIG_OPENTHREAD_POLL_PERIOD` or `CONFIG_BOARD_ENABLE_DCDC`.
@@ -416,7 +416,7 @@ The SDK comes from forks of `sdk-nrf` and `sdk-zephyr`, pinned to exact commits 
 
 ### Board notes
 - **DC/DC regulator**: the board enables the nRF52840's DC/DC regulator (`CONFIG_BOARD_ENABLE_DCDC`, default `y`), since the ACN52840 module includes the converter components. If a board doesn't boot with it, turn it off for both the app and MCUboot (`-DCONFIG_BOARD_ENABLE_DCDC=n -Dmcuboot_CONFIG_BOARD_ENABLE_DCDC=n`) and reflash over SWD.
-- **Watchdog**: the application starts a 30 s hardware watchdog, fed every 10 s from the system work queue. A watchdog reset during an MCUboot test boot reverts to the previous image.
+- **Watchdog**: the application starts a 120 s hardware watchdog, fed every 10 s from the system work queue. A watchdog reset during an MCUboot test boot reverts to the previous image. The nRF52840's watchdog keeps running across a soft reset (an update's, or mcumgr's), and the start that follows is slow while it runs (15 to 40 s before the board answers, seen on the boards): with a 30 s watchdog, it reset the board first, and every update's test image was reverted. A running watchdog's timeout can't change, so boards on 30 s firmware need one **permanent** update (fleet manager) to a 120 s image; from then on, normal test updates work.
 - **UART0** is disabled unless the `uart-console` variant enables it, since its receiver draws current in sleep.
 - **User button**: S1 (P1.13) is listed in `sense-edge-mask` in the board DTS, so its interrupt uses the GPIO PORT event rather than a GPIOTE channel, which costs current in sleep.
 - **RAM power-down**: RAM sections above the C library's heap are powered off, and powered back on as the heap grows (`CONFIG_RAM_POWER_ADJUST_ON_HEAP_RESIZE`). This needs the full newlib rather than newlib-nano, which adds about 13 KB of flash. The `debug` variant goes back to newlib-nano without it, to fit.
