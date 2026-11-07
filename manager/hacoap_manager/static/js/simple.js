@@ -17,6 +17,11 @@ const icon = (name) => svg('svg', { class: 'icon', 'aria-hidden': 'true' }, svg(
 const plantHref = (id) => `#plant/${encodeURIComponent(id)}`;
 const has = (v) => v !== null && v !== undefined;
 
+// What a plant is called: the name given to it (its plant field), big; the board's own name
+// (often ha-coap-<ID>) small under it, when it's another one
+const title = (p) => p.plant || p.name || p.device_id;
+const boardName = (p) => (p.name || p.device_id) !== title(p) ? (p.name || p.device_id) : '';
+
 // A simple route was shown: draw it
 export async function loadSimple(route, rest, fromWall) {
   simple.route = route;
@@ -59,11 +64,12 @@ function renderPlants() {
   const plants = simple.plants;
   document.getElementById('plants-banner').replaceChildren(...plants.filter((p) => p.needs_water).map((p) =>
     h('a', { class: 'plants-banner', href: plantHref(p.device_id) }, icon('droplet'),
-      h('span', {}, h('b', {}, p.name), ' needs water'), h('span', { 'aria-hidden': 'true' }, '›'))));
+      h('span', {}, h('b', {}, title(p)), ' needs water'), h('span', { 'aria-hidden': 'true' }, '›'))));
   document.getElementById('plant-grid').replaceChildren(...(plants.length ? plants.map((p) =>
     h('a', { class: `plant-card${p.needs_water ? ' thirsty' : ''}${p.online ? '' : ' offline'}`, href: plantHref(p.device_id) },
       batteryRing(p, 'plant-ring'),
-      h('div', { class: 'plant-card-name' }, p.name),
+      h('div', { class: 'plant-card-name' }, title(p)),
+      h('div', { class: 'plant-card-board' }, boardName(p)),
       h('div', { class: 'plant-card-soil' }, has(p.soil_moisture) ? `${p.soil_moisture} %` : '–', h('small', {}, ' soil')),
       h('div', { class: 'plant-card-note' }, plantNote(p))))
     : [h('div', { class: 'simple-empty' }, h('p', {}, 'No plants yet. Find your boards in the advanced view, then give each one a name and a plant.'),
@@ -101,7 +107,7 @@ function signalWord(link) {
 function renderPlant(details) {
   const device = details.device, health = details.health || {};
   const id = device.device_id;
-  const name = device.name || id;
+  const name = title(device);
   const target = device.water_target;
   const soil = device.soil_moisture;
   const forecast = health.water_forecast;
@@ -126,8 +132,10 @@ function renderPlant(details) {
     h('section', { class: 'plant-hero' },
       batteryRing(device, 'plant-hero-ring'),
       h('h1', {}, name),
-      h('div', { class: 'plant-sub' }, [device.plant && device.plant.toLowerCase() !== name.toLowerCase() ? device.plant : null, device.location].filter(Boolean).join(' · '),
-        device.plant || device.location ? ' · ' : '', h('span', { class: device.online ? 'text-success' : 'text-body-secondary' }, device.online ? 'online' : 'offline'))),
+      h('div', { class: 'plant-sub' }, [boardName(device), device.location].filter(Boolean).join(' · '),
+        boardName(device) || device.location ? ' · ' : '', h('span', { class: device.online ? 'text-success' : 'text-body-secondary' }, device.online ? 'online' : 'offline')),
+      h('button', { class: 'btn btn-sm btn-link plant-rename', type: 'button', onclick: () => renamePlant(device) },
+        device.plant ? 'Rename' : 'Give it a name')),
     h('section', { class: `soil-card${device.needs_water ? ' thirsty' : ''}`, 'data-board': id },
       h('div', { class: 'd-flex align-items-baseline gap-2' }, h('span', { class: 'soil-big' }, has(soil) ? `${soil} %` : '–'),
         h('span', { class: 'small text-body-secondary' }, 'soil moisture')),
@@ -147,6 +155,14 @@ function renderPlant(details) {
       overlays: target ? [{ name: 'target', color: 'var(--t-text-muted)', points: span }] : [], name })),
     h('a', { class: 'plant-advanced', href: `#device/${encodeURIComponent(id)}` }, 'Advanced details: firmware, network, log ›'));
   showPumping();
+}
+
+// The plant's name (its plant field), from its page
+async function renamePlant(device) {
+  const value = prompt('What should this plant be called?', device.plant || '');
+  if (value === null) return;
+  await api('PATCH', devicePath(device), { plant: value.trim() });
+  await loadPlant(device.device_id, simple.fromWall);
 }
 
 // ------------------------------------------------------------------ alerts
