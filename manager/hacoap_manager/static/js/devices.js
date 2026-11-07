@@ -367,7 +367,9 @@ export function renderFleetHealth(visible) {
     const [srpText, srpClass] = srp[d.srp_state] || ['–', 'text-body-secondary'];
     const [fwText, fwClass] = firmware[r.image_status] || ['–', 'secondary'];
     return h('tr', { 'data-board': d.device_id },
-      h('td', {}, h('a', { href: `#device/${encodeURIComponent(d.device_id)}`, class: 'device-link' }, deviceName(d))),
+      h('td', {}, h('a', { href: `#device/${encodeURIComponent(d.device_id)}`, class: 'device-link' }, deviceName(d)),
+        (d.plant || d.location) ? h('div', { class: 'small text-body-secondary' },  // as in the table
+          [d.plant, d.location].filter(Boolean).join(' · ')) : null),
       h('td', { class: r.bad_restarts ? 'text-danger' : '' }, r.restarts ? `${r.restarts}${r.bad_restarts ? ` (${r.bad_restarts} bad)` : ''}` : '0',
         d.reset_cause ? h('div', { class: 'small text-body-secondary' }, `last: ${d.reset_cause}`) : null),
       h('td', { class: srpClass }, srpText),
