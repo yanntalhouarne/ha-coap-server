@@ -50,3 +50,10 @@ if (window.matchMedia) {
   const asked = new URLSearchParams(location.search).get('theme');
   window.hacoapApplyTheme(asked || saved);
 })();
+
+// Simple or advanced (js/mode.js): marked before the page is drawn, so the other one never flashes
+try {
+  if (localStorage.getItem('hacoap-mode') !== 'advanced') document.documentElement.classList.add('simple-mode');
+} catch (error) {
+  document.documentElement.classList.add('simple-mode');
+}

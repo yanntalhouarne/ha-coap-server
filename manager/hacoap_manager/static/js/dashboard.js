@@ -233,6 +233,7 @@ export function renderAlerts() {
       h('button', { class: 'btn-close ms-auto', title: 'Dismiss', 'aria-label': 'Dismiss',
         onclick: () => dismissAlert(a) }))))
     : h('p', { class: 'text-body-secondary mb-0' }, 'Nothing needs attention.'));
+  document.dispatchEvent(new Event('hacoap-alerts'));  // the simple view's Alerts tab
 }
 
 // New alerts arrive one by one; a burst (at start, say) becomes one message.

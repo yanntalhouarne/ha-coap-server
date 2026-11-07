@@ -3,6 +3,7 @@
 import { api, h, notify, onUsb, photoUrl, powerText, shortHash, svg, when } from './core.js';
 import { fullLasts, imageLabel, perDay } from './dashboard.js';
 import { waterIn } from './network.js';
+import { simpleMode } from './mode.js';
 
 // ------------------------------------------------------------------ wall display
 
@@ -41,13 +42,13 @@ export function renderWallClock() {
 // 50 %, red at 20 % and under (the low-battery alert's level); on USB green, with a plug,
 // or a bolt and a slow pulse while charging.
 const LOW_BATTERY = 20;
-function batteryRing(p) {
+export function batteryRing(p, place = 'wall-photo') {
   const known = p.battery !== null && p.battery !== undefined;
   const level = known ? Math.max(0, Math.min(100, p.battery)) : 0;
   const usb = onUsb(p);
   const tone = usb ? 'usb' : !known ? 'unknown' : level <= LOW_BATTERY ? 'low' : level <= 50 ? 'mid' : 'ok';
   const label = known ? `${level} %` : '–';
-  return h('div', { class: `wall-photo ring-${tone}${p.power === 'charging' ? ' charging' : ''}`, title: `Battery ${label}${usb ? ` · ${powerText(p)}` : ''}` },
+  return h('div', { class: `${place} ring-box ring-${tone}${p.power === 'charging' ? ' charging' : ''}`, title: `Battery ${label}${usb ? ` · ${powerText(p)}` : ''}` },
     h('div', { class: 'wall-ring' },
       svg('svg', { class: 'wall-ring-arc', viewBox: '0 0 120 120', 'aria-hidden': 'true' },
         svg('circle', { class: 'track', cx: 60, cy: 60, r: 54, pathLength: 100 }),
@@ -69,7 +70,7 @@ export function renderWall() {
     const soil = p.soil_moisture;
     const fill = soil === null || soil === undefined ? 0 : Math.max(0, Math.min(100, soil));
     return h('a', { class: `wall-card${p.needs_water ? ' thirsty' : ''}${p.online ? '' : ' offline'}`,
-      href: `#device/${encodeURIComponent(p.device_id)}`, title: `Open ${p.name}` },
+      href: `#${simpleMode() ? 'plant' : 'device'}/${encodeURIComponent(p.device_id)}`, title: `Open ${p.name}` },
       batteryRing(p),
       h('div', { class: 'wall-body' },
         h('div', { class: 'wall-name' }, p.name),

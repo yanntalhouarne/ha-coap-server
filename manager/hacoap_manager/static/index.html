@@ -122,7 +122,8 @@
     <li><a href="#coap" data-tab="coap"><kbd>9</kbd><svg class="icon" aria-hidden="true"><use href="#i-radio-tower"/></svg>coap</a></li>
     <li><a href="#settings" data-tab="settings"><kbd>0</kbd><svg class="icon" aria-hidden="true"><use href="#i-settings"/></svg>settings</a></li>
   </ul>
-  <button class="btn btn-sm btn-outline-secondary ms-auto palette-button" type="button" id="palette-button"
+  <a class="btn btn-sm btn-outline-secondary ms-auto" href="#plants" title="The simple view: your plants, for a phone">simple view</a>
+  <button class="btn btn-sm btn-outline-secondary palette-button" type="button" id="palette-button"
           title="Search for a tab, a device or an action (Ctrl+K)"><svg class="icon" aria-hidden="true"><use href="#i-search"/></svg>search <kbd>Ctrl K</kbd></button>
   <div class="dropdown">
     <button class="btn btn-sm btn-outline-secondary dropdown-toggle" type="button" data-bs-toggle="dropdown"
@@ -144,6 +145,20 @@
   <span id="status-theme"></span>
   <span><svg class="icon" aria-hidden="true"><use href="#i-clock"/></svg><span id="status-clock"></span></span>
 </footer>
+
+<!-- The simple view (js/mode.js, js/simple.js): its header, and its tabs at the bottom -->
+<header class="simple-top" id="simple-top">
+  <a class="simple-brand" href="#plants"><span class="logo" aria-hidden="true"></span>my plants</a>
+  <div class="mode-switch" role="group" aria-label="View">
+    <a href="#plants" class="on" aria-current="true">Simple</a>
+    <a href="#dashboard">Advanced</a>
+  </div>
+</header>
+<nav class="simple-nav" id="simple-nav" aria-label="Main">
+  <a href="#plants" data-route="plants"><svg class="icon" aria-hidden="true"><use href="#i-sprout"/></svg>Plants</a>
+  <a href="#alerts" data-route="alerts"><svg class="icon" aria-hidden="true"><use href="#i-bell"/></svg>Alerts<span class="nav-badge d-none" id="simple-alert-count"></span></a>
+  <a href="#more" data-route="more"><svg class="icon" aria-hidden="true"><use href="#i-settings"/></svg>Settings</a>
+</nav>
 
 <main class="container-fluid pt-3">
   <div class="demo-banner d-none" id="demo-banner">
@@ -718,7 +733,7 @@
       <div class="wall-clock" id="wall-clock"></div>
       <div class="wall-tools">
         <button class="btn btn-sm btn-outline-secondary" id="wall-fullscreen" type="button">Full screen</button>
-        <a class="btn btn-sm btn-outline-secondary" href="#dashboard">Close</a>
+        <a class="btn btn-sm btn-outline-secondary" href="#home">Close</a>
       </div>
     </div>
     <div class="wall-grid" id="wall-grid"></div>
@@ -727,7 +742,7 @@
   <!-- Weekly summary: to print -->
   <section id="tab-summary" class="tab d-none">
     <div class="d-flex flex-wrap align-items-center gap-2 mb-3 no-print">
-      <a class="btn btn-sm btn-outline-secondary" href="#dashboard">← dashboard</a>
+      <a class="btn btn-sm btn-outline-secondary" href="#home">← back</a>
       <select class="form-select form-select-sm w-auto" id="summary-days">
         <option value="7" selected>the last 7 days</option><option value="14">the last 14 days</option>
         <option value="30">the last 30 days</option></select>
@@ -988,6 +1003,25 @@
         </div>
       </div>
     </div>
+  </section>
+  <!-- The simple view -->
+  <section id="tab-plants" class="tab d-none">
+    <div id="plants-banner"></div>
+    <div class="plant-grid" id="plant-grid"></div>
+  </section>
+  <section id="tab-plant" class="tab d-none">
+    <div class="plant-page" id="plant-page"></div>
+  </section>
+  <section id="tab-alerts" class="tab d-none">
+    <div class="simple-page">
+      <h2 class="simple-h">Alerts</h2>
+      <div id="simple-alerts"></div>
+      <h2 class="simple-h">Recently</h2>
+      <div id="simple-feed"></div>
+    </div>
+  </section>
+  <section id="tab-more" class="tab d-none">
+    <div class="simple-page" id="simple-more"></div>
   </section>
 </main>
 

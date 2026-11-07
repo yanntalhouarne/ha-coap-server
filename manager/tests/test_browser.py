@@ -233,3 +233,27 @@ def test_wall_display(page):
 def test_weekly_summary(page):
     dom = page("summary")
     assert "ha-coap fleet summary" in dom and "basil" in dom and "Batteries" in dom
+
+
+def test_simple_view(page):
+    dom = page("plants")                                             # the simple view: the plants as cards
+    assert 'class="simple-mode' in dom or "simple-mode" in dom.split("<body")[0]
+    assert "plant-card" in dom and "basil" in dom and "needs water" in dom
+    assert "wall-ring" in dom                                        # the battery ring around the plant
+    assert 'id="simple-alert-count"' in dom and "nav-badge" in dom
+    dom = page("plant/1a2b3c4d")                                     # a plant: soil, Water now, facts, its chart
+    assert "soil-card" in dom and "Water now" in dom and "plant-fact" in dom
+    assert "Soil, last 7 days" in dom and 'href="#device/1a2b3c4d"' in dom
+    dom = page("alerts")
+    assert "basil" in dom and "simple-list" in dom
+    dom = page("more")
+    assert "Advanced view" in dom and "Tokyo Night" in dom
+
+
+def test_simple_and_advanced_routes(page):
+    page("plants")
+    dom = page("")                                                   # nothing: the view last used (simple)
+    assert "plant-card" in dom
+    page("devices")                                                  # an advanced tab switches to the advanced view
+    dom = page("")
+    assert "simple-mode" not in dom.split("<body")[0] and 'id="tab-dashboard" class="tab"' in dom

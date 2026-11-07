@@ -12,6 +12,8 @@ import { loadHistory, renderUpdateForm } from './updates.js';
 import { loadNetwork, net } from './network.js';
 import { loadSummary, loadWall, stopWall, wall } from './pages.js';
 import { setNetworkView } from './floorplan.js';
+import { SIMPLE_ROUTES, homeRoute, setMode } from './mode.js';
+import { loadSimple } from './simple.js';
 
 // ------------------------------------------------------------------ tabs
 
@@ -22,19 +24,28 @@ export const PAGES = ['wall', 'summary'];  // pages without a tab
 let previousTab = null;
 let fromWall = false;
 
-// A route is a tab name, or "device/<id>" for one device's page.
+// A route is a tab name, or "device/<id>" for one device's page; in the simple view (mode.js),
+// "plants", "plant/<id>", "alerts" or "more". A route of one view switches to it; "home" (or
+// nothing) is the current view's first page.
 export function showTab(route) {
+  if (route === 'home' || route === '') route = homeRoute();
   const [name, ...rest] = route.split('/');
-  const known = name === 'device' || TABS.includes(name) || PAGES.includes(name);
-  const tab = known ? name : 'dashboard';
+  if (SIMPLE_ROUTES.includes(name)) setMode('simple');
+  else if (name === 'device' || TABS.includes(name)) setMode('advanced');
+  const known = name === 'device' || TABS.includes(name) || PAGES.includes(name) || SIMPLE_ROUTES.includes(name);
+  const tab = known ? name : homeRoute();
   if (previousTab === 'wall' && tab !== 'wall') wall.wasFullscreen = Boolean(document.fullscreenElement);
-  fromWall = tab === 'device' && (fromWall || previousTab === 'wall');
-  document.getElementById('device-to-wall').classList.toggle('d-none', !fromWall);
+  fromWall = ['device', 'plant'].includes(tab) && (fromWall || previousTab === 'wall');
+  document.getElementById('device-to-wall').classList.toggle('d-none', !(fromWall && tab === 'device'));
   previousTab = tab;
   for (const link of document.querySelectorAll('#tabs a')) {
     link.classList.toggle('active', link.dataset.tab === (tab === 'device' ? 'devices' : tab));
   }
+  for (const link of document.querySelectorAll('#simple-nav a')) {
+    link.classList.toggle('active', link.dataset.route === (tab === 'plant' ? 'plants' : tab));
+  }
   for (const section of document.querySelectorAll('.tab')) section.classList.toggle('d-none', section.id !== `tab-${tab}`);
+  if (SIMPLE_ROUTES.includes(tab)) loadSimple(tab, rest, fromWall).catch(() => {});
   document.body.classList.toggle('wall-mode', tab === 'wall');
   if (tab === 'wall') loadWall().catch(() => {}); else stopWall();
   if (tab === 'summary') loadSummary().catch(() => {});
@@ -55,5 +66,5 @@ export function showTab(route) {
 for (const link of document.querySelectorAll('#tabs a')) {
   link.addEventListener('click', (event) => { event.preventDefault(); history.replaceState(null, '', `#${link.dataset.tab}`); showTab(link.dataset.tab); });
 }
-window.addEventListener('hashchange', () => showTab(location.hash.slice(1) || 'dashboard'));
-export const currentRoute = () => location.hash.slice(1) || 'dashboard';
+window.addEventListener('hashchange', () => showTab(location.hash.slice(1)));
+export const currentRoute = () => location.hash.slice(1) || homeRoute();

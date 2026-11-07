@@ -397,10 +397,11 @@ body.wall-mode main { padding: 1.5rem 2rem !important; max-width: none; }
 .wall-card.offline { opacity: .55; }
 /* The photo (or the logo) in a ring that fills with the battery (pages.js batteryRing) */
 .wall-photo { width: 42%; flex: none; display: flex; align-items: center; justify-content: center; padding: 1rem .8rem 1.4rem;
-  background: var(--t-surface-2); --ring: var(--t-green); }
-.wall-photo.ring-mid { --ring: var(--t-yellow); }
-.wall-photo.ring-low { --ring: var(--t-red); }
-.wall-photo.ring-unknown { --ring: var(--t-text-muted); }
+  background: var(--t-surface-2); }
+.ring-box { --ring: var(--t-green); }
+.ring-box.ring-mid { --ring: var(--t-yellow); }
+.ring-box.ring-low { --ring: var(--t-red); }
+.ring-box.ring-unknown { --ring: var(--t-text-muted); }
 .wall-ring { position: relative; width: min(100%, 11rem); aspect-ratio: 1; }
 .wall-ring-arc { position: absolute; inset: 0; width: 100%; height: 100%; transform: rotate(-90deg); }
 .wall-ring-arc circle { fill: none; stroke-width: 9; }
@@ -413,10 +414,10 @@ body.wall-mode main { padding: 1.5rem 2rem !important; max-width: none; }
   padding: .1rem .6rem; border-radius: 1rem; background: var(--t-surface); border: 2px solid var(--ring); color: var(--t-text);
   font-weight: 700; font-size: 1rem; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .wall-ring-label .icon { width: 1em; height: 1em; color: var(--ring); }
-.wall-photo.charging .wall-ring-arc .level { animation: charging 2.4s ease-in-out infinite; }
-.wall-photo.ring-low .wall-ring-label { color: var(--t-red); }
-.wall-card.offline .wall-photo { --ring: var(--t-text-muted); }
-@media (prefers-reduced-motion: reduce) { .wall-photo.charging .wall-ring-arc .level { animation: none; } }
+.ring-box.charging .wall-ring-arc .level { animation: charging 2.4s ease-in-out infinite; }
+.ring-box.ring-low .wall-ring-label { color: var(--t-red); }
+.wall-card.offline .ring-box, .plant-card.offline .ring-box { --ring: var(--t-text-muted); }
+@media (prefers-reduced-motion: reduce) { .ring-box.charging .wall-ring-arc .level { animation: none; } }
 .wall-body { padding: 1rem 1.2rem; flex: 1; min-width: 0; display: flex; flex-direction: column; gap: .25rem; }
 .wall-name { font-size: 1.5rem; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .wall-plant { color: var(--t-text-muted); font-size: .9rem; min-height: 1.2em; }
@@ -1100,3 +1101,94 @@ td.flip { display: table-cell; animation: flip-cell 1.4s ease-out; }
 .coap-history-row { display: flex; flex-wrap: wrap; gap: .25rem .75rem; width: 100%; text-align: left; background: none;
   border: 0; border-bottom: 1px solid var(--t-border-subtle); padding: .3rem 0; color: inherit; }
 .coap-history-row:hover { background: var(--t-surface); }
+
+/* ------------------------------------------------------------------ the simple view (js/mode.js, js/simple.js) */
+
+.simple-top, .simple-nav { display: none; }
+.simple-mode .topbar, .simple-mode .statusbar { display: none !important; }
+.simple-mode body { padding-bottom: 4.75rem; }  /* above the tabs */
+.simple-mode body.wall-mode { padding-bottom: 0; }
+body.wall-mode .simple-top, body.wall-mode .simple-nav { display: none !important; }
+.simple-mode .simple-top { display: flex; align-items: center; gap: .75rem; max-width: 64rem; margin: 0 auto; padding: .9rem .75rem 0; }
+.simple-brand { flex: 1; display: flex; align-items: center; gap: .5rem; font-weight: 700; font-size: 1.1rem; color: var(--t-brand); text-decoration: none; }
+.simple-brand .logo { width: 1.6rem; height: 1.6rem; }
+.mode-switch { display: flex; padding: 3px; border-radius: 999px; background: var(--t-surface-2); font-size: .75rem; }
+.mode-switch a { padding: .4rem .75rem; border-radius: 999px; color: var(--t-text-secondary); text-decoration: none; }
+.mode-switch a.on { background: var(--t-brand); color: var(--t-bg); font-weight: 700; }
+.simple-mode .simple-nav { display: flex; position: fixed; left: 0; right: 0; bottom: 0; z-index: 1030; background: var(--t-bg-deep);
+  border-top: 1px solid var(--t-border-subtle); padding-bottom: env(safe-area-inset-bottom); }
+.simple-mode .simple-nav { justify-content: center; }
+.simple-nav a { position: relative; flex: 1; max-width: 12rem; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: .15rem;
+  min-height: 3.6rem; color: var(--t-text-muted); text-decoration: none; font-size: .72rem; }
+.simple-nav a .icon { width: 1.4rem; height: 1.4rem; }
+.simple-nav a.active { color: var(--t-brand); }
+.nav-badge { position: absolute; top: .35rem; left: calc(50% + .35rem); min-width: 1.05rem; height: 1.05rem; padding: 0 .3rem; border-radius: .55rem;
+  background: var(--t-red); color: var(--t-bg-deep); font-size: .65rem; font-weight: 700; display: flex; align-items: center; justify-content: center; }
+.simple-mode main { max-width: 64rem; margin: 0 auto; }
+
+/* The plants */
+.plants-banner { display: flex; align-items: center; gap: .6rem; margin-bottom: .75rem; padding: .75rem 1rem; border-radius: .75rem;
+  background: color-mix(in srgb, var(--t-yellow) 12%, transparent); border: 1px solid color-mix(in srgb, var(--t-yellow) 45%, transparent);
+  color: var(--t-yellow); text-decoration: none; }
+.plants-banner:hover { color: var(--t-yellow); border-color: var(--t-yellow); }
+.plants-banner span:first-of-type { flex: 1; }
+.plant-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(10rem, 100%), 1fr)); gap: .75rem; padding-bottom: 1rem; }
+.plant-card { display: flex; flex-direction: column; align-items: center; gap: .3rem; min-width: 0; padding: 1rem .6rem .9rem; border-radius: .9rem;
+  background: var(--t-surface); border: 1px solid var(--t-border-subtle); color: var(--t-text); text-decoration: none; text-align: center;
+  transition: border-color .15s; }
+.plant-card:hover, .plant-card:focus-visible { border-color: var(--t-brand); color: var(--t-text); }
+.plant-card.thirsty { border-color: var(--t-yellow); }
+.plant-card.offline { opacity: .55; }
+.plant-ring { width: 7rem; margin-bottom: .65rem; }
+.plant-ring .wall-ring, .plant-hero-ring .wall-ring { width: 100%; }
+.plant-ring .wall-ring-label { font-size: .8rem; bottom: -.6rem; }
+.plant-card-name { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 700; }
+.plant-card-soil { font-size: 1.6rem; font-weight: 700; line-height: 1; color: var(--t-cyan); }
+.plant-card-soil small { font-size: .7rem; font-weight: 400; color: var(--t-text-muted); }
+.plant-card-note { min-height: 1.2em; font-size: .75rem; color: var(--t-text-muted); }
+.plant-card.thirsty .plant-card-soil, .plant-card.thirsty .plant-card-note { color: var(--t-yellow); }
+.simple-empty { grid-column: 1 / -1; padding: 2rem 1rem; text-align: center; color: var(--t-text-secondary); }
+
+/* A plant */
+.plant-page, .simple-page { max-width: 34rem; margin: 0 auto; padding-bottom: 1rem; }
+.plant-page { display: flex; flex-direction: column; gap: 1rem; }
+.plant-back { align-self: flex-start; display: inline-flex; align-items: center; min-height: 2.75rem; text-decoration: none; }
+.plant-hero { display: flex; flex-direction: column; align-items: center; gap: .15rem; text-align: center; }
+.plant-hero-ring { width: 9.5rem; margin-bottom: .8rem; }
+.plant-hero h1 { margin: 0; font-size: 1.5rem; }
+.plant-sub { font-size: .8rem; color: var(--t-text-muted); }
+.soil-card { padding: 1rem; border-radius: .9rem; background: var(--t-surface); border: 1px solid var(--t-border-subtle); color: var(--t-cyan); }
+.soil-card.thirsty { border-color: var(--t-yellow); color: var(--t-yellow); }
+.soil-big { font-size: 2.5rem; font-weight: 700; line-height: 1; }
+.soil-bar { position: relative; height: .5rem; margin: .75rem 0 .5rem; border-radius: .25rem; background: var(--t-surface-2); }
+.soil-bar i { display: block; height: 100%; border-radius: .25rem; background: currentColor; }
+.soil-bar b { position: absolute; top: -.25rem; bottom: -.25rem; width: 2px; background: var(--t-text); }
+.soil-status { font-size: .85rem; font-weight: 700; }
+.soil-card:not(.thirsty) .soil-status { color: var(--t-text-secondary); font-weight: 400; }
+.soil-actions { display: flex; gap: .6rem; margin-top: .9rem; }
+.soil-actions .btn { min-height: 3rem; border-radius: .75rem; display: inline-flex; align-items: center; justify-content: center; gap: .35rem; }
+.soil-actions .water { flex: 2; font-weight: 700; }
+.soil-actions .beep { flex: 1; }
+.plant-facts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .6rem; }
+.plant-fact { display: flex; flex-direction: column; gap: .1rem; min-width: 0; padding: .7rem; border-radius: .75rem;
+  background: var(--t-surface); border: 1px solid var(--t-border-subtle); }
+.plant-fact span { font-size: .7rem; color: var(--t-text-muted); overflow-wrap: anywhere; }
+.plant-fact b { font-size: 1.1rem; }
+.plant-fact.bad b { color: var(--t-red); }
+.plant-chart { padding: .75rem .9rem; border-radius: .9rem; background: var(--t-surface); border: 1px solid var(--t-border-subtle); }
+.plant-advanced { align-self: center; display: inline-flex; align-items: center; min-height: 2.75rem; font-size: .8rem; text-decoration: none; }
+
+/* Alerts and settings */
+.simple-h { margin: 1.1rem 0 .5rem; font-size: .75rem; font-weight: 500; letter-spacing: .06em; text-transform: uppercase; color: var(--t-text-muted); }
+.simple-list { display: flex; flex-direction: column; gap: .5rem; margin: 0; padding: 0; list-style: none; }
+.simple-list li { display: flex; align-items: center; gap: .75rem; padding: .75rem .9rem; border-radius: .75rem; font-size: .85rem;
+  background: var(--t-surface); border: 1px solid var(--t-border-subtle); }
+.simple-list li > a, .simple-list li > span, .simple-list li > div:first-child { flex: 1; min-width: 0; }  /* the text; the buttons keep their size */
+.simple-list time { flex: none; font-size: .7rem; color: var(--t-text-muted); white-space: nowrap; }
+.simple-list .icon { flex: none; color: var(--t-text-muted); }
+.simple-list .warn .icon { color: var(--t-yellow); }
+.simple-list a:not(.btn) { color: var(--t-text); text-decoration: none; }
+.simple-list a:not(.btn):hover { color: var(--t-brand); }
+.simple-list .btn { white-space: nowrap; }
+.theme-pick { display: flex; flex-wrap: wrap; gap: .5rem; }
+.theme-pick .btn { min-height: 2.5rem; }

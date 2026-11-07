@@ -11,6 +11,7 @@ import { loadWallSoon } from './pages.js';
 import { onBuild, onBuildLog, onSetup, onSetupLog } from './builds.js';
 import { onConsoleLine, onConsoleState } from './console.js';
 import { renderDevicePhoto, renderDeviceStatus } from './device.js';
+import { refreshSimple } from './simple.js';
 
 // ------------------------------------------------------------------ live events
 
@@ -37,6 +38,7 @@ export function connectEvents(delay = 1000) {
       if (answered) pulseBoard(event.device.device_id);
       state.devices.set(event.device.device_id, event.device);
       if (currentRoute() === 'wall') loadWallSoon();
+      refreshSimple(event.device.device_id);
       renderDevices();
       if (currentRoute() === `device/${encodeURIComponent(event.device.device_id)}`) {
         renderDeviceStatus(event.device);

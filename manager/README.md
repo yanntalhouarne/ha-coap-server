@@ -44,6 +44,15 @@ The look follows [Omarchy](https://omarchy.org/): a terminal feel, JetBrains Mon
 
 On a phone (over Remote Desktop, say) the layout narrows: the tabs show in rows of three (on a narrow window, on their own row under the logo), and two fingers pinch to zoom the network map.
 
+**Simple and advanced.** The app opens on its **simple view**, made for a phone: your plants and little else, with three tabs at the bottom.
+
+- **Plants:** a card per plant, each with a ring around its photo (or the logo) that fills with the battery (as on the wall display), its soil moisture and when it will need water. The ones that need water come first, with a banner naming them.
+- **A plant** (tap its card): its soil with the watering target, **Water now** and **Beep**, its battery (and how long it lasts, or that it's charging), air and signal, and its soil over the last 7 days. **Advanced details** opens its full device page.
+- **Alerts:** the open alerts, with their count on the tab, and what happened lately.
+- **Settings:** the colour theme, notifications, the wall display and weekly summary, and the way to the advanced view.
+
+The **advanced view** is everything below: the tabs at the top, the status bar, every tool. **Simple | Advanced** at the top of the simple view and **simple view** at the top of the advanced one switch between them, and the browser remembers which you used last. A link to an advanced page (`#devices`, `#device/<id>`…) opens the advanced view; `#plants`, `#plant/<id>`, `#alerts` and `#more` open the simple one; `#home` opens the first page of the current one.
+
 **Dashboard.** The fleet at a glance. On a new setup, a **Getting started** list comes first: check the connection, find your boards, read the network, mark the release, add a plant photo, start with the computer. Each step ticks itself off; **Hide this** puts it away. **Wall display** and **Weekly summary** (top right) open the pages below.
 - **Tiles:**
   - devices online
@@ -308,7 +317,7 @@ A whole fleet: `python -m hacoap_manager.simdevice --count 9 --border-router api
 | `hacoap_manager/db.py` | The SQLite database |
 | `hacoap_manager/simdevice.py` | The simulated device |
 | `hacoap_manager/static/` | The page: `index.html`, `style.css`, `themes.css`, and Bootstrap, fonts and icons in `vendor/`. No build step, nothing loaded from the internet |
-| `hacoap_manager/static/js/` | The page's JavaScript, as ES modules: `main.js` starts it; `core.js` holds the shared state and helpers; one module per tab or feature (`dashboard`, `devices`, `device`, `network` (the map's shared parts and the mesh), `netframe` (the Network page around the map), `tree`, `floorplan`, `updates`, `images`, `builds`, `console`, `settings`, `board` (a board's health and its own settings), `timeline` (a board's timeline), `graphs` (the Charts tab), `motion` (the animations), `pages` for the wall and summary, `palette` for Ctrl+K, `live` for live events and the status bar, `themes`, `charts`, `tabs`). Each module imports what it uses and wires its own part of the page as it loads |
+| `hacoap_manager/static/js/` | The page's JavaScript, as ES modules: `main.js` starts it; `core.js` holds the shared state and helpers; one module per tab or feature (`dashboard`, `devices`, `device`, `network` (the map's shared parts and the mesh), `netframe` (the Network page around the map), `tree`, `floorplan`, `updates`, `images`, `builds`, `console`, `settings`, `board` (a board's health and its own settings), `timeline` (a board's timeline), `graphs` (the Charts tab), `motion` (the animations), `pages` for the wall and summary, `mode` (simple or advanced) and `simple` (the simple view), `palette` for Ctrl+K, `live` for live events and the status bar, `themes`, `charts`, `tabs`). Each module imports what it uses and wires its own part of the page as it loads |
 | `tests/` | Tests against the simulated device, and every tab opened in a headless browser (Chrome, Chromium or Edge, when installed) |
 
 ```
