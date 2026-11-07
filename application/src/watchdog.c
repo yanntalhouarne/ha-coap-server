@@ -36,9 +36,17 @@ static K_WORK_DELAYABLE_DEFINE(wdt_feed_work, on_wdt_feed_work);
 
 /* The first thing after a reset: a watchdog still running from before gets a full timeout
  * again (every reload register: whichever channels the previous image enabled). */
+static bool running_at_boot;
+
+bool watchdog_was_running_at_boot(void)
+{
+	return running_at_boot;
+}
+
 static int watchdog_early_feed(void)
 {
-	if (nrf_wdt_started(NRF_WDT))
+	running_at_boot = nrf_wdt_started(NRF_WDT);
+	if (running_at_boot)
 	{
 		for (uint32_t i = 0U; i < NRF_WDT_CHANNEL_NUMBER; i++)
 		{

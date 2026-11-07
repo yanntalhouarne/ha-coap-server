@@ -300,12 +300,38 @@ static void boot_jingle(void)
 	buzzer_tone(tones_khz[ARRAY_SIZE(tones_khz) - 1], false);
 }
 
+#ifdef CONFIG_HACOAP_BOOT_PROBE
+/* Diagnostic builds only (see HACOAP_BOOT_PROBE): how far the boot got, in two settings that
+ * the previous firmware reports after the bootloader reverts this image. */
+static void probe(int stage)
+{
+	static const enum device_setting ids[] = {SETTING_SAMPLE_S, SETTING_SOIL_WET_MV};
+	int32_t values[] = {
+		stage * 1000 + (int32_t)MIN(k_uptime_get() / MSEC_PER_SEC, 999),
+		1 + (watchdog_was_running_at_boot() ? 10 : 0) + ((stage >= 4) ? 100 * (1 + (int32_t)diag_reset_cause()) : 0),
+	};
+
+	(void)device_settings_set(ids, values, ARRAY_SIZE(ids));
+}
+#else
+static inline void probe(int stage)
+{
+	ARG_UNUSED(stage);
+}
+#endif
+
 /* Initialization errors are logged (and shown on the red LED) but do not stop the boot:
  * the device must always join the network so that it stays reachable for updates. */
 int main(void)
 {
 	uint32_t missing_sensors;
 	int ret;
+
+	if (IS_ENABLED(CONFIG_HACOAP_BOOT_PROBE))
+	{
+		(void)device_settings_init(on_setting_changed); // for probe(), before anything else
+		probe(1);
+	}
 
 	/* Before the boot delay: after an update, the watchdog may still be running from the previous
 	 * image (see watchdog.c), and this one isn't confirmed until it answers the fleet manager. */
@@ -314,8 +340,10 @@ int main(void)
 	{
 		LOG_ERR("Could not start the watchdog (error: %d)", ret);
 	}
+	probe(2);
 
 	k_sleep(K_MSEC(CONFIG_HACOAP_BOOT_DELAY_MS));
+	probe(3);
 
 	/* First, so that the error indications below work. */
 	ret = status_led_init();
@@ -325,8 +353,12 @@ int main(void)
 	}
 
 	/* Before the modules that use the settings. A failure leaves the defaults in use. */
-	(void)device_settings_init(on_setting_changed);
+	if (!IS_ENABLED(CONFIG_HACOAP_BOOT_PROBE))
+	{
+		(void)device_settings_init(on_setting_changed);
+	}
 	diag_init();
+	probe(4);
 
 	if (IS_ENABLED(CONFIG_USB_DEVICE_STACK))
 	{
@@ -338,6 +370,7 @@ int main(void)
 			status_led_error();
 		}
 	}
+	probe(5);
 
 	ret = pump_init();
 	if (ret)
@@ -364,6 +397,7 @@ int main(void)
 	{
 		status_led_error();
 	}
+	probe(6);
 
 	snprintf(device_id, sizeof(device_id), "%x", (unsigned int)NRF_FICR->DEVICEID[0]);
 	sensors_start();
@@ -379,6 +413,7 @@ int main(void)
 		LOG_ERR("Could not initialize OpenThread CoAP (error: %d)", ret);
 		status_led_error();
 	}
+	probe(7);
 
 	LOG_INF("Initialization done. Starting OpenThread...");
 	boot_jingle();
@@ -396,6 +431,13 @@ int main(void)
 		status_led_error();
 	}
 	joining_start();
+	probe(8);
+
+	for (int stage = 9; IS_ENABLED(CONFIG_HACOAP_BOOT_PROBE) && (stage <= 20); stage++)
+	{
+		k_sleep(K_SECONDS(5));
+		probe(stage);
+	}
 
 	return 0;
 }
