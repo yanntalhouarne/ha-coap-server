@@ -119,7 +119,8 @@
     <li><a href="#images" data-tab="images"><kbd>6</kbd><svg class="icon" aria-hidden="true"><use href="#i-package"/></svg>images</a></li>
     <li><a href="#builds" data-tab="builds"><kbd>7</kbd><svg class="icon" aria-hidden="true"><use href="#i-hammer"/></svg>builds</a></li>
     <li><a href="#console" data-tab="console"><kbd>8</kbd><svg class="icon" aria-hidden="true"><use href="#i-terminal"/></svg>console</a></li>
-    <li><a href="#settings" data-tab="settings"><kbd>9</kbd><svg class="icon" aria-hidden="true"><use href="#i-settings"/></svg>settings</a></li>
+    <li><a href="#coap" data-tab="coap"><kbd>9</kbd><svg class="icon" aria-hidden="true"><use href="#i-radio-tower"/></svg>coap</a></li>
+    <li><a href="#settings" data-tab="settings"><kbd>0</kbd><svg class="icon" aria-hidden="true"><use href="#i-settings"/></svg>settings</a></li>
   </ul>
   <button class="btn btn-sm btn-outline-secondary ms-auto palette-button" type="button" id="palette-button"
           title="Search for a tab, a device or an action (Ctrl+K)"><svg class="icon" aria-hidden="true"><use href="#i-search"/></svg>search <kbd>Ctrl K</kbd></button>
@@ -139,7 +140,7 @@
   <span id="status-alerts" class="d-none"><svg class="icon" aria-hidden="true"><use href="#i-bell"/></svg><a href="#dashboard" id="status-alerts-link"></a></span>
   <span id="status-app-update" class="d-none"><a id="status-app-update-link" target="_blank" rel="noopener"></a></span>
   <span class="spacer"></span>
-  <span class="d-none d-md-flex"><kbd>1</kbd>–<kbd>9</kbd> tabs <kbd>T</kbd> theme <kbd>Ctrl K</kbd> search <kbd>?</kbd> keys</span>
+  <span class="d-none d-md-flex"><kbd>1</kbd>–<kbd>0</kbd> tabs <kbd>T</kbd> theme <kbd>Ctrl K</kbd> search <kbd>?</kbd> keys</span>
   <span id="status-theme"></span>
   <span><svg class="icon" aria-hidden="true"><use href="#i-clock"/></svg><span id="status-clock"></span></span>
 </footer>
@@ -738,6 +739,72 @@
   </section>
 
   <!-- Settings -->
+  <section id="tab-coap" class="tab d-none">
+    <div class="row g-4">
+      <div class="col-xl-5">
+        <div class="card mb-4">
+          <div class="card-header">Request</div>
+          <div class="card-body">
+            <form id="coap-form" class="row g-2">
+              <div class="col-12">
+                <label class="form-label small mb-1" for="coap-device">Board</label>
+                <select class="form-select form-select-sm" id="coap-device"></select>
+              </div>
+              <div class="col-12">
+                <div class="form-label small mb-1">Method</div>
+                <div class="btn-group btn-group-sm" role="group" aria-label="Method" id="coap-methods"></div>
+              </div>
+              <div class="col-sm-6">
+                <label class="form-label small mb-1" for="coap-resource">Resource</label>
+                <select class="form-select form-select-sm" id="coap-resource"></select>
+              </div>
+              <div class="col-sm-6 d-none" id="coap-path-wrap">
+                <label class="form-label small mb-1" for="coap-path">Path</label>
+                <input class="form-control form-control-sm" id="coap-path" placeholder="such as data, or a/b" autocomplete="off">
+              </div>
+              <div class="col-sm-6">
+                <label class="form-label small mb-1" for="coap-query">Query</label>
+                <input class="form-control form-control-sm" id="coap-query" placeholder="none, or such as from=0" autocomplete="off">
+              </div>
+              <div class="col-12 small text-body-secondary" id="coap-about"></div>
+              <div class="col-12" id="coap-payload-wrap">
+                <label class="form-label small mb-1" for="coap-payload">Payload</label>
+                <div class="input-group input-group-sm">
+                  <input class="form-control" id="coap-payload" autocomplete="off" placeholder="empty">
+                  <select class="form-select flex-grow-0 w-auto" id="coap-payload-format" aria-label="Payload format">
+                    <option value="text">text</option>
+                    <option value="hex">hex</option>
+                  </select>
+                </div>
+                <div class="d-flex flex-wrap gap-1 mt-1" id="coap-values"></div>
+              </div>
+              <div class="col-12 d-flex align-items-center gap-3">
+                <div class="form-check" title="A confirmable request is resent until the board acknowledges it; a non-confirmable one is sent once">
+                  <input class="form-check-input" type="checkbox" id="coap-confirmable" checked>
+                  <label class="form-check-label" for="coap-confirmable">Confirmable</label>
+                </div>
+                <button class="btn btn-sm btn-primary ms-auto" type="submit" id="coap-send">Send</button>
+              </div>
+              <div class="col-12 form-text">A sleepy board gets a request at its next poll: up to its poll period
+                (3 s by default, 500 ms on USB). Changes (PUT, POST, DELETE) go in the board's timeline.</div>
+            </form>
+          </div>
+        </div>
+      </div>
+      <div class="col-xl-7">
+        <div class="card mb-4">
+          <div class="card-header">Response</div>
+          <div class="card-body" id="coap-response"><span class="text-body-secondary">Nothing sent yet.</span></div>
+        </div>
+        <div class="card">
+          <div class="card-header d-flex align-items-center">History
+            <button class="btn btn-sm btn-link ms-auto p-0" type="button" id="coap-clear">clear</button></div>
+          <div class="card-body" id="coap-history"></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
   <section id="tab-settings" class="tab d-none">
     <div class="settings-layout">
       <nav class="settings-nav" id="settings-nav" aria-label="Settings sections"></nav>
@@ -975,7 +1042,7 @@
         <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button></div>
       <div class="modal-body">
         <table class="table table-sm keys mb-0"><tbody>
-          <tr><td><kbd>1</kbd> … <kbd>9</kbd></td><td>Go to a tab</td></tr>
+          <tr><td><kbd>1</kbd> … <kbd>9</kbd>, <kbd>0</kbd></td><td>Go to a tab</td></tr>
           <tr><td><kbd>Ctrl</kbd> <kbd>K</kbd></td><td>Search: a tab, a device or an action</td></tr>
           <tr><td><kbd>T</kbd> · <kbd>Shift</kbd> <kbd>T</kbd></td><td>Next · previous colour theme</td></tr>
           <tr><td><kbd>?</kbd></td><td>These shortcuts</td></tr>

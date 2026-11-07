@@ -51,8 +51,8 @@ document.addEventListener('keydown', (event) => {
   }
   if (event.ctrlKey || event.metaKey || event.altKey) return;
   if (target.closest('input, textarea, select, [contenteditable]')) return;
-  if (event.key >= '1' && event.key <= String(TABS.length)) {
-    const name = TABS[Number(event.key) - 1];
+  if (/^[0-9]$/.test(event.key) && TABS[event.key === '0' ? 9 : Number(event.key) - 1]) {
+    const name = TABS[event.key === '0' ? 9 : Number(event.key) - 1];  // 1 to 9, then 0
     history.replaceState(null, '', `#${name}`);
     showTab(name);
   } else if (event.key === 't' || event.key === 'T') {

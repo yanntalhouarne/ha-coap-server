@@ -530,17 +530,19 @@ class SimulatedDevice:
                 return None  # the firmware ignores a NON PUT
             return reply(coap.CONTENT, bytes([1 if self.pump_running else 0]))
         if message.path == "pumpdc":
-            if message.code == coap.PUT and message.payload[:1].isdigit():
-                seconds = int(message.payload[:1])
-                if 1 <= seconds <= 9:
-                    self.settings["pump_s"] = seconds
+            if message.code == coap.PUT and message.type == coap.TYPE_CON:
+                if message.payload[:1].isdigit() and 1 <= int(message.payload[:1]) <= 9:
+                    self.settings["pump_s"] = int(message.payload[:1])
+            elif message.code != coap.GET:
+                return None  # the firmware ignores a NON PUT
             return reply(coap.CONTENT, bytes([self.pump_duration]))
         if message.path == "ping" and message.code == coap.PUT:
             self.log("Received 'ping' PUT request", module="coap_resources")
             if message.payload == b"1":
                 self.pings += 1
             return reply(coap.CHANGED)
-        return reply(0x84)  # 4.04 Not Found
+        # Like the firmware: no answer to a path it doesn't have, or a method a resource doesn't take
+        return None
 
 
     def _pump_off(self):

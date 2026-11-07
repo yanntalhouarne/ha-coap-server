@@ -22,6 +22,9 @@ EXTRA_SYMBOLS = [
 ]
 
 STRING_MAX = 64
+# The firmware's start after a soft reset is slow while the watchdog runs (15 to 40 s on the boards):
+# a shorter timeout resets it first, and every update's test image is reverted
+MIN_WATCHDOG_MS = 60000
 KEYWORDS = ("config", "menuconfig", "menu", "endmenu", "choice", "endchoice", "if", "endif",
             "source", "module", "module-str", "comment", "mainmenu")
 
@@ -186,6 +189,10 @@ def validate(schema, settings):
     if clean.get("HACOAP_WDT_FEED_PERIOD_MS", _default(by_name, "HACOAP_WDT_FEED_PERIOD_MS")) >= \
             clean.get("HACOAP_WDT_TIMEOUT_MS", _default(by_name, "HACOAP_WDT_TIMEOUT_MS")):
         raise KconfigError("The watchdog feed period must be shorter than its timeout")
+    if clean.get("HACOAP_WDT_TIMEOUT_MS", _default(by_name, "HACOAP_WDT_TIMEOUT_MS")) < MIN_WATCHDOG_MS:
+        raise KconfigError(f"The watchdog timeout must be at least {MIN_WATCHDOG_MS // 1000} s: the start after a "
+                           "restart is slow while it runs, and a shorter one resets it first, so every update "
+                           "would be reverted")
     if "OPENTHREAD_POLL_PERIOD" in by_name and \
             clean.get("HACOAP_MCUMGR_POLL_PERIOD_MS", _default(by_name, "HACOAP_MCUMGR_POLL_PERIOD_MS")) >= \
             clean.get("OPENTHREAD_POLL_PERIOD", _default(by_name, "OPENTHREAD_POLL_PERIOD")):

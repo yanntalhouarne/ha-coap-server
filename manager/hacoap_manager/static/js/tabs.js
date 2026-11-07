@@ -3,6 +3,7 @@
 import { loadAutostart, loadBackups, loadHomeAssistant, loadRemoteAccess, loadSettings, loadStorage, renderSimulatedCount } from './settings.js';
 import { loadBuilds, loadImages } from './images.js';
 import { loadBuildsTab } from './builds.js';
+import { loadCoapTab } from './coap.js';
 import { loadConsole } from './console.js';
 import { loadDashboard } from './dashboard.js';
 import { loadDevicePage } from './device.js';
@@ -14,7 +15,7 @@ import { setNetworkView } from './floorplan.js';
 
 // ------------------------------------------------------------------ tabs
 
-export const TABS = ['dashboard', 'devices', 'network', 'charts', 'updates', 'images', 'builds', 'console', 'settings'];
+export const TABS = ['dashboard', 'devices', 'network', 'charts', 'updates', 'images', 'builds', 'console', 'coap', 'settings'];
 export const PAGES = ['wall', 'summary'];  // pages without a tab
 
 // Device pages opened from the wall display get a button back to it, until another tab is shown
@@ -40,6 +41,7 @@ export function showTab(route) {
   if (tab === 'dashboard') loadDashboard().catch(() => {});
   if (tab === 'device') loadDevicePage(decodeURIComponent(rest.join('/'))).catch(() => {});
   if (tab === 'charts') loadGraph().catch(() => {});
+  if (tab === 'coap') loadCoapTab().catch(() => {});
   if (tab === 'console') loadConsole(rest.length ? decodeURIComponent(rest.join('/')) : null).catch(() => {});
   if (tab === 'updates') { renderUpdateForm(); loadHistory(); }
   if (name === 'images') { loadImages(); loadBuilds(); }

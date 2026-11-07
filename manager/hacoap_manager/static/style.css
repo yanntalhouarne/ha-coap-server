@@ -1068,3 +1068,16 @@ td.flip { display: table-cell; animation: flip-cell 1.4s ease-out; }
 .update-device { margin: .1rem 0; font-size: .85rem; }
 .update-device .form-check-label { display: inline-flex; flex-wrap: wrap; align-items: center; gap: .3rem; }
 .update-summary { color: var(--t-text-secondary); max-width: 22rem; }
+
+/* ---------------------------------------------------------------- the CoAP tab */
+
+.coap-code { font-size: .85rem; }
+.coap-decoded { width: auto; }
+.coap-decoded th { font-weight: 400; color: var(--t-text-secondary); padding-right: 1.5rem; }
+.coap-payload { background: var(--t-surface-2); border-radius: .4rem; padding: .5rem .7rem; font-size: .8rem;
+  max-height: 18rem; overflow: auto; white-space: pre-wrap; word-break: break-all; }
+.coap-hex { color: var(--t-text-secondary); }
+.coap-history { font-size: .82rem; }
+.coap-history-row { display: flex; flex-wrap: wrap; gap: .25rem .75rem; width: 100%; text-align: left; background: none;
+  border: 0; border-bottom: 1px solid var(--t-border-subtle); padding: .3rem 0; color: inherit; }
+.coap-history-row:hover { background: var(--t-surface); }

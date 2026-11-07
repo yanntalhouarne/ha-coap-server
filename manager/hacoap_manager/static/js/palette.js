@@ -21,7 +21,7 @@ export function runOnTab(tab, buttonId) {
 export const download = (url) => () => { window.location.href = url; };
 
 export function paletteItems() {
-  const items = TABS.map((tab, i) => ({ kind: 'tab', label: tab, hint: `key ${i + 1}`, run: () => { location.hash = `#${tab}`; } }));
+  const items = TABS.map((tab, i) => ({ kind: 'tab', label: tab, hint: `key ${(i + 1) % 10}`, run: () => { location.hash = `#${tab}`; } }));
   for (const device of [...state.devices.values()].sort((a, b) => deviceName(a).localeCompare(deviceName(b)))) {
     items.push({ kind: 'device', label: deviceName(device), hint: [device.plant, device.location, device.device_id].filter(Boolean).join(' · '),
       run: () => { location.hash = `#device/${encodeURIComponent(device.device_id)}`; } });

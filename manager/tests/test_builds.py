@@ -95,7 +95,8 @@ def test_validate():
         ({"HACOAP_HW_VERSION": 'v2"'}, "quotes"),
         ({"HACOAP_SRP_NAME_SUFFIX": "HACOAP_NOPE"}, "unknown option"),
         ({"HACOAP_SOIL_WET_MV": 2500}, "dry soil"),
-        ({"HACOAP_WDT_FEED_PERIOD_MS": 40000}, "watchdog"),
+        ({"HACOAP_WDT_FEED_PERIOD_MS": 130000}, "feed period"),
+        ({"HACOAP_WDT_TIMEOUT_MS": 30000}, "at least 60 s"),
         ({"OPENTHREAD_POLL_PERIOD": 100}, "mcumgr"),
     ]
     for settings, message in bad:

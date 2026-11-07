@@ -15,8 +15,34 @@ from dataclasses import dataclass
 COAP_PORT = 5683
 
 TYPE_CON, TYPE_NON, TYPE_ACK, TYPE_RST = 0, 1, 2, 3
-GET, PUT = 1, 3
+GET, POST, PUT, DELETE = 1, 2, 3, 4
+METHODS = {"GET": GET, "POST": POST, "PUT": PUT, "DELETE": DELETE}
 CHANGED, CONTENT, NOT_FOUND = 0x44, 0x45, 0x84
+
+# Response codes, in words (RFC 7252, 12.1.2)
+CODE_NAMES = {
+    0x41: "Created", 0x42: "Deleted", 0x43: "Valid", 0x44: "Changed", 0x45: "Content",
+    0x80: "Bad Request", 0x81: "Unauthorized", 0x82: "Bad Option", 0x83: "Forbidden", 0x84: "Not Found",
+    0x85: "Method Not Allowed", 0x86: "Not Acceptable", 0x8C: "Precondition Failed",
+    0x8D: "Request Entity Too Large", 0x8F: "Unsupported Content-Format",
+    0xA0: "Internal Server Error", 0xA1: "Not Implemented", 0xA2: "Bad Gateway", 0xA3: "Service Unavailable",
+    0xA4: "Gateway Timeout", 0xA5: "Proxying Not Supported",
+}
+
+# The board's resources (application/src/coap_resources.c), for the app's CoAP tab
+RESOURCES = [
+    {"path": "data", "methods": ["GET"], "about": "The latest readings: soil, battery, air humidity (%), temperature (°C, signed)"},
+    {"path": "info", "methods": ["GET"], "about": "Firmware (git commit), hardware version and device ID"},
+    {"path": "diag", "methods": ["GET"], "about": "Restarts, crashes, the link to its parent, the soil sensor's output, its power (newer firmware)"},
+    {"path": "log", "methods": ["GET"], "about": "Its log since the given offset (query from=<n>; firmware built with Log over the air)",
+     "query": "from=0"},
+    {"path": "pump", "methods": ["GET", "PUT"], "about": "1 while the pump runs. PUT 1 runs it (for its run time), 0 stops it",
+     "values": ["1", "0"]},
+    {"path": "pumpdc", "methods": ["GET", "PUT"], "about": "The pump's run time in seconds. PUT one digit, 1 to 9: kept across restarts",
+     "values": ["1", "2", "3", "5", "9"]},
+    {"path": "ping", "methods": ["PUT"], "about": "Answers 2.04 Changed; 1 beeps, 0 doesn't. Confirmable or not",
+     "values": ["1", "0"], "non": True},
+]
 OPTION_URI_PATH, OPTION_URI_QUERY = 11, 15
 
 ACK_TIMEOUT_S = 4.0  # longer than the device's poll period
@@ -148,8 +174,9 @@ class _Protocol(asyncio.DatagramProtocol):
 
 
 async def request(host, path, method=GET, payload=b"", *, port=COAP_PORT, query=(),
-                  ack_timeout=ACK_TIMEOUT_S, max_retransmit=MAX_RETRANSMIT, timeout=None):
-    """Sends a confirmable request and returns (code, payload) of the response.
+                  ack_timeout=ACK_TIMEOUT_S, max_retransmit=MAX_RETRANSMIT, timeout=None, confirmable=True):
+    """Sends a request (confirmable unless asked otherwise) and returns (code, payload) of the
+    response. A non-confirmable one is sent once.
 
     Raises CoapError on a reset, and TimeoutError without an answer.
     """
@@ -158,7 +185,9 @@ async def request(host, path, method=GET, payload=b"", *, port=COAP_PORT, query=
     transport, protocol = await loop.create_datagram_endpoint(_Protocol, remote_addr=(host, port), family=family)
     message_id = random.randrange(0x10000)
     token = os.urandom(4)
-    data = encode(TYPE_CON, method, message_id, token, path, payload, query)
+    data = encode(TYPE_CON if confirmable else TYPE_NON, method, message_id, token, path, payload, query)
+    if not confirmable:
+        max_retransmit = 0
     if timeout is None:
         timeout = ack_timeout * (2 ** (max_retransmit + 1) - 1)
     deadline = loop.time() + timeout
@@ -344,3 +373,36 @@ async def get_diag(host, **kwargs):
     """Restarts, crashes and the link to the parent. Firmware without 'diag' doesn't answer, so
     this raises TimeoutError for it."""
     return parse_diag(await _get(host, "diag", **kwargs))
+
+
+def describe(path, code, payload):
+    """A response, for people: {code, code_name, text, hex, decoded}. 'decoded' is a list of
+    [name, value] for the board's resources it knows ('data', 'info', 'diag', 'pump', 'pumpdc',
+    'log'), else empty."""
+    # As text only when it is text: 'data' and the pump's answers are bytes (hex and decoded)
+    trimmed = payload.rstrip(b"\0")
+    text = trimmed.decode("utf-8", errors="replace") if all(32 <= c < 127 or c in (9, 10, 13) for c in trimmed) else ""
+    decoded = []
+    try:
+        if code == CONTENT and path == "data" and len(payload) >= 4:
+            data = parse_data(payload)
+            decoded = [["soil moisture", f"{data.soil_moisture} %"], ["battery", f"{data.battery} %"],
+                       ["air humidity", f"{data.air_humidity} %"], ["temperature", f"{data.temperature} °C"]]
+        elif code == CONTENT and path == "info":
+            info = parse_info(payload)
+            decoded = [["firmware", info.fw_version], ["hardware", info.hw_version], ["device ID", info.device_id]]
+        elif code == CONTENT and path == "diag":
+            decoded = [list(item.partition("=")[::2]) for item in text.split(",") if "=" in item]
+        elif code == CONTENT and path == "pump" and payload:
+            decoded = [["pump", "running" if payload[:1] == b"1" else "stopped"]]
+        elif code == CONTENT and path == "pumpdc" and payload:
+            decoded = [["run time", f"{payload[0] - 48 if 48 <= payload[0] <= 57 else payload[0]} s"]]
+        elif code == CONTENT and path == "log":
+            chunk = parse_log(payload)
+            decoded = [["boot", chunk.boot_id], ["from offset", str(chunk.start)],
+                       ["next: from=", str(chunk.start + len(chunk.text))], ["more to read", "probably" if chunk.full else "no"]]
+            text = chunk.text.decode("utf-8", errors="replace")
+    except (CoapError, ValueError, IndexError, AttributeError):
+        decoded = []
+    return {"code": code_name(code), "code_name": CODE_NAMES.get(code, ""), "ok": 0x40 <= code < 0x80,
+            "text": text, "hex": payload.hex(" "), "decoded": decoded}

@@ -23,8 +23,8 @@ from fastapi.staticfiles import StaticFiles
 
 import re
 
-from . import (__version__, autostart, backup, config, demo, discovery, feed, fleet, homeassistant, housekeeping, kconfig,
-               mcuboot, remote, report, serial_ports, signing, summary, swd)
+from . import (__version__, autostart, backup, coap, config, demo, discovery, feed, fleet, homeassistant, housekeeping,
+               kconfig, mcuboot, remote, report, serial_ports, signing, summary, swd)
 from .alerts import AlertService
 from .appupdate import UpdateCheck
 from .builds import VARIANTS, BuildError, BuildRunner
@@ -521,6 +521,58 @@ def create_app(services, background_tasks=True, on_quit=None, port=None):
         except InventoryError as exc:
             raise _bad_request(exc)
         return {"ok": True}
+
+    # ------------------------------------------------------------ the CoAP tab
+
+    @app.get("/api/coap/resources")
+    async def coap_resources():
+        return {"resources": coap.RESOURCES, "methods": list(coap.METHODS)}
+
+    @app.post("/api/devices/{device_id}/coap")
+    async def coap_request(device_id: str, body: dict):
+        """A CoAP request to a board: {method, path, payload (text) or payload_hex, query: [...],
+        confirmable}. The answer, described for people (coap.describe), or why there's none."""
+        device = s.db.device(device_id)
+        if device is None:
+            raise HTTPException(status_code=404, detail="Unknown device")
+        if not device["address"]:
+            raise _bad_request("This board has no network address")
+        _not_updating([device_id])
+        method = str(body.get("method", "GET")).upper()
+        if method not in coap.METHODS:
+            raise _bad_request(f"Unknown method {method}: GET, POST, PUT or DELETE")
+        path = str(body.get("path", "")).strip().strip("/")
+        if (not re.fullmatch(r"[A-Za-z0-9._~-]{1,63}(/[A-Za-z0-9._~-]{1,63}){0,7}", path)
+                or any(segment in (".", "..") for segment in path.split("/"))):
+            raise _bad_request("A path such as data, or a/b (letters, digits, . _ ~ -)")
+        query = [str(q).strip() for q in body.get("query") or [] if str(q).strip()]
+        if len(query) > 8 or any(len(q) > 128 or not q.isprintable() for q in query):
+            raise _bad_request("A query is up to 8 items such as from=0")
+        try:
+            payload = bytes.fromhex(body["payload_hex"]) if body.get("payload_hex") else str(body.get("payload", "")).encode()
+        except ValueError:
+            raise _bad_request("The payload isn't hex, such as 31 or 01 ff")
+        if len(payload) > 512:
+            raise _bad_request("The payload is up to 512 bytes")
+        confirmable = bool(body.get("confirmable", True))
+        started = time.perf_counter()
+        try:
+            code, answer = await coap.request(device["address"], path, coap.METHODS[method], payload,
+                                              port=s.settings.coap_port, query=tuple(query),
+                                              ack_timeout=s.settings.coap_timeout_s, confirmable=confirmable,
+                                              timeout=None if confirmable else s.settings.coap_timeout_s * 2)
+            result = {"answered": True, **coap.describe(path, code, answer)}
+        except TimeoutError:
+            result = {"answered": False, "detail": "No answer" + ("" if confirmable else
+                                                                 " (a non-confirmable request may get none)")}
+        except (coap.CoapError, OSError) as exc:
+            result = {"answered": False, "detail": str(exc)}
+        result["elapsed_ms"] = round((time.perf_counter() - started) * 1000)
+        if method != "GET":  # a change: in its timeline
+            shown = payload.decode("utf-8", errors="replace") if payload.isascii() else payload.hex(" ")
+            outcome = f"{result['code']} {result['code_name']}".strip() if result["answered"] else result["detail"]
+            s.db.add_activity(device_id, "coap", f"CoAP {method} {path}{f' {shown[:40]!r}' if payload else ''}: {outcome}")
+        return result
 
     @app.get("/api/serial-ports")
     async def ports():
