@@ -119,6 +119,7 @@ function renderResponse(entry) {
       ? h('span', { class: `badge text-bg-${result.ok ? 'success' : 'danger'} coap-code` }, `${result.code} ${result.code_name}`.trim())
       : h('span', { class: 'badge text-bg-secondary coap-code' }, 'no answer'),
     h('span', { class: 'small text-body-secondary' }, `${shown(request)} · ${boardName(request.device_id)} · ${result.elapsed_ms} ms`
+      + `${result.answered ? ` · ${result.bytes ? `${result.bytes} byte${result.bytes === 1 ? '' : 's'}` : 'no payload'}` : ''}`
       + `${request.confirmable ? '' : ' · non-confirmable'}`));
   if (!result.answered) {
     box.replaceChildren(head, h('div', { class: 'small' }, result.detail));

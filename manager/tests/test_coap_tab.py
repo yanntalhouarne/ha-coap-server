@@ -54,6 +54,7 @@ async def test_get_answers_decoded(client, services, start_sim):
     assert ["battery", "87 %"] in data["decoded"] and ["temperature", "-5 °C"] in data["decoded"]
     assert data["hex"].startswith("2a 57") and data["elapsed_ms"] >= 0
     assert data["text"] == ""  # bytes, not text
+    assert data["bytes"] == 4
     info = await send(client, method="GET", path="info")
     assert ["device ID", "1a2b3c4d"] in info["decoded"]
     diag = await send(client, method="GET", path="diag")
@@ -67,7 +68,7 @@ async def test_put_changes_and_goes_in_the_timeline(client, services, start_sim)
     assert result["code"] == "2.05" and result["decoded"] == [["run time", "5 s"]]
     assert server.device.settings["pump_s"] == 5
     beep = await send(client, method="PUT", path="ping", payload_hex="31", confirmable=False)  # '1', non-confirmable
-    assert beep["code"] == "2.04" and server.device.pings == 1
+    assert beep["code"] == "2.04" and beep["bytes"] == 0 and server.device.pings == 1
     entries = [a["message"] for a in services.db.recent_activity("1a2b3c4d", "coap", 10)]
     assert "CoAP PUT ping '1': 2.04 Changed" in entries and "CoAP PUT pumpdc '5': 2.05 Content" in entries
 

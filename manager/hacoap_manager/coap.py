@@ -405,4 +405,4 @@ def describe(path, code, payload):
     except (CoapError, ValueError, IndexError, AttributeError):
         decoded = []
     return {"code": code_name(code), "code_name": CODE_NAMES.get(code, ""), "ok": 0x40 <= code < 0x80,
-            "text": text, "hex": payload.hex(" "), "decoded": decoded}
+            "bytes": len(payload), "text": text, "hex": payload.hex(" "), "decoded": decoded}
