@@ -1060,3 +1060,11 @@ td.flip { display: table-cell; animation: flip-cell 1.4s ease-out; }
 .card-bar i.charging { background: var(--t-green); }
 @keyframes charging { 50% { opacity: .45; } }
 @media (prefers-reduced-motion: reduce) { .power-icon.power-charging .icon { animation: none; } }
+
+/* ---------------------------------------------------------------- the boards to update (Updates tab) */
+
+.update-devices { max-height: 14rem; overflow-y: auto; border: 1px solid var(--t-border-subtle); border-radius: .4rem;
+  padding: .35rem .6rem; background: var(--t-surface); }
+.update-device { margin: .1rem 0; font-size: .85rem; }
+.update-device .form-check-label { display: inline-flex; flex-wrap: wrap; align-items: center; gap: .3rem; }
+.update-summary { color: var(--t-text-secondary); max-width: 22rem; }

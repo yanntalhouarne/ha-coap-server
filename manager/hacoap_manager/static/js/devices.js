@@ -7,7 +7,7 @@ import { net, redrawNetwork } from './network.js';
 import { renderStatusDevices } from './live.js';
 import { renderConsoleBoards } from './console.js';
 import { openFleetSettings } from './board.js';
-import { statusClass } from './updates.js';
+import { renderUpdateDevices, statusClass } from './updates.js';
 
 // ------------------------------------------------------------------ devices
 
@@ -172,6 +172,8 @@ document.getElementById('device-sort').addEventListener('change', (event) => {
 });
 
 export function renderDevices() {
+  // The Updates tab lists the same boards, ticked there too
+  if (!document.getElementById('tab-updates').classList.contains('d-none')) renderUpdateDevices();
   const body = document.querySelector('#devices-table tbody');
   const visible = sortDevices(visibleDevices());
   const mode = ['cards', 'health'].includes(deviceView.mode) ? deviceView.mode : 'table';

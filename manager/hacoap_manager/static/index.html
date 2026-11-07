@@ -472,8 +472,15 @@
             <label class="form-label">Devices</label>
             <div class="form-check">
               <input class="form-check-input" type="radio" name="update-transport" id="transport-udp" value="udp" checked>
-              <label class="form-check-label" for="transport-udp">Over the air: <span id="update-selection">no devices selected</span>
-                <span class="text-body-secondary">(select them on the Devices tab)</span></label>
+              <label class="form-check-label" for="transport-udp">Over the air, to the boards ticked here</label>
+            </div>
+            <div class="ms-4 mb-2">
+              <div class="d-flex gap-2 small mb-1">
+                <button class="btn btn-link btn-sm p-0" type="button" id="update-pick-all">all</button>
+                <button class="btn btn-link btn-sm p-0" type="button" id="update-pick-none">none</button>
+                <button class="btn btn-link btn-sm p-0" type="button" id="update-pick-behind" title="The boards that don't run the chosen image">not on this image</button>
+              </div>
+              <div class="update-devices" id="update-devices"></div>
             </div>
             <div class="form-check">
               <input class="form-check-input" type="radio" name="update-transport" id="transport-serial" value="serial">
@@ -501,8 +508,11 @@
               <input class="form-check-input" type="checkbox" id="permanent-update">
               <label class="form-check-label" for="permanent-update">Permanent: no going back</label>
             </div>
-            <button class="btn btn-outline-secondary ms-auto" type="button" id="whats-new">What's new?</button>
-            <button class="btn btn-success" type="submit" id="start-update">Start update</button>
+            <div class="ms-auto d-flex flex-wrap align-items-center justify-content-end gap-2">
+              <button class="btn btn-outline-secondary" type="button" id="whats-new">What's new?</button>
+              <span class="small update-summary" id="update-summary"></span>
+              <button class="btn btn-success" type="submit" id="start-update">Start update</button>
+            </div>
           </div>
           <div class="col-12 small text-warning d-none" id="update-low-batteries"></div>
           <div class="col-12 form-text">Each device gets the image, boots it as a test, and keeps it only once it

@@ -1,7 +1,7 @@
 // The Updates tab: starting updates, their progress and history, and who signed an image.
 
-import { api, busy, h, notify, shortHash, state, svg, when } from './core.js';
-import { deviceName, loadDevices } from './devices.js';
+import { ago, api, busy, h, notify, pct, shortHash, state, svg, when } from './core.js';
+import { deviceName, loadDevices, renderDevices } from './devices.js';
 
 // ------------------------------------------------------------------ updates
 
@@ -13,10 +13,71 @@ export async function renderUpdateForm() {
     h('option', { value: image.hash }, `${image.release ? '★ ' : ''}v${image.version} · ${shortHash(image.hash)} · ${image.notes || image.filename}`))
     : [h('option', { value: '' }, 'No images in the library')]));
   if (state.pendingImage) { select.value = state.pendingImage; state.pendingImage = null; } else if (previous) select.value = previous;
-  const names = [...state.selected].map((id) => deviceName(state.devices.get(id) || { device_id: id }));
-  document.getElementById('update-selection').textContent = names.length ? names.join(', ') : 'no devices selected';
   renderUpdateChecks();
+  renderUpdateDevices();
   if (!document.getElementById('serial-port').options.length) loadPorts();
+}
+
+// The boards to update, ticked here or on the Devices tab (the same selection)
+const byName = (a, b) => deviceName(a).localeCompare(deviceName(b));
+
+export function renderUpdateDevices() {
+  const list = document.getElementById('update-devices');
+  const imageHash = document.getElementById('update-image').value;
+  const limit = state.status ? state.status.settings.min_battery_for_update : 20;
+  const devices = [...state.devices.values()].sort(byName);
+  list.replaceChildren(...(devices.length ? devices.map((d) => {
+    const id = `update-pick-${d.device_id}`;
+    const runsIt = imageHash && d.image_hash === imageHash;
+    const low = limit && d.battery !== null && d.battery !== undefined && d.battery < limit;
+    return h('div', { class: 'form-check update-device' },
+      h('input', { class: 'form-check-input', type: 'checkbox', id, checked: state.selected.has(d.device_id),
+        onchange: (e) => {
+          if (e.target.checked) state.selected.add(d.device_id); else state.selected.delete(d.device_id);
+          onSelectionChanged();
+        } }),
+      h('label', { class: 'form-check-label', for: id },
+        h('span', { class: `online-dot ${d.online ? 'on' : 'off'}`, title: d.online ? 'online' : `offline: seen ${ago(d.last_seen)}` }),
+        h('b', {}, deviceName(d)),
+        h('span', { class: 'text-body-secondary' }, ` · ${d.fw_version || '?'}${d.image_hash ? ` · ${shortHash(d.image_hash)}` : ''}`),
+        h('span', { class: low ? 'text-warning' : 'text-body-secondary' }, ` · ${pct(d.battery)}`),
+        runsIt ? h('span', { class: 'badge text-bg-success ms-1' }, 'runs this image') : null));
+  }) : [h('span', { class: 'small text-body-secondary' }, 'No boards yet: find them on the Devices tab.')]));
+  renderUpdateSummary();
+}
+
+// Next to Start update: what it will update
+function renderUpdateSummary() {
+  const summary = document.getElementById('update-summary');
+  if (document.getElementById('transport-serial').checked) {
+    const port = document.getElementById('serial-port').value;
+    summary.textContent = port ? `Updates the board on ${port}` : 'No serial port';
+    summary.className = 'small update-summary';
+    return;
+  }
+  const names = [...state.selected].map((id) => deviceName(state.devices.get(id) || { device_id: id }));
+  summary.textContent = names.length ? `Updates ${names.join(', ')}` : 'No board ticked';
+  summary.className = `small update-summary${names.length ? '' : ' text-warning'}`;
+}
+
+function onSelectionChanged() {
+  renderDevices();  // the Devices tab shows the same selection (and this list, again)
+  renderUpdateChecks();
+}
+
+function pick(filter) {
+  state.selected = new Set([...state.devices.values()].filter(filter).map((d) => d.device_id));
+  onSelectionChanged();
+}
+
+document.getElementById('update-pick-all').addEventListener('click', () => pick(() => true));
+document.getElementById('update-pick-none').addEventListener('click', () => pick(() => false));
+document.getElementById('update-pick-behind').addEventListener('click', () => {
+  const imageHash = document.getElementById('update-image').value;
+  pick((d) => d.image_hash !== imageHash);
+});
+for (const id of ['transport-udp', 'transport-serial', 'serial-port']) {
+  document.getElementById(id).addEventListener('change', renderUpdateSummary);
 }
 
 export async function loadPorts() {
@@ -37,7 +98,7 @@ document.getElementById('update-form').addEventListener('submit', (event) => {
     if (!port) return notify('Choose a serial port', 'warning');
     targets = [{ transport: 'serial', serial_port: port }];
   } else {
-    if (!state.selected.size) return notify('Select devices on the Devices tab first', 'warning');
+    if (!state.selected.size) return notify('Tick the boards to update first', 'warning');
     targets = [...state.selected].map((id) => ({ device_id: id, transport: 'udp' }));
   }
   const imageHash = document.getElementById('update-image').value;
@@ -245,4 +306,4 @@ export function renderUpdateChecks() {
   document.getElementById('ignore-battery-label').textContent = limit ? `Update batteries under ${limit} % too` : 'Update low batteries too';
 }
 
-document.getElementById('update-image').addEventListener('change', renderUpdateChecks);
+document.getElementById('update-image').addEventListener('change', () => { renderUpdateChecks(); renderUpdateDevices(); });
