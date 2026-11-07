@@ -3,7 +3,7 @@
 // and the changes and channels under the map.
 
 import { ago, api, busy, h, notify, state, svg, when } from './core.js';
-import { hoverNode, linkStrength, loadNetwork, meshTree, net, nodeLabel, nodeShape, nodeStyle, selectNode, shownTopology,
+import { hoverNode, linkMargin, linkStrength, marginLabel, loadNetwork, meshTree, net, nodeLabel, nodeShape, nodeStyle, selectNode, shownTopology,
   signalBars, wayLink, weakness } from './network.js';
 
 // ------------------------------------------------------------------ the figures
@@ -21,7 +21,7 @@ export function renderNetFrame() {
 }
 
 // A link's strength as words for a figure: its margin, or its link quality.
-const strengthValue = (link) => (link.link_margin !== null && link.link_margin !== undefined ? `${link.link_margin} dB`
+const strengthValue = (link) => (marginLabel(link) !== null ? `${marginLabel(link)} dB`
   : `${linkStrength(link).quality ?? '?'} of 3`);
 const tone = (quality) => (quality === null || quality === undefined ? '' : quality >= 3 ? 'ok' : quality === 2 ? 'warn' : 'bad');
 
@@ -37,7 +37,7 @@ function renderFigures(topology) {
   }
   const ways = topology.nodes.map((node) => ({ node, link: wayLink(tree, String(node.id)) })).filter((w) => w.link);
   const weakest = ways.sort((a, b) => weakness(b.link) - weakness(a.link))[0];
-  const margins = ways.map((w) => w.link.link_margin).filter((m) => m !== null && m !== undefined);
+  const margins = ways.map((w) => linkMargin(w.link)).filter((m) => m !== null);
   const average = margins.length ? Math.round(margins.reduce((a, b) => a + b, 0) / margins.length) : null;
   const dayAgo = Date.now() / 1000 - 86400;
   const changes = ((net.state && net.state.events) || []).filter((e) => e.time >= dayAgo).length;
@@ -112,7 +112,7 @@ function nodeRow(r, tree) {
   svg('svg', { class: 'net-row-icon', viewBox: '-32 -32 64 64', 'aria-hidden': 'true' }, nodeShape(r.node, r.node.device_id ? 1 : r.node.border_router ? 1.1 : r.node.parent ? 1.9 : 1.4, strength ? strength.quality : undefined).el),
   h('span', { class: 'net-row-text' }, h('span', { class: 'net-row-name' }, r.name), h('span', { class: 'net-row-sub' }, sub)),
   strength ? h('span', { class: 'net-row-signal', title: strength.text }, signalBars(strength.quality),
-    h('span', {}, r.link.link_margin !== null && r.link.link_margin !== undefined ? `${r.link.link_margin}` : '')) : null);
+    h('span', {}, marginLabel(r.link) ?? '')) : null);
   return row;
 }
 

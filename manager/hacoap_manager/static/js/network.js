@@ -116,14 +116,35 @@ export const nodeText = (text, y, kind = '') => svg('text', { class: `node-label
 
 export const shownName = (node) => !!node.device_id || node.border_router || node.kind === 'router' || net.allNames;
 
-// How strong a link is: its signal margin (dB) if the border router gives it, else its link
-// quality (0-3). Drawn as the line's colour and thickness.
+// OpenThread's link margin is the RSSI above the radio's noise floor, -100 dBm on the nRF52840.
+export const NOISE_FLOOR_DBM = -100;
+
+// A link's margin in dB: the border router's, else worked out from the RSSI (a board on newer
+// firmware reports its own, when the border router's API gives none); null without either.
+export function linkMargin(link) {
+  if (!link) return null;
+  if (link.link_margin !== null && link.link_margin !== undefined) return link.link_margin;
+  if (link.average_rssi !== null && link.average_rssi !== undefined) return Math.max(0, link.average_rssi - NOISE_FLOOR_DBM);
+  return null;
+}
+
+// A link's margin as a short label ("~38" when worked out from the board's RSSI), or null.
+export function marginLabel(link) {
+  const margin = linkMargin(link);
+  if (margin === null) return null;
+  return link.link_margin !== null && link.link_margin !== undefined ? `${margin}` : `~${margin}`;
+}
+
+// How strong a link is: its signal margin (dB) if the border router or the board gives it, else
+// its link quality (0-3). Drawn as the line's colour and thickness.
 export function linkStrength(link) {
-  if (link.link_margin !== null && link.link_margin !== undefined) {
-    const margin = link.link_margin;
+  const margin = linkMargin(link);
+  if (margin !== null) {
     const quality = margin > 20 ? 3 : margin > 10 ? 2 : margin > 2 ? 1 : 0;
-    const rssi = link.average_rssi !== null && link.average_rssi !== undefined ? `, ${link.average_rssi} dBm` : '';
-    return { width: 1.5 + (Math.max(0, Math.min(40, margin)) / 40) * 3.5, quality, text: `${margin} dB margin${rssi}` };
+    const rssi = link.average_rssi !== null && link.average_rssi !== undefined ? `${link.average_rssi} dBm` : '';
+    const text = link.link_margin !== null && link.link_margin !== undefined
+      ? `${margin} dB margin${rssi ? `, ${rssi}` : ''}` : `${rssi} (about ${margin} dB margin)`;
+    return { width: 1.5 + (Math.max(0, Math.min(40, margin)) / 40) * 3.5, quality, text };
   }
   const values = [link.link_quality_in, link.link_quality_out].filter((v) => v !== null && v !== undefined);
   if (values.length) {
@@ -149,7 +170,8 @@ export function linkPath(a, b, bend = 0.1) {
 // How weak a link is, from 0 (strong) to 1 (weak); 0.5 without signal information.
 export function weakness(link) {
   if (!link) return 0.5;
-  if (link.link_margin !== null && link.link_margin !== undefined) return Math.max(0, Math.min(1, (35 - link.link_margin) / 30));
+  const margin = linkMargin(link);
+  if (margin !== null) return Math.max(0, Math.min(1, (35 - margin) / 30));
   const quality = linkStrength(link).quality;
   return quality === null ? 0.5 : { 3: 0.1, 2: 0.45, 1: 0.8, 0: 1 }[quality];
 }
@@ -848,7 +870,8 @@ document.getElementById('history-latest').addEventListener('click', showLatestNe
 // ------------------------------------------------------------------ signal heatmap
 
 // The signal over the floor plan or the mesh, estimated from the placed nodes: each one counts
-// with the margin of its strongest link, blended by distance (nearer nodes weigh more), and the
+// with the margin of its strongest link (the border router's, else from the board's RSSI, else its
+// link quality 0-3 as a rough margin), blended by distance (nearer nodes weigh more), and the
 // colour fades out within 'reach' of every node. A guide to dead zones, not a measurement.
 // area is [x, y, width, height] in map units; bands: colour in steps of 5 dB (contours), else smooth.
 export function heatmapLayer(topology, points, [x0, y0, W, H], reach = Math.max(W, H) * 0.3, bands = true) {
@@ -857,7 +880,8 @@ export function heatmapLayer(topology, points, [x0, y0, W, H], reach = Math.max(
     const p = points.get(String(node.id));
     if (!p || !p.placed) continue;
     const margins = topology.links.filter((l) => l.a === node.id || l.b === node.id).map((l) => {
-      if (l.link_margin !== null && l.link_margin !== undefined) return l.link_margin;
+      const margin = linkMargin(l);
+      if (margin !== null) return margin;
       const quality = Math.min(...[l.link_quality_in, l.link_quality_out].filter((v) => v !== null && v !== undefined));
       return Number.isFinite(quality) ? quality * 10 + 5 : null;  // link quality 0-3 as a rough margin
     }).filter((m) => m !== null);

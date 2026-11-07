@@ -3,7 +3,7 @@
 // line crosses another. The same nodes, highlight and selection as the mesh.
 
 import { h, svg } from './core.js';
-import { applyFocus, dotGrid, enableZoom, linkKey, linkStrength, meshTree, net, nodeEvents, nodeLabel, nodeShape, nodeStyle,
+import { applyFocus, dotGrid, enableZoom, linkKey, linkStrength, marginLabel, meshTree, net, nodeEvents, nodeLabel, nodeShape, nodeStyle,
   nodeText, qualityColors, selectNode, shownTopology, signalBars, wayLink, weakness } from './network.js';
 
 const LEVEL = 150;     // from a router down to the routers under it
@@ -123,7 +123,7 @@ export function renderTree() {
       style: `--q: ${color}` },
     svg('path', { d: line.d }),
     line.label && strength ? svg('text', { class: 'tree-link-label', x: line.label[0] + 8, y: line.label[1] },
-      line.link.link_margin !== null && line.link.link_margin !== undefined ? `${line.link.link_margin} dB` : `${strength.quality} of 3`) : null,
+      marginLabel(line.link) !== null ? `${marginLabel(line.link)} dB` : `${strength.quality} of 3`) : null,
     strength ? svg('title', {}, strength.text) : null);
   });
   const routerEls = routerSpots.map((spot) => {
@@ -149,7 +149,7 @@ export function renderTree() {
     svg('text', { class: 'card-sub', x: CARD_H + 2, y: 34 }, sub),
     strength ? signalBars(strength.quality, { x: CARD_W - 34, y: 9, width: 22, height: 15 }) : null,
     strength ? svg('text', { class: 'card-margin', x: CARD_W - 10, y: 36, 'text-anchor': 'end' },
-      c.link.link_margin !== null && c.link.link_margin !== undefined ? `${c.link.link_margin} dB` : `${strength.quality}/3`) : null,
+      marginLabel(c.link) !== null ? `${marginLabel(c.link)} dB` : `${strength.quality}/3`) : null,
     strength ? svg('title', {}, strength.text) : null);
     nodeEvents(group, c.id);
     return group;
