@@ -226,6 +226,7 @@ def test_console_tab(page):
 def test_wall_display(page):
     dom = page("wall")
     assert "wall-card" in dom and "basil" in dom and "needs water" in dom
+    assert "wall-ring" in dom and "wall-ring-label" in dom          # the battery ring around the photo
     assert 'class="wall-mode' in dom or "wall-mode" in dom          # the header and status bar hidden
 
 

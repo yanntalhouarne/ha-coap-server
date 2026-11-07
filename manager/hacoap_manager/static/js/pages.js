@@ -1,6 +1,6 @@
 // The wall display and the weekly summary.
 
-import { api, h, notify, pct, photoUrl, powerText, shortHash, svg, when } from './core.js';
+import { api, h, notify, onUsb, photoUrl, powerText, shortHash, svg, when } from './core.js';
 import { fullLasts, imageLabel, perDay } from './dashboard.js';
 import { waterIn } from './network.js';
 
@@ -37,6 +37,28 @@ export function renderWallClock() {
     `${now.toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric' })} · ${now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
 }
 
+// The plant's photo (or the logo) in a ring that fills with its battery: green, yellow under
+// 50 %, red at 20 % and under (the low-battery alert's level); on USB green, with a plug,
+// or a bolt and a slow pulse while charging.
+const LOW_BATTERY = 20;
+function batteryRing(p) {
+  const known = p.battery !== null && p.battery !== undefined;
+  const level = known ? Math.max(0, Math.min(100, p.battery)) : 0;
+  const usb = onUsb(p);
+  const tone = usb ? 'usb' : !known ? 'unknown' : level <= LOW_BATTERY ? 'low' : level <= 50 ? 'mid' : 'ok';
+  const label = known ? `${level} %` : '–';
+  return h('div', { class: `wall-photo ring-${tone}${p.power === 'charging' ? ' charging' : ''}`, title: `Battery ${label}${usb ? ` · ${powerText(p)}` : ''}` },
+    h('div', { class: 'wall-ring' },
+      svg('svg', { class: 'wall-ring-arc', viewBox: '0 0 120 120', 'aria-hidden': 'true' },
+        svg('circle', { class: 'track', cx: 60, cy: 60, r: 54, pathLength: 100 }),
+        level > 0 ? svg('circle', { class: 'level', cx: 60, cy: 60, r: 54, pathLength: 100, 'stroke-dasharray': `${level} 100` }) : null),
+      p.photo ? h('img', { class: 'wall-ring-photo', src: photoUrl(p), alt: '' })
+        : h('div', { class: 'wall-ring-photo empty' }, svg('svg', { viewBox: '0 0 512 512' }, svg('use', { href: '#hacoap-glyph' }))),
+      h('div', { class: 'wall-ring-label' },
+        usb ? svg('svg', { class: 'icon', 'aria-hidden': 'true' }, svg('use', { href: p.power === 'charging' ? '#i-battery-charging' : '#i-plug' })) : null,
+        label)));
+}
+
 export function renderWall() {
   const plants = wall.plants;
   const thirsty = plants.filter((p) => p.needs_water);
@@ -48,8 +70,7 @@ export function renderWall() {
     const fill = soil === null || soil === undefined ? 0 : Math.max(0, Math.min(100, soil));
     return h('a', { class: `wall-card${p.needs_water ? ' thirsty' : ''}${p.online ? '' : ' offline'}`,
       href: `#device/${encodeURIComponent(p.device_id)}`, title: `Open ${p.name}` },
-      p.photo ? h('img', { class: 'wall-photo', src: photoUrl(p), alt: '' })
-        : h('div', { class: 'wall-photo empty' }, svg('svg', { viewBox: '0 0 512 512' }, svg('use', { href: '#hacoap-glyph' }))),
+      batteryRing(p),
       h('div', { class: 'wall-body' },
         h('div', { class: 'wall-name' }, p.name),
         h('div', { class: 'wall-plant' }, [p.plant && p.plant.toLowerCase() !== p.name.toLowerCase() ? p.plant : null, p.location].filter(Boolean).join(' · ')),
@@ -58,8 +79,7 @@ export function renderWall() {
           p.water_target ? h('div', { class: 'wall-bar-target', style: `left: ${p.water_target}%`, title: `water under ${p.water_target} %` }) : null),
         h('div', { class: 'wall-note' }, p.needs_water ? 'needs water now'
           : p.water_forecast && p.water_forecast.days !== null ? `water ${waterIn(p.water_forecast)}` : ''),
-        h('div', { class: 'wall-meta' }, `battery ${pct(p.battery)}`, powerText(p) ? ` · ${powerText(p)}` : '',
-          p.online ? '' : ' · offline')));
+        h('div', { class: 'wall-meta' }, [powerText(p), p.online ? '' : 'offline'].filter(Boolean).join(' · '))));
   }));
 }
 
