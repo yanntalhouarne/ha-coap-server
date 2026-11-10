@@ -1,6 +1,7 @@
 """Other devices (Settings → Other devices): off by default, then only from the chosen networks,
 on this computer's own address there, and only once signed in."""
 
+import json
 import time
 import socket
 import zipfile
@@ -256,11 +257,18 @@ async def test_a_dashboard_link_opens_the_plants_only(services):
         # The network map (and its history) and the charts, to look at
         for path in ("/api/network", "/api/network/history", "/api/graph?metric=soil_moisture&days=7"):
             assert (await dashboard.get(path, headers=header)).status_code == 200, path
-        for method, path in [("POST", "/api/network/refresh"), ("PUT", "/api/network/positions/1a2b3c4d"),
+        for method, path in [("PUT", "/api/network/positions/1a2b3c4d"),
                              ("POST", "/api/network/channel-scan"), ("DELETE", "/api/network/floorplan"),
                              ("POST", "/api/network/floorplan")]:
             response = await dashboard.request(method, path, headers={**header, **CHANGE}, json={"x": 0.5, "y": 0.5})
             assert response.status_code == 403, (method, path, response.status_code)
+        # Reading the network again: let through (here no border router is set, so it says so)...
+        response = await dashboard.post("/api/network/refresh", headers={**header, **CHANGE})
+        assert response.status_code == 400 and "border router" in response.json()["detail"]
+        # ...but not more than once a minute: a reading that recent is the answer
+        services.network.cache.write_text(json.dumps({"nodes": [], "links": [], "fetched": time.time() - 20}))
+        response = await dashboard.post("/api/network/refresh", headers={**header, **CHANGE})
+        assert response.status_code == 200 and response.json()["topology"]["fetched"] < time.time() - 19
         # Its alerts: dismissed, one by one or several at once
         services.db.upsert_device("1a2b3c4d", soil_moisture=5, battery=80, last_seen=time.time())
         services.db.upsert_device("5e6f7a8b", name="ha-coap-5e6f7a8b", soil_moisture=5, battery=80, last_seen=time.time())
@@ -320,6 +328,8 @@ async def test_a_view_only_link(services):
         for path in ("/api/wall", "/api/devices/1a2b3c4d/details", "/api/alerts", "/api/graph?metric=soil_moisture&days=7",
                      "/api/readings.csv?days=7"):
             assert (await tablet.get(path, headers=header)).status_code == 200, path
+        services.network.cache.write_text(json.dumps({"nodes": [], "links": [], "fetched": time.time()}))
+        assert (await tablet.post("/api/network/refresh", headers={**header, **CHANGE})).status_code == 200  # it only looks
         for method, path, body in [("POST", "/api/devices/1a2b3c4d/pump", {"on": True}), ("POST", "/api/devices/1a2b3c4d/ping", {}),
                                    ("PATCH", "/api/devices/1a2b3c4d", {"plant": "mint"}), ("POST", "/api/alerts/dismiss", {"ids": []}),
                                    ("POST", "/api/devices/1a2b3c4d/tank/refilled", {})]:

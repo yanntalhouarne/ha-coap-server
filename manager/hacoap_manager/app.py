@@ -169,10 +169,14 @@ LINK_ALLOWED = [
     (("GET", "HEAD"), re.compile(r"^/api/(network|network/history|network/floorplan|graph|readings\.csv)$")),
     (("GET", "HEAD"), re.compile(r"^/api/network/history/[^/]+$")),
     (("POST",), re.compile(r"^/api/devices/[^/]+/(pump|ping|tank/refilled)$")),
+    (("POST",), re.compile(r"^/api/network/refresh$")),  # reading the network again (it changes nothing)
     (("POST",), re.compile(r"^/api/alerts/(dismiss|\d+/dismiss)$")),
     (("PATCH",), re.compile(r"^/api/devices/[^/]+$")),  # its plant's name only (edit_device)
 ]
-LINK_EVENTS = {"device", "devices", "alert", "alerts"}  # what its page is told live
+LINK_EVENTS = {"device", "devices", "alert", "alerts", "network"}  # what its page is told live
+# What a view-only link may still ask with a POST: it only looks
+VIEW_ONLY_POSTS = {"/api/network/refresh"}
+LINK_NETWORK_GAP_S = 60  # from a link, a network reading this soon after the last one is that one
 
 
 def _link_allows(method, path):
@@ -232,7 +236,7 @@ def create_app(services, background_tasks=True, on_quit=None, port=None):
         if access == "link" and not _link_allows(request.method, path):
             return JSONResponse({"detail": "A dashboard link only opens the plants"}, status_code=403)
         view_only = access == "link" and bool((s.remote.link(key, request.client.host if request.client else "") or {}).get("view_only"))
-        if view_only and request.method not in ("GET", "HEAD"):
+        if view_only and request.method not in ("GET", "HEAD") and not (request.method == "POST" and path in VIEW_ONLY_POSTS):
             return JSONResponse({"detail": "This dashboard link is view only"}, status_code=403)
         if access == "sign-in" and not path.startswith(SIGNED_OUT_PATHS):
             if path.startswith("/api/"):
@@ -882,7 +886,12 @@ def create_app(services, background_tasks=True, on_quit=None, port=None):
         return s.network.state()
 
     @app.post("/api/network/refresh")
-    async def refresh_network():
+    async def refresh_network(request: Request):
+        # From a dashboard link, not more than once a minute: the last reading, if it's that recent
+        last = s.network.last()
+        if getattr(request.state, "access", None) == "link" and last and \
+                time.time() - (last.get("fetched") or 0) < LINK_NETWORK_GAP_S:
+            return s.network.state()
         try:
             return await s.network.refresh()
         except NetworkError as exc:

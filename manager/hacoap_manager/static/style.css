@@ -1124,7 +1124,7 @@ body.wall-mode .simple-top, body.wall-mode .simple-nav { display: none !importan
 .link-mode .mode-switch { display: none !important; }
 .simple-nav a.link-only { display: none; }
 .link-mode .simple-nav a.link-only { display: flex; }
-.link-mode #network-refresh, .link-mode #net-settings-button, .link-mode #channel-scan,
+.link-mode #net-settings-button, .link-mode #channel-scan,
 .link-mode #floorplan-choose, .link-mode #floorplan-remove { display: none !important; }
 .mode-switch { display: flex; padding: 3px; border-radius: 999px; background: var(--t-surface-2); font-size: .75rem; }
 .mode-switch a { padding: .4rem .75rem; border-radius: 999px; color: var(--t-text-secondary); text-decoration: none; }
