@@ -30,6 +30,7 @@ class Settings:
     auto_refresh_minutes: int = 15  # refresh every device's status while the app runs (0: never)
     reboot_timeout_s: float = 180.0  # how long an updated device has to come back
     border_router_url: str = ""     # the border router's REST API, such as http://192.168.1.20:8081
+    border_router_container: str = ""  # a border router in Docker on this machine (such as otbr): read through its ot-ctl
     min_battery_for_update: int = 20  # % under which an over-the-air update skips a device (0: never)
     water_below_default: int = 30   # soil moisture % under which a plant needs water (0: off), unless set per device
     check_app_updates: bool = False  # ask GitHub once a day whether there's a newer version of this app

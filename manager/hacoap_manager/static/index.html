@@ -379,6 +379,10 @@
               </div>
               <div class="form-text">Its REST address (port 8081).
                 <button class="btn btn-link btn-sm p-0 align-baseline" type="button" id="border-router-find">Find it on the network</button></div>
+              <label class="form-label mt-2" for="border-router-container">Or its Docker container here</label>
+              <input class="form-control form-control-sm" id="border-router-container" placeholder="otbr" autocomplete="off" spellcheck="false">
+              <div class="form-text">When the border router runs in Docker on this app's computer: the network is read
+                through its command line (ot-ctl), faster and more complete. Leave empty to use the REST address.</div>
             </form>
             <hr>
             <div class="form-label">Floor plan</div>

@@ -9,6 +9,7 @@ import zlib
 from pathlib import Path
 
 from .otbr import BorderRouter, BorderRouterError
+from .otctl import CliBorderRouter
 from .pictures import PictureError, picture_type
 
 # How recent a board's own report ('diag') must be to name it on the map by its short address
@@ -43,7 +44,8 @@ class NetworkService:
 
     def state(self):
         return {"topology": self.last(), "events": self.db.network_events(),
-                "border_router_url": self.settings.border_router_url, "channel_scan": self._read(self.scan_cache),
+                "border_router_url": self.settings.border_router_url,
+                "border_router_container": self.settings.border_router_container, "channel_scan": self._read(self.scan_cache),
                 "floorplan": self.floorplan_info(), "positions": self.db.floorplan_positions()}
 
     @staticmethod
@@ -53,7 +55,17 @@ class NetworkService:
         except (OSError, ValueError):
             return None
 
+    def configured(self):
+        return bool(self.settings.border_router_container.strip() or self.settings.border_router_url.strip())
+
     def _border_router(self):
+        """Its command line when it runs in Docker here (faster, steadier), else its REST API."""
+        container = self.settings.border_router_container.strip()
+        if container:
+            try:
+                return CliBorderRouter(container)
+            except BorderRouterError as exc:
+                raise NetworkError(str(exc)) from exc
         url = self.settings.border_router_url.strip()
         if not url:
             raise NetworkError("Set the border router's address first (for example http://192.168.1.20:8081)")

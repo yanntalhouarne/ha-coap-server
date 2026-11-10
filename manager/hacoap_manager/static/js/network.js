@@ -781,6 +781,7 @@ export function renderNetworkLegend() {
 export async function loadNetwork() {
   net.state = await api('GET', '/api/network');
   document.getElementById('border-router-url').value = net.state.border_router_url || '';
+  document.getElementById('border-router-container').value = net.state.border_router_container || '';
   redrawNetwork();
   renderNetworkLegend();
   renderChannelScan(net.state.channel_scan);
@@ -814,8 +815,10 @@ document.getElementById('network-refresh').addEventListener('click', (event) => 
 
 document.getElementById('border-router-form').addEventListener('submit', (event) => {
   event.preventDefault();
-  api('PUT', '/api/settings', { border_router_url: document.getElementById('border-router-url').value.trim() })
-    .then(() => notify('Saved', 'success', 2000), () => {});
+  api('PUT', '/api/settings', {
+    border_router_url: document.getElementById('border-router-url').value.trim(),
+    border_router_container: document.getElementById('border-router-container').value.trim(),
+  }).then(() => notify('Saved', 'success', 2000), () => {});
 });
 
 document.getElementById('border-router-find').addEventListener('click', (event) => busy(event.target, async () => {

@@ -15,6 +15,7 @@ import time
 from . import coap, discovery
 from .mcumgr import DeviceLink, McumgrError
 from .otbr import BorderRouter, BorderRouterError
+from .otctl import CliBorderRouter
 
 DEFAULT_IMAGE_SIZE = 300 * 1024   # bytes, when no release image is set
 SMP_OVERHEAD = 120                # bytes of each upload packet that aren't image data
@@ -74,6 +75,18 @@ class Doctor:
 
     async def _border_router(self):
         name = "Border router"
+        container = self.settings.border_router_container.strip()
+        if container:
+            started = time.perf_counter()
+            try:
+                state = await asyncio.to_thread(CliBorderRouter(container, timeout=10).node_info)
+            except BorderRouterError as exc:
+                return step(name, "fail", str(exc),
+                            "Check that the container runs (`docker ps`) and that this app's user may use Docker "
+                            "(in the docker group), or clear the container name to use the REST address.")
+            took = (time.perf_counter() - started) * 1000
+            return step(name, "ok", f"ot-ctl in the container '{container}' answers in {took:.0f} ms "
+                                    f"(Thread role: {state['state']})")
         url = self.settings.border_router_url.strip()
         if not url:
             return step(name, "skip", "No border router address set (Network tab). Only needed for the map.")

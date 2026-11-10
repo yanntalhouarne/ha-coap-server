@@ -24,7 +24,7 @@ from fastapi.staticfiles import StaticFiles
 import re
 
 from . import (__version__, autostart, backup, coap, config, demo, discovery, feed, fleet, homeassistant, housekeeping,
-               kconfig, mcuboot, remote, report, serial_ports, signing, summary, swd)
+               kconfig, mcuboot, otctl, remote, report, serial_ports, signing, summary, swd)
 from .alerts import AlertService
 from .appupdate import UpdateCheck
 from .builds import VARIANTS, BuildError, BuildRunner
@@ -205,6 +205,9 @@ def create_app(services, background_tasks=True, on_quit=None, port=None):
 
     @app.put("/api/settings")
     async def put_settings(values: dict):
+        container = str(values.get("border_router_container", "")).strip()
+        if container and not otctl.valid_container(container):
+            raise _bad_request(f"'{container}' isn't a Docker container name")
         try:
             s.settings.update(values)
         except (TypeError, ValueError) as exc:
@@ -1260,7 +1263,7 @@ async def _auto_refresh(services):
                 services.alerts.scan()
             except Exception:  # noqa: BLE001 - try again next time
                 log.exception("automatic refresh")
-            if services.settings.border_router_url:
+            if services.network.configured():
                 try:
                     await services.network.refresh()
                 except NetworkError as exc:
