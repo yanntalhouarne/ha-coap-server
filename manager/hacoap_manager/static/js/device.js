@@ -9,6 +9,7 @@ import { prepareUpdate, statusClass } from './updates.js';
 import { renderBoardSettings, renderDeviceHealth } from './board.js';
 import { loadDeviceTimeline } from './timeline.js';
 import { countTo, pumping, showPumping, startPumping, waitForBoard } from './motion.js';
+import { renderWatering } from './watering.js';
 
 // ------------------------------------------------------------------ one device
 
@@ -78,6 +79,7 @@ export function renderDeviceStatus(device) {
       onclick: () => runDoctor(device) }, 'Check the connection')));
   renderDeviceHero(device);
   renderDeviceHealth(device);
+  renderWatering(device);
 }
 
 // The top of the page: the plant's photo, its soil as a big gauge, and the numbers that matter

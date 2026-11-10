@@ -208,6 +208,56 @@ def pump_effect(readings, activity, window_s=3 * 3600):
             "seconds": max(set(durations), key=durations.count) if durations else None}
 
 
+TANK_LOW = 20            # % of its tank left: time to refill it
+NO_RISE = 2              # % of soil: a watering that raised it less didn't reach the plant
+NO_RISE_RUNS = 2         # the last this many waterings, each
+WET = 80                 # % of soil: from here a watering can't show much
+EFFECT_WAIT_S = 3600     # a watering's effect is judged from this long after it
+EFFECT_WINDOW_S = 3 * 3600
+
+
+def pump_runs(activity):
+    """[(time, seconds)] of the pump runs in activity rows (kind 'pump', "(N s)" in the message)."""
+    runs = []
+    for row in activity:
+        found = SECONDS.search(row.get("message", "")) if row.get("kind") == "pump" else None
+        if found:
+            runs.append((row["time"], int(found.group(1))))
+    return runs
+
+
+def tank_state(device, runs, settings):
+    """Its water tank, from its pump runs since it was refilled: {size_ml, flow_ml_s, filled, runs,
+    used_ml, left_ml, percent, low}, or None when its size isn't set. 'runs': [(time, seconds)]
+    since the refill."""
+    size = device.get("tank_ml")
+    if not size:
+        return None
+    flow = device.get("pump_ml_s") or settings.pump_flow_ml_s
+    used = sum(seconds for _, seconds in runs) * flow
+    left = max(0.0, size - used)
+    percent = round(100 * left / size)
+    return {"size_ml": size, "flow_ml_s": flow, "filled": device.get("tank_filled"), "runs": len(runs),
+            "used_ml": round(used), "left_ml": round(left), "percent": percent, "low": percent <= TANK_LOW}
+
+
+def watering_missed(readings, runs, now=None):
+    """Whether the last NO_RISE_RUNS waterings each raised the soil by less than NO_RISE % (from
+    under WET %), judged EFFECT_WAIT_S after each: an empty tank, or the tube out of the pot.
+    False while it can't be told (fewer runs, too recent, no readings around them)."""
+    now = now or time.time()
+    last = runs[-NO_RISE_RUNS:]
+    if len(last) < NO_RISE_RUNS or now - last[-1][0] < EFFECT_WAIT_S:
+        return False
+    points = _soil_points(readings)
+    for run_time, _ in last:
+        before = [v for t, v in points if t <= run_time]
+        after = [v for t, v in points if run_time < t <= run_time + EFFECT_WINDOW_S]
+        if not before or not after or before[-1] >= WET or max(after) - before[-1] >= NO_RISE:
+            return False
+    return True
+
+
 def image_status(device, release):
     """'current', 'outdated' or 'unknown' (slots never read), compared with the release image."""
     if release is None:

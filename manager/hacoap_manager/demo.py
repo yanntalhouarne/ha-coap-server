@@ -157,6 +157,8 @@ class Demo:
             s.db.upsert_device(device_id, name=name, plant=plant, location=location, water_below=target,
                                tags="herbs" if plant in ("basil", "mint", "rosemary") else "")
             self._fill_history(device_id, server.device.model, current, now)
+            if i < 2:  # two with a water tank: one nearly empty
+                s.db.upsert_device(device_id, tank_ml=(300, 2000)[i], tank_filled=now - 10 * 86400)
         await s.inventory.read_all_slots()
         for _ in range(2):                      # two network readings: the history slider shows
             await s.network.refresh()

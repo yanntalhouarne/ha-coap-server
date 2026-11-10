@@ -162,7 +162,7 @@ LINK_ALLOWED = [
     # Read-only: the network's map (mesh, tree, floor plan) and its history, and the charts
     (("GET", "HEAD"), re.compile(r"^/api/(network|network/history|network/floorplan|graph)$")),
     (("GET", "HEAD"), re.compile(r"^/api/network/history/[^/]+$")),
-    (("POST",), re.compile(r"^/api/devices/[^/]+/(pump|ping)$")),
+    (("POST",), re.compile(r"^/api/devices/[^/]+/(pump|ping|tank/refilled)$")),
     (("POST",), re.compile(r"^/api/alerts/(dismiss|\d+/dismiss)$")),
     (("PATCH",), re.compile(r"^/api/devices/[^/]+$")),  # its plant's name only (edit_device)
 ]
@@ -297,6 +297,18 @@ def create_app(services, background_tasks=True, on_quit=None, port=None):
                 raise _bad_request("The watering target is a percentage, from 0 to 100") from None
             if fields["water_below"] is not None and not 0 <= fields["water_below"] <= 100:
                 raise _bad_request("The watering target is a percentage, from 0 to 100")
+        for name, kind, low, high, what in (("tank_ml", int, 10, 1_000_000, "The tank's size is in ml, from 10"),
+                                            ("pump_ml_s", float, 0.1, 1000, "The pump's flow is in ml per second")):
+            if name in body:
+                value = body[name]
+                try:
+                    fields[name] = None if value in (None, "", 0, "0") else kind(float(value))
+                except (TypeError, ValueError):
+                    raise _bad_request(what) from None
+                if fields[name] is not None and not low <= fields[name] <= high:
+                    raise _bad_request(what)
+        if "tank_ml" in fields and fields["tank_ml"] and not s.db.device(device_id)["tank_ml"]:
+            fields["tank_filled"] = time.time()  # a tank just set up: full from now
         if "tags" in body:
             tags = body["tags"] if isinstance(body["tags"], list) else str(body["tags"]).split(",")
             fields["tags"] = ",".join(sorted({t.strip().lower() for t in tags if t.strip()}))
@@ -517,6 +529,20 @@ def create_app(services, background_tasks=True, on_quit=None, port=None):
                 "activity": s.db.activity(device_id, since),
                 "restarts": s.db.recent_activity(device_id, "restart", 20),
                 "drain": await asyncio.to_thread(fleet.battery_drain, s.db, device)}
+
+    @app.post("/api/devices/{device_id}/tank/refilled")
+    async def tank_refilled(device_id: str):
+        """Its water tank is full again: it's counted from now."""
+        device = s.db.device(device_id)
+        if device is None:
+            raise HTTPException(404, "Unknown device")
+        if not device["tank_ml"]:
+            raise _bad_request("Set its tank's size first (on its page, Watering)")
+        device = s.inventory.describe(s.db.upsert_device(device_id, tank_filled=time.time()))
+        s.db.add_activity(device_id, "tank", "Water tank refilled")
+        s.events.publish("device", device=device)
+        s.alerts.scan()
+        return device
 
     @app.post("/api/devices/{device_id}/pump")
     async def pump(device_id: str, body: dict):

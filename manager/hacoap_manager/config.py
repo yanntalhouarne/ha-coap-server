@@ -33,6 +33,7 @@ class Settings:
     border_router_container: str = ""  # a border router in Docker on this machine (such as otbr): read through its ot-ctl
     min_battery_for_update: int = 20  # % under which an over-the-air update skips a device (0: never)
     water_below_default: int = 30   # soil moisture % under which a plant needs water (0: off), unless set per device
+    pump_flow_ml_s: float = 20.0    # how much water a pump moves per second (ml), for the tanks, unless set per device
     check_app_updates: bool = False  # ask GitHub once a day whether there's a newer version of this app
     keep_readings_days: int = 730   # readings, link samples and activity older than this are deleted (0: keep all)
     keep_network_readings: int = 1000  # network readings kept for the history slider

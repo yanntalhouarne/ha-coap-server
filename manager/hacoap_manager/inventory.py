@@ -70,11 +70,19 @@ class Inventory:
         return device
 
     def describe(self, device):
-        """The device as the API returns it, with whether it's online and needs water."""
+        """The device as the API returns it, with whether it's online and needs water, its water
+        tank, and whether its last waterings missed (the soil didn't rise)."""
+        now = time.time()
         seen = device.get("last_seen")
-        online = seen is not None and time.time() - seen < self.settings.online_minutes * 60
+        online = seen is not None and now - seen < self.settings.online_minutes * 60
+        since = device.get("tank_filled") or 0  # a refill starts again: the runs before don't count
+        runs = fleet.pump_runs(self.db.activity_kind_since(device["device_id"], "pump", since))
+        first = runs[-fleet.NO_RISE_RUNS][0] if len(runs) >= fleet.NO_RISE_RUNS else None
+        missed = first is not None and fleet.watering_missed(
+            self.db.readings(device["device_id"], since=first - 86400), runs, now)
         return {**device, "online": online, "water_target": fleet.water_target(device, self.settings),
-                "needs_water": fleet.needs_water(device, self.settings)}
+                "needs_water": fleet.needs_water(device, self.settings),
+                "tank": fleet.tank_state(device, runs, self.settings), "watering_missed": missed}
 
     def devices(self):
         return [self.describe(d) for d in self.db.devices()]

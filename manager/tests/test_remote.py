@@ -270,6 +270,11 @@ async def test_a_dashboard_link_opens_the_plants_only(services):
         assert (await dashboard.post(f"/api/alerts/{ids[0]}/dismiss", headers={**header, **CHANGE})).status_code == 200
         response = await dashboard.post("/api/alerts/dismiss", json={"ids": ids[1:]}, headers={**header, **CHANGE})
         assert response.status_code == 200 and response.json()["open"] == []
+        # Its water tank: refilled
+        services.db.upsert_device("1a2b3c4d", tank_ml=500)
+        assert (await dashboard.post("/api/devices/1a2b3c4d/tank/refilled", headers={**header, **CHANGE})).status_code == 200
+        assert (await dashboard.patch("/api/devices/1a2b3c4d", json={"tank_ml": 900},
+                                      headers={**header, **CHANGE})).status_code == 403   # not its size
         # Nothing else: not another field of a device, updates, settings, backups, the border router...
         assert (await dashboard.patch("/api/devices/1a2b3c4d", json={"address": "fd66::6"},
                                       headers={**header, **CHANGE})).status_code == 403

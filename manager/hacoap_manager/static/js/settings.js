@@ -20,6 +20,7 @@ export const settingLabels = {
   border_router_url: ['Border router REST API', 'For the Network page, such as http://192.168.1.20:8081 (the ot-br-posix REST server). Empty: not used.'],
   min_battery_for_update: ['Lowest battery for an update (%)', 'Over the air, a device whose battery is under this is skipped (an update can include it anyway). 0: no check.'],
   water_below_default: ['Needs water below (%)', 'The soil moisture under which a plant needs water, unless its page sets its own. 0: off.'],
+  pump_flow_ml_s: ['Pump flow (ml per second)', "How much water a pump moves per second, to know how full the water tanks are, unless a board's page sets its own."],
   check_app_updates: ['Check GitHub for app updates', 'Once a day, asks GitHub whether a newer fleet manager is out.'],
   keep_readings_days: ['Keep readings (days)', 'Readings, link samples and pump runs older than this are deleted, once a day. 0: keep everything.'],
   keep_network_readings: ['Keep network readings', 'How many network readings the history slider keeps'],
@@ -27,7 +28,7 @@ export const settingLabels = {
 };
 export const SETTINGS_ELSEWHERE = new Set(['home_assistant_url']);  // set in their own cards
 export const SETTING_GROUPS = [
-  ['Devices and plants', ['online_minutes', 'auto_refresh_minutes', 'water_below_default', 'min_battery_for_update']],
+  ['Devices and plants', ['online_minutes', 'auto_refresh_minutes', 'water_below_default', 'pump_flow_ml_s', 'min_battery_for_update']],
   ['Network and timing', ['border_router_url', 'coap_port', 'smp_port', 'udp_mtu', 'serial_buffer', 'coap_timeout_s',
     'mcumgr_timeout_s', 'discovery_timeout_s', 'reboot_timeout_s']],
   ['Keeping data', ['keep_readings_days', 'keep_network_readings', 'keep_backups']],

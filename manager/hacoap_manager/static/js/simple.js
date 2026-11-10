@@ -10,6 +10,7 @@ import { lineChart } from './charts.js';
 import { devicePath, pingDevice } from './devices.js';
 import { showPumping, startPumping, waitForBoard } from './motion.js';
 import { setTheme } from './themes.js';
+import { refillTank, tankBar, tankText } from './watering.js';
 
 const simple = { route: null, plants: [], plantId: null, fromWall: false, soon: null };
 
@@ -182,6 +183,14 @@ function renderPlant(details) {
         h('button', { class: 'btn btn-outline-secondary beep', type: 'button', title: 'It beeps, so you can find it',
           onclick: (e) => pingDevice(device, e.currentTarget) }, icon('bell-ring'), ' Beep')),
       waterMenu),
+    device.tank ? h('section', { class: `tank-row${device.tank.low ? ' low' : ''}` },
+      h('div', { class: 'tank-row-text' }, h('span', {}, 'water tank'), h('b', {}, tankText(device.tank)), tankBar(device.tank)),
+      h('button', { class: 'btn btn-sm btn-outline-primary', type: 'button', onclick: async (e) => {
+        await refillTank(device, e.currentTarget);
+        await loadPlant(id, simple.fromWall);
+      } }, 'Refilled')) : null,
+    device.watering_missed ? h('p', { class: 'tank-missed' }, icon('triangle-alert'),
+      " Its soil didn't rise after its last waterings: is its tank empty, or the tube out of the pot?") : null,
     h('section', { class: 'plant-facts' },
       fact('battery', pct(device.battery), onUsb(device) ? powerText(device) : has(device.battery) ? daysText(health.battery_forecast) : '', low ? 'bad' : ''),
       fact('air', has(device.temperature) ? `${device.temperature} °C` : '–', has(device.air_humidity) ? `${device.air_humidity} % humid` : ''),
@@ -222,7 +231,7 @@ export function renderSimpleAlerts() {
 
 document.addEventListener('hacoap-alerts', renderSimpleAlerts);
 
-const FEED_ICONS = { update: 'upload', alert: 'triangle-alert', parent: 'network', pump: 'droplets', photo: 'camera', build: 'hammer',
+const FEED_ICONS = { update: 'upload', alert: 'triangle-alert', parent: 'network', pump: 'droplets', tank: 'droplet', photo: 'camera', build: 'hammer',
   restart: 'power', settings: 'sliders-horizontal', network: 'network' };
 
 async function loadSimpleFeed() {

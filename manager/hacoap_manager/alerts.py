@@ -59,6 +59,14 @@ class AlertService:
             if device["needs_water"]:
                 found[f"dry:{device_id}"] = ("dry", device_id,
                                              f"{NAME} needs water (soil under {device['water_target']} %)")
+            tank = device.get("tank")
+            if tank and tank["low"]:
+                found[f"tank:{device_id}"] = ("tank", device_id, f"{NAME}'s water tank is about {tank['percent']} % full "
+                                                                 f"({tank['left_ml']} ml left): refill it")
+            if device.get("watering_missed"):
+                found[f"missed:{device_id}"] = ("tank", device_id,
+                                                f"{NAME}'s soil didn't rise after its last {fleet.NO_RISE_RUNS} waterings: "
+                                                f"its tank may be empty, or the tube out of the pot")
         return found
 
     def _named(self, alert):

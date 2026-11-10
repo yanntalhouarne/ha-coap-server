@@ -47,7 +47,7 @@ On a phone (over Remote Desktop, say) the layout narrows: the tabs show in rows 
 **Simple and advanced.** The app opens on its **simple view**, made for a phone: your plants and little else, with three tabs at the bottom.
 
 - **Plants:** a card per plant, each with a ring around its photo (or the logo) that fills with the battery (as on the wall display), its soil moisture and when it will need water. The ones that need water come first, with a banner naming them.
-- **A plant** (tap its card): named by what you called it (its plant field), with the board's own name small under it, and **Rename**; its soil with the watering target, **Water now** (choose how long, 1 to 9 s, with its last run time marked, then confirm "Water ha-coap-9 for 5 seconds?") and **Beep**, its battery (and how long it lasts, or that it's charging), air and signal, and its soil over the last 7 days. **Advanced details** opens its full device page.
+- **A plant** (tap its card): named by what you called it (its plant field), with the board's own name small under it, and **Rename**; its soil with the watering target, **Water now** (choose how long, 1 to 9 s, with its last run time marked, then confirm "Water ha-coap-9 for 5 seconds?") and **Beep**, its water tank when it has one (how full, with **Refilled**), its battery (and how long it lasts, or that it's charging), air and signal, and its soil over the last 7 days. **Advanced details** opens its full device page.
 - **Alerts:** the open alerts, with their count on the tab, and what happened lately.
 - **Settings:** the colour theme, notifications, the wall display and weekly summary, and the way to the advanced view.
 
@@ -107,6 +107,7 @@ Tick devices to update them, or to use **With selected**: refresh them, read the
 
 **A device's page.** Click a device's name. At the top: the plant's photo, its soil as a big gauge (the watering target marked), and the numbers that matter: when it needs water, the battery and how long it lasts, its signal to its parent, the air temperature and humidity; with **Run the pump**, **Beep** and **Refresh**. Then:
 - **Plant:** photos of the plant it looks after, over time, shown at the top of the page. **Add a photo** adds one (from a phone, too; big photos are shrunk to 1600 pixels before they're sent), dated by the file's date, so a photo taken last week lands last week. With two or more, a slider steps through them in the photo at the top: each with its date, the soil moisture then, and the soil chart with that date marked; watch the plant grow next to its readings. **Remove this one** removes the photo shown. The newest is the device's photo everywhere else. Then: whether it needs water, when it will at its drying rate ("in about 2 days"), and what a pump run does ("a pump run of 3 s raises its soil by about 17 %", from the runs started from the app over 90 days: tune the run time with it).
+- **Watering:** its water tank. Give the tank's size (ml) and, once, how much its pump moves per second (put the tube in a measuring cup, run the pump once, enter how much came out, and **work it out**; otherwise Settings' **Pump flow**, 20 ml/s). The app adds up the pump's runs since you last pressed **I refilled it** (here or on the plant's page) and shows how full it is. Under 20 % left it raises an alert. Whether or not a tank is set, two waterings in a row that didn't raise the soil (by 2 % or more within 3 hours, from under 80 %) raise one too: the tank is probably empty, or the tube out of the pot. Only the pump runs the app knows about count.
 - **Status:** its readings, and the days of battery left.
 - **Firmware:** what it runs, compared with the release.
 - **Controls:**
@@ -216,6 +217,7 @@ While a device is being updated, it polls its parent every 100 ms instead of eve
 - a plant needs water (soil under its target)
 - an update fails
 - a board restarted because of a crash, its watchdog or a CPU lockup (from boards whose firmware reports it)
+- a water tank is under 20 %, or a plant's last two waterings didn't raise its soil
 - the border router is down: its container stopped or is gone, its radio dongle is unplugged, it's off the Thread network, or (one elsewhere, such as a Pi) its REST API doesn't answer. Checked every minute; it takes two checks in a row, so a restart doesn't raise one. Nothing is checked while the app updates or restarts it
 - none of the boards answer (two or more): the border router or the Thread network is probably down
 
