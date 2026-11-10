@@ -245,15 +245,17 @@ class RemoteAccess:
 
     # ------------------------------------------------------------ dashboard links
 
-    def create_link(self, name):
-        """A new dashboard link: returns its key (shown once: only its hash is kept)."""
+    def create_link(self, name, view_only=False):
+        """A new dashboard link: returns its key (shown once: only its hash is kept). A view-only
+        one shows the plants without watering, beeping, naming them or dismissing alerts."""
         name = " ".join(str(name or "").split())[:MAX_LINK_NAME]
         if not name:
             raise RemoteError("Name the link (such as: Home Assistant, plants)")
         if len(self._state["links"]) >= MAX_LINKS:
             raise RemoteError(f"At most {MAX_LINKS} links: revoke one first")
         key = secrets.token_urlsafe(32)
-        self._state["links"][_token_hash(key)] = {"name": name, "created": time.time(), "last_used": None, "address": ""}
+        self._state["links"][_token_hash(key)] = {"name": name, "created": time.time(), "last_used": None, "address": "",
+                                                  "view_only": bool(view_only)}
         self._save()
         log.info("dashboard link made: %s", name)
         return key

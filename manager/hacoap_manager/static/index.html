@@ -346,6 +346,8 @@
       <button class="btn btn-sm btn-outline-secondary d-none" id="graph-zoom-reset" type="button">whole period</button>
       <div class="d-flex flex-wrap gap-1 align-items-center" id="graph-groups"></div>
       <span class="ms-auto small text-body-secondary" id="graph-note"></span>
+      <a class="btn btn-sm btn-outline-secondary" id="graph-csv" href="/api/readings.csv?days=7" download
+        title="Every board's readings over this period, as a spreadsheet">Download (CSV)</a>
     </div>
     <div class="card"><div class="card-body">
       <div id="graph-chart"></div>
@@ -1109,6 +1111,12 @@
                   placeholder="what it's for, such as Home Assistant">
                 <button class="btn btn-sm btn-outline-primary text-nowrap" type="submit">Make a link</button>
               </form>
+              <div class="form-check small mb-2">
+                <input class="form-check-input" type="checkbox" id="remote-link-view-only">
+                <label class="form-check-label" for="remote-link-view-only">View only: its plants, alerts, map and charts
+                  to look at, without watering, beeping, naming plants or dismissing alerts (for a wall tablet, a
+                  guest's dashboard)</label>
+              </div>
               <div id="remote-link-new" class="small"></div>
               <div id="remote-links" class="small"></div>
             </div>
@@ -1149,6 +1157,15 @@
             <p class="small text-body-secondary mb-1">A backup is made automatically once a day while the app runs
               (the last 7 are kept, see Settings), and before every restore.</p>
             <ul class="list-unstyled small" id="backups"></ul>
+            <h6 class="mt-3">Copies elsewhere</h6>
+            <p class="small text-body-secondary mb-1">Each daily backup can also be copied to another folder: a NAS
+              share or a USB disk mounted on this computer (Settings, Copy backups to), so a backup outlives this
+              computer's disk. The newest copies are kept there, as many as here. Keep that folder private: a backup
+              holds the Thread network's key.</p>
+            <div class="d-flex flex-wrap gap-2 align-items-center mb-1">
+              <button class="btn btn-sm btn-outline-secondary" id="backup-copy-now" type="button">Copy now</button>
+              <span class="small" id="backup-copy-state"></span>
+            </div>
             <h6 class="mt-3">Device list</h6>
             <p class="small text-body-secondary">A spreadsheet (CSV) of the devices. Importing one adds or updates devices
               by their device ID: name, address and notes; the rest comes from the devices.</p>

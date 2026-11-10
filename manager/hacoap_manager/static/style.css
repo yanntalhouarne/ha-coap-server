@@ -1223,6 +1223,7 @@ body.wall-mode .simple-top, body.wall-mode .simple-nav { display: none !importan
 .tank-bar.low i { background: var(--t-yellow); }
 .tank-level .soil-bar { color: var(--t-cyan); }
 .tank-missed { margin: 0; font-size: .85rem; color: var(--t-yellow); }
+.link-view .link-action { display: none !important; }
 .rule-number { width: 4.5rem; }
 .rule-line { line-height: 2.4; }
 .plant-facts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .6rem; }

@@ -255,14 +255,14 @@ function renderPlant(details) {
   const readings = details.readings || [];
   const points = readings.map((r) => ({ t: r.time, v: r.soil_moisture }));
   const span = points.length ? [{ t: points[0].t, v: target }, { t: points[points.length - 1].t, v: target }] : [];
-  document.getElementById('plant-page').replaceChildren(
+  document.getElementById('plant-page').replaceChildren(...[  // what it doesn't have is left out
     backLink(),
     h('section', { class: 'plant-hero' },
       batteryRing(device, 'plant-hero-ring'),
       h('h1', {}, name),
       h('div', { class: 'plant-sub' }, [boardName(device), device.location].filter(Boolean).join(' · '),
         boardName(device) || device.location ? ' · ' : '', h('span', { class: device.online ? 'text-success' : 'text-body-secondary' }, device.online ? 'online' : 'offline')),
-      h('button', { class: 'btn btn-sm btn-link plant-rename', type: 'button', onclick: () => renamePlant(device) },
+      h('button', { class: 'btn btn-sm btn-link plant-rename link-action', type: 'button', onclick: () => renamePlant(device) },
         device.plant ? 'Rename' : 'Give it a name')),
     h('section', { class: `soil-card${device.needs_water ? ' thirsty' : ''}`, 'data-board': id },
       h('div', { class: 'd-flex align-items-baseline gap-2' }, h('span', { class: 'soil-big' }, has(soil) ? `${soil} %` : '–'),
@@ -270,14 +270,14 @@ function renderPlant(details) {
       h('div', { class: 'soil-bar' }, h('i', { style: `width: ${has(soil) ? Math.max(0, Math.min(100, soil)) : 0}%` }),
         target ? h('b', { style: `left: ${target}%`, title: `water under ${target} %` }) : null),
       h('div', { class: 'soil-status' }, status + selfWatering),
-      h('div', { class: 'soil-actions' },
+      h('div', { class: 'soil-actions link-action' },
         waterButton,
         h('button', { class: 'btn btn-outline-secondary beep', type: 'button', title: 'It beeps, so you can find it',
           onclick: (e) => pingDevice(device, e.currentTarget) }, icon('bell-ring'), ' Beep')),
       waterMenu),
     device.tank ? h('section', { class: `tank-row${device.tank.low ? ' low' : ''}` },
       h('div', { class: 'tank-row-text' }, h('span', {}, 'water tank'), h('b', {}, tankText(device.tank)), tankBar(device.tank)),
-      h('button', { class: 'btn btn-sm btn-outline-primary', type: 'button', onclick: async (e) => {
+      h('button', { class: 'btn btn-sm btn-outline-primary link-action', type: 'button', onclick: async (e) => {
         await refillTank(device, e.currentTarget);
         await loadPlant(id, simple.fromWall);
       } }, 'Refilled')) : null,
@@ -290,7 +290,7 @@ function renderPlant(details) {
     h('section', { class: 'plant-chart' }, lineChart('Soil, last 7 days', points, { unit: ' %', min: 0, max: 100, color: 'var(--t-cyan)',
       overlays: target ? [{ name: 'target', color: 'var(--t-text-muted)', points: span }] : [], name })),
     h('a', { class: 'plant-advanced', ...(linkMode() ? fullApp(`#device/${encodeURIComponent(id)}`) : { href: `#device/${encodeURIComponent(id)}` }) },
-      'Advanced details: firmware, network, log ›'));
+      'Advanced details: firmware, network, log ›')].filter(Boolean));
   showPumping();
   if (simple.openWater) {
     simple.openWater = false;
@@ -318,9 +318,9 @@ export function renderSimpleAlerts() {
     h('ul', { class: 'simple-list' }, alerts.map((a) => h('li', { class: 'warn' }, icon('triangle-alert'),
       a.device_id ? h('a', { href: plantHref(a.device_id) }, a.message) : h('span', {}, a.message),
       h('time', {}, ago(a.raised)),
-      h('button', { type: 'button', class: 'alert-dismiss', title: 'Dismiss', 'aria-label': `Dismiss: ${a.message}`,
+      h('button', { type: 'button', class: 'alert-dismiss link-action', title: 'Dismiss', 'aria-label': `Dismiss: ${a.message}`,
         onclick: () => dismissAlert(a) }, icon('x'))))),
-    alerts.length > 1 ? h('button', { type: 'button', class: 'btn btn-sm btn-outline-secondary mt-2', onclick: dismissAllAlerts },
+    alerts.length > 1 ? h('button', { type: 'button', class: 'btn btn-sm btn-outline-secondary mt-2 link-action', onclick: dismissAllAlerts },
       `Dismiss all ${alerts.length}`) : null,
   ] : [h('p', { class: 'text-body-secondary' }, 'Nothing needs attention.')]).filter(Boolean));
 }

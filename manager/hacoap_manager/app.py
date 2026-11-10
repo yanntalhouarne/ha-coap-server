@@ -87,6 +87,7 @@ class Services:
     remote: "remote.RemoteAccess" = None  # other devices (off unless chosen)
     border_router: BorderRouterService = None  # the border router in Docker here
     autowater: AutoWatering = None  # the automatic watering rules
+    backup_copy: dict = None  # the last copy of a backup to settings.backup_copy_dir: {time, ok, message, name}
 
 
 def create_services(data_dir, discover=discovery.discover):
@@ -164,7 +165,7 @@ LINK_ALLOWED = [
     (("GET", "HEAD"), re.compile(r"^/api/(devices|wall|alerts|status|activity-feed|images|updates|setup)$")),
     (("GET", "HEAD"), re.compile(r"^/api/devices/[^/]+/(details|photo)$")),
     # Read-only: the network's map (mesh, tree, floor plan) and its history, and the charts
-    (("GET", "HEAD"), re.compile(r"^/api/(network|network/history|network/floorplan|graph)$")),
+    (("GET", "HEAD"), re.compile(r"^/api/(network|network/history|network/floorplan|graph|readings\.csv)$")),
     (("GET", "HEAD"), re.compile(r"^/api/network/history/[^/]+$")),
     (("POST",), re.compile(r"^/api/devices/[^/]+/(pump|ping|tank/refilled)$")),
     (("POST",), re.compile(r"^/api/alerts/(dismiss|\d+/dismiss)$")),
@@ -228,6 +229,9 @@ def create_app(services, background_tasks=True, on_quit=None, port=None):
             return HTMLResponse(LINK_REVOKED_PAGE, status_code=401)
         if access == "link" and not _link_allows(request.method, path):
             return JSONResponse({"detail": "A dashboard link only opens the plants"}, status_code=403)
+        view_only = access == "link" and bool((s.remote.link(key, request.client.host if request.client else "") or {}).get("view_only"))
+        if view_only and request.method not in ("GET", "HEAD"):
+            return JSONResponse({"detail": "This dashboard link is view only"}, status_code=403)
         if access == "sign-in" and not path.startswith(SIGNED_OUT_PATHS):
             if path.startswith("/api/"):
                 return JSONResponse({"detail": "Sign in first"}, status_code=401)
@@ -237,6 +241,7 @@ def create_app(services, background_tasks=True, on_quit=None, port=None):
         if request.method not in ("GET", "HEAD") and request.headers.get(CHANGE_HEADER) != "1":
             return JSONResponse({"detail": f"Missing {CHANGE_HEADER} header"}, status_code=403)
         request.state.access = access
+        request.state.view_only = view_only
         response = await call_next(request)
         if request.url.path.startswith(("/static/", "/v/")):
             # The browser checks with the app each time (a 304 when unchanged), so a new
@@ -252,6 +257,7 @@ def create_app(services, background_tasks=True, on_quit=None, port=None):
             "version": __version__,
             "demo": s.demo,
             "access": request.state.access,  # "remote" on another device (signed in)
+            "view_only": request.state.view_only,  # a view-only dashboard link
             "data_dir": str(s.data_dir),
             "repository": str(s.repository) if s.repository else None,
             "discovery_available": discovery.discovery_available(),
@@ -1071,6 +1077,18 @@ def create_app(services, background_tasks=True, on_quit=None, port=None):
     async def saved_backups():
         return backup.list_backups(s.data_dir)
 
+    @app.get("/api/backups/copy")
+    async def backup_copy_state():
+        return {"folder": s.settings.backup_copy_dir, **(s.backup_copy or {})}
+
+    @app.post("/api/backups/copy")
+    async def copy_backup_now():
+        """Copies the newest automatic backup to the chosen folder now (making one first if there's none)."""
+        if not s.settings.backup_copy_dir.strip():
+            raise _bad_request("Choose a folder first: Settings, Copy backups to")
+        await asyncio.to_thread(_copy_backups, s, True)
+        return {"folder": s.settings.backup_copy_dir, **(s.backup_copy or {})}
+
     @app.get("/api/backups/{name}")
     async def saved_backup(name: str):
         path = backup.backup_path(s.data_dir, name)
@@ -1406,7 +1424,7 @@ def create_app(services, background_tasks=True, on_quit=None, port=None):
         """A dashboard link: its addresses carry the key, shown this once."""
         await _confirm(request)
         try:
-            key = await asyncio.to_thread(s.remote.create_link, body.get("name", ""))
+            key = await asyncio.to_thread(s.remote.create_link, body.get("name", ""), bool(body.get("view_only")))
         except remote.RemoteError as exc:
             raise _bad_request(exc)
         addresses = [f"http://{a}:{port}/?key={key}#plants" for a in s.remote.addresses()] if port else []
@@ -1522,6 +1540,30 @@ async def _watch_border_router(services, period_s=60):
             log.exception("border router check")
 
 
+def _copy_backups(services, make=False):
+    """Copies the newest automatic backup to the chosen folder, unless it's there already ('make':
+    a backup first if there's none). Notes how it went, and an alert when it failed."""
+    folder = services.settings.backup_copy_dir.strip()
+    if not folder:
+        services.backup_copy = None
+        services.alerts.set_problem("backup-copy", None)
+        return
+    try:
+        newest = backup.newest_auto_backup(services.data_dir)
+        if newest is None and make:
+            newest = backup.auto_backup(services.data_dir, services.db, services.settings,
+                                        max(services.settings.keep_backups, 1), min_age_hours=0)
+        if newest is None:
+            return
+        copied = backup.copy_backup(newest, folder, max(services.settings.keep_backups, 1))
+        services.backup_copy = {"time": time.time(), "ok": True, "name": copied.name,
+                                "message": f"{copied.name} is in {folder}"}
+        services.alerts.set_problem("backup-copy", None)
+    except backup.BackupError as exc:
+        services.backup_copy = {"time": time.time(), "ok": False, "name": "", "message": str(exc)}
+        services.alerts.set_problem("backup-copy", ("backup", f"The daily backup couldn't be copied to {folder}: {exc}"))
+
+
 async def _auto_backup(services):
     """A backup a day in the data folder's backups/, while the app runs, and the old data deleted
     as the settings say."""
@@ -1531,6 +1573,10 @@ async def _auto_backup(services):
                                     max(services.settings.keep_backups, 1))
         except Exception:  # noqa: BLE001 - try again later
             log.exception("automatic backup")
+        try:
+            await asyncio.to_thread(_copy_backups, services)
+        except Exception:  # noqa: BLE001
+            log.exception("copying the backup")
         try:
             await asyncio.to_thread(housekeeping.prune, services.db, services.settings)
         except Exception:  # noqa: BLE001

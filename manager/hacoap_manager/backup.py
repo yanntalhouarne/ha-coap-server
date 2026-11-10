@@ -13,6 +13,7 @@ import io
 import ipaddress
 import json
 import re
+import shutil
 import sqlite3
 import tempfile
 import time
@@ -142,6 +143,33 @@ def auto_backup(data_dir, db, settings, keep=AUTO_KEEP, min_age_hours=20):
     return path
 
 
+def newest_auto_backup(data_dir):
+    existing = sorted(backups_dir(data_dir).glob(f"{AUTO_PREFIX}*.zip"))
+    return existing[-1] if existing else None
+
+
+def copy_backup(path, folder, keep):
+    """Copies a backup into another folder (one that's there already: a share that isn't mounted
+    must not fill this computer's disk instead), unless it's there, and keeps the newest 'keep'
+    automatic ones there. Returns the copy's path. Raises BackupError."""
+    target = Path(folder).expanduser()
+    if not target.is_absolute():
+        raise BackupError("Give the folder's full path, such as /mnt/nas/hacoap-backups")
+    if not target.is_dir():
+        raise BackupError("the folder isn't there (is the share or disk mounted?)")
+    copy = target / Path(path).name
+    try:
+        if not copy.is_file() or copy.stat().st_size != Path(path).stat().st_size:
+            partial = copy.with_name(copy.name + ".part")
+            shutil.copyfile(path, partial)
+            partial.replace(copy)  # whole, or not there: never half a backup under its name
+        for old in sorted(target.glob(f"{AUTO_PREFIX}*.zip"))[:-keep]:
+            old.unlink()
+    except OSError as exc:
+        raise BackupError(exc.strerror or str(exc)) from exc
+    return copy
+
+
 def prune_backups(data_dir, keep):
     """Deletes the automatic backups beyond the newest 'keep' (never the ones made before a restore)."""
     for old in sorted(backups_dir(data_dir).glob(f"{AUTO_PREFIX}*.zip"))[:-keep]:
@@ -180,7 +208,7 @@ def devices_csv(db):
     return out.getvalue()
 
 
-READING_COLUMNS = ["device_id", "name", "time", "battery", "soil_moisture", "air_humidity", "temperature"]
+READING_COLUMNS = ["device_id", "name", "time", "battery", "soil_moisture", "air_humidity", "temperature", "power"]
 
 
 def readings_csv(rows):

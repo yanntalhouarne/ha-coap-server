@@ -2,7 +2,7 @@
 // board in the legend to bring its line forward, click it to hide or show it, drag across the
 // chart to zoom into a period.
 
-import { api, h, svg } from './core.js';
+import { api, h, svg, withKey } from './core.js';
 import { lineChart } from './charts.js';
 
 const METRICS = [
@@ -34,6 +34,7 @@ export async function loadGraph() {
   const metric = METRICS.find((m) => m.key === graph.metric) || METRICS[0];
   document.getElementById('graph-chart').replaceChildren(h('div', { class: 'skeleton graph-skeleton' }));
   graph.series = await api('GET', `/api/graph?metric=${metric.key}&days=${graph.days}`, undefined, { quiet: true }).catch(() => []);
+  document.getElementById('graph-csv').href = withKey(`/api/readings.csv?days=${graph.days}`);
   renderGraph();
 }
 

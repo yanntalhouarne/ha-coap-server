@@ -26,7 +26,18 @@ class AlertService:
         self.settings = settings
         self.events = events
         self.border_router = {}  # its problems now ({key: message}), as check_border_router() last found
+        self.problems = {}       # other problems the app found: {key: (kind, message)} (a backup copy that failed)
         self._seen_once = {}     # problems found once: an alert only if they're still there next time
+
+    def set_problem(self, key, problem):
+        """A problem found elsewhere: (kind, message), or None once it's gone."""
+        if problem is None:
+            changed = self.problems.pop(key, None) is not None
+        else:
+            changed = self.problems.get(key) != problem
+            self.problems[key] = problem
+        if changed:
+            self.scan()
 
     def check_border_router(self, problems):
         """The border router's problems now (BorderRouterService.health(), every minute). One is an
@@ -43,6 +54,8 @@ class AlertService:
         devices = self.inventory.devices()
         for key, message in self.border_router.items():
             found[key] = ("border-router", "", message)
+        for key, (kind, message) in self.problems.items():
+            found[key] = (kind, "", message)
         # Every board silent together: the network, not the boards (a single board's is its own alert)
         known = [d for d in devices if d["address"] and d["last_seen"] is not None]
         if self.inventory.refreshed and len(known) >= 2 and not any(d["online"] for d in known):

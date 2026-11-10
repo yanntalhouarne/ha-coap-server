@@ -213,6 +213,42 @@ async def test_border_router_and_network_alerts(client, services):
     assert "network:silent" not in {a["key"] for a in services.db.open_alerts()}
 
 
+def test_copying_a_backup(tmp_path):
+    source = tmp_path / "auto-20261110-020000.zip"
+    source.write_bytes(b"a backup")
+    with pytest.raises(backup.BackupError, match="isn't there"):
+        backup.copy_backup(source, tmp_path / "nas", 3)        # not mounted: nothing written on this disk
+    assert not (tmp_path / "nas").exists()
+    with pytest.raises(backup.BackupError, match="full path"):
+        backup.copy_backup(source, "nas", 3)
+    nas = tmp_path / "nas"
+    nas.mkdir()
+    for day in range(1, 5):
+        (nas / f"auto-2026110{day}-020000.zip").write_bytes(b"old")
+    (nas / "notes.txt").write_text("mine")
+    copy = backup.copy_backup(source, nas, 3)
+    assert copy.read_bytes() == b"a backup" and not list(nas.glob("*.part"))
+    assert sorted(p.name for p in nas.iterdir()) == ["auto-20261103-020000.zip", "auto-20261104-020000.zip",
+                                                     "auto-20261110-020000.zip", "notes.txt"]  # the newest 3, and the rest left
+
+
+async def test_backups_copied_elsewhere(client, services, tmp_path):
+    state = (await client.get("/api/backups/copy")).json()
+    assert state == {"folder": ""}
+    assert (await client.post("/api/backups/copy", headers=CHANGE)).status_code == 400   # no folder yet
+    nas = tmp_path / "nas"
+    services.settings.backup_copy_dir = str(nas)
+    state = (await client.post("/api/backups/copy", headers=CHANGE)).json()           # not mounted
+    assert state["ok"] is False and "isn't there" in state["message"]
+    alert = [a for a in services.db.open_alerts() if a["key"] == "backup-copy"]
+    assert len(alert) == 1 and str(nas) in alert[0]["message"]
+    nas.mkdir()
+    state = (await client.post("/api/backups/copy", headers=CHANGE)).json()           # made one, and copied it
+    assert state["ok"] is True and (nas / state["name"]).is_file()
+    assert not [a for a in services.db.open_alerts() if a["key"] == "backup-copy"]
+    assert (await client.get("/api/backups/copy")).json()["name"] == state["name"]
+
+
 def test_alerts_dismissed_before_the_upgrade_dont_stay_quiet(tmp_path):
     import sqlite3
     from hacoap_manager.db import Database
@@ -257,11 +293,12 @@ async def test_photos(client, services):
 async def test_readings_csv(client, services):
     services.db.upsert_device("aa", name="basil")
     services.db.add_reading("aa", 80, 40, 50, -3, when=time.time() - 3600)
-    services.db.add_reading("bb", 70, 41, 51, 4)
+    services.db.add_reading("bb", 70, 41, 51, 4, power="charging")
     text = (await client.get("/api/readings.csv")).text
     lines = text.strip().splitlines()
-    assert lines[0] == "device_id,name,time,battery,soil_moisture,air_humidity,temperature"
-    assert lines[1].startswith("aa,basil,") and lines[1].endswith(",80,40,50,-3") and len(lines) == 3
+    assert lines[0] == "device_id,name,time,battery,soil_moisture,air_humidity,temperature,power"
+    assert lines[1].startswith("aa,basil,") and lines[1].endswith(",80,40,50,-3,") and len(lines) == 3
+    assert lines[2].endswith(",70,41,51,4,charging")
     assert len((await client.get("/api/readings.csv?device_id=bb")).text.strip().splitlines()) == 2
 
 

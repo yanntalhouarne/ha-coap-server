@@ -38,6 +38,7 @@ class Settings:
     keep_readings_days: int = 730   # readings, link samples and activity older than this are deleted (0: keep all)
     keep_network_readings: int = 1000  # network readings kept for the history slider
     keep_backups: int = 7           # automatic daily backups kept
+    backup_copy_dir: str = ""       # a folder each daily backup is also copied to (a NAS share, a USB disk), or ''
     home_assistant_url: str = ""    # such as http://homeassistant.local:8123, to import its history
 
     def link_settings(self):

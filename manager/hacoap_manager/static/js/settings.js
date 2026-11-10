@@ -25,13 +25,14 @@ export const settingLabels = {
   keep_readings_days: ['Keep readings (days)', 'Readings, link samples and pump runs older than this are deleted, once a day. 0: keep everything.'],
   keep_network_readings: ['Keep network readings', 'How many network readings the history slider keeps'],
   keep_backups: ['Keep backups', 'How many automatic daily backups are kept'],
+  backup_copy_dir: ['Copy backups to', 'A folder on this computer (its full path) where each daily backup is also copied: a mounted NAS share or USB disk, such as /mnt/nas/hacoap-backups. Empty: no copies.'],
 };
 export const SETTINGS_ELSEWHERE = new Set(['home_assistant_url']);  // set in their own cards
 export const SETTING_GROUPS = [
   ['Devices and plants', ['online_minutes', 'auto_refresh_minutes', 'water_below_default', 'pump_flow_ml_s', 'min_battery_for_update']],
   ['Network and timing', ['border_router_url', 'coap_port', 'smp_port', 'udp_mtu', 'serial_buffer', 'coap_timeout_s',
     'mcumgr_timeout_s', 'discovery_timeout_s', 'reboot_timeout_s']],
-  ['Keeping data', ['keep_readings_days', 'keep_network_readings', 'keep_backups']],
+  ['Keeping data', ['keep_readings_days', 'keep_network_readings', 'keep_backups', 'backup_copy_dir']],
   ['App', ['check_app_updates']],
 ];
 
@@ -89,7 +90,25 @@ export async function loadSettings() {
   checkAppUpdate().catch(() => {});
 }
 
+// Where the daily backups are copied to, and how the last copy went
+function renderBackupCopy(copy) {
+  const box = document.getElementById('backup-copy-state');
+  document.getElementById('backup-copy-now').disabled = !copy.folder;
+  box.className = `small ${copy.ok === false ? 'text-danger' : 'text-body-secondary'}`;
+  box.textContent = !copy.folder ? 'No folder chosen: Settings, Copy backups to.'
+    : !copy.time ? `To ${copy.folder}: none copied yet (the next one goes with the next daily backup).`
+      : copy.ok ? `Last copied ${when(copy.time)}: ${copy.message}.` : `Last try ${when(copy.time)} failed: ${copy.message}.`;
+}
+
+document.getElementById('backup-copy-now').addEventListener('click', (event) => busy(event.target, async () => {
+  const copy = await api('POST', '/api/backups/copy');
+  renderBackupCopy(copy);
+  if (copy.ok) notify('Copied', 'success', 2500);
+  await loadBackups();
+}));
+
 export async function loadBackups() {
+  api('GET', '/api/backups/copy', undefined, { quiet: true }).then(renderBackupCopy, () => {});
   const backups = await api('GET', '/api/backups');
   document.getElementById('backups').replaceChildren(...(backups.length ? backups.map((b) => h('li', {},
     h('a', { href: `/api/backups/${encodeURIComponent(b.name)}`, download: b.name }, b.name),
@@ -335,6 +354,7 @@ function renderLinks(st) {
   }
   list.replaceChildren(h('ul', { class: 'list-unstyled mb-0' }, st.links.map((link) => h('li', { class: 'd-flex align-items-center gap-2 py-1' },
     h('div', { class: 'flex-grow-1 text-truncate' }, h('b', {}, link.name),
+      link.view_only ? h('span', { class: 'tag ms-2' }, 'view only') : null,
       h('div', { class: 'text-body-secondary' }, `made ${when(link.created)}, `,
         link.last_used ? `last used ${when(link.last_used)} from ${link.address}` : 'never used yet')),
     h('button', { class: 'btn btn-sm btn-outline-danger text-nowrap', type: 'button', onclick: (e) => {
@@ -352,8 +372,10 @@ document.getElementById('remote-link-form').addEventListener('submit', (event) =
   const name = document.getElementById('remote-link-name').value.trim();
   if (!name) return notify("Name the link: what it's for, such as Home Assistant", 'warning');
   busy(event.submitter, async () => {
-    const made = await api('POST', '/api/remote-access/links', { name }, confirmed());
+    const viewOnly = document.getElementById('remote-link-view-only').checked;
+    const made = await api('POST', '/api/remote-access/links', { name, view_only: viewOnly }, confirmed());
     document.getElementById('remote-link-name').value = '';
+    document.getElementById('remote-link-view-only').checked = false;
     const copy = (text) => h('button', { class: 'btn btn-sm btn-outline-secondary ms-2', type: 'button', onclick: async () => {
       try { await navigator.clipboard.writeText(text); notify('Copied', 'success', 2000); } catch (error) { prompt('Copy the link:', text); }
     } }, 'Copy');

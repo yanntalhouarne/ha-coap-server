@@ -707,12 +707,12 @@ export function boardCard(device) {
     device.last_error ? h('div', { class: 'small text-danger mt-2' }, device.last_error) : null,
     h('div', { class: 'd-flex flex-wrap gap-2 mt-2' },
       h('a', { class: 'btn btn-sm btn-primary', href: `#${linkMode() ? 'plant' : 'device'}/${encodeURIComponent(device.device_id)}` }, 'Open its page'),
-      device.needs_water ? h('button', { class: 'btn btn-sm btn-outline-primary', type: 'button',
+      device.needs_water ? h('button', { class: 'btn btn-sm btn-outline-primary link-action', type: 'button',
         onclick: (e) => waitForBoard(e.currentTarget, async () => {
           const result = await api('POST', devicePath(device, '/pump'), { on: true });
           startPumping(device.device_id, result.duration || 1);
         }, device.device_id) }, 'Run the pump') : null,
-      h('button', { class: 'btn btn-sm btn-outline-secondary', type: 'button', onclick: (e) => pingDevice(device, e.currentTarget) }, 'Beep')));
+      h('button', { class: 'btn btn-sm btn-outline-secondary link-action', type: 'button', onclick: (e) => pingDevice(device, e.currentTarget) }, 'Beep')));
   deviceHealth(device).then((health) => {
     if (has(device.battery)) forecast.textContent = onUsb(device) ? powerText(device) : daysText(health.battery_forecast);
     if (!device.needs_water && health.water_forecast) water.textContent = `water ${waterIn(health.water_forecast)}`;

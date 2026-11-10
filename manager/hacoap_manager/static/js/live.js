@@ -134,6 +134,8 @@ export async function loadStatus() {
   state.status = await api('GET', '/api/status', undefined, { quiet: true });
   document.getElementById('demo-banner').classList.toggle('d-none', !state.status.demo);
   document.getElementById('sign-out').classList.toggle('d-none', state.status.access !== 'remote');
+  // A view-only dashboard link: no watering, beeping, naming or dismissing (the app refuses them too)
+  document.documentElement.classList.toggle('link-view', Boolean(state.status.view_only));
   document.title = state.status.demo ? 'Demo · HA-CoAP Fleet Manager' : 'HA-CoAP Fleet Manager';
   return state.status;
 }

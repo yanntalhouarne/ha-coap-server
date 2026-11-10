@@ -268,8 +268,10 @@ def test_simple_view(page):
     assert "soil-card" in dom and "Water now" in dom and "plant-fact" in dom
     assert "water-menu d-none" in dom and dom.count('role="menuitem"') == 9   # how long: 1 to 9 s, hidden until asked
     assert "Soil, last 7 days" in dom and 'href="#device/1a2b3c4d"' in dom
+    plant_page = dom.split('id="plant-page"')[1].split('id="tab-alerts"')[0]
+    assert ">null" not in plant_page                                 # nothing left out shows as "null"
     dom = page("alerts")
-    assert "basil" in dom and "simple-list" in dom and 'class="alert-dismiss"' in dom   # each one can be dismissed
+    assert "basil" in dom and "simple-list" in dom and 'class="alert-dismiss link-action"' in dom   # each one can be dismissed
     dom = page("more")
     assert "Advanced view" in dom and "Tokyo Night" in dom
 

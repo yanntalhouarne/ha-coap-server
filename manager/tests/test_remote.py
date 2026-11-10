@@ -305,6 +305,33 @@ async def test_a_dashboard_link_opens_the_plants_only(services):
         assert (await dashboard.get("/api/wall", headers={remote.KEY_HEADER: key})).status_code == 401
 
 
+async def test_a_view_only_link(services):
+    await allow_home_network(services)
+    services.db.upsert_device("1a2b3c4d", name="ha-coap-1a2b3c4d", plant="basil", address="fd11::1")
+    async with client_for(services) as local:
+        made = (await local.post("/api/remote-access/links", json={"name": "hallway tablet", "view_only": True},
+                                 headers=CHANGE)).json()
+    key = made["link"]["key"]
+    assert made["links"][0]["view_only"] is True
+    async with client_for(services, "192.168.50.30", SERVER) as tablet:
+        header = {remote.KEY_HEADER: key}
+        status = (await tablet.get("/api/status", headers=header)).json()
+        assert (status["access"], status["view_only"]) == ("link", True)
+        for path in ("/api/wall", "/api/devices/1a2b3c4d/details", "/api/alerts", "/api/graph?metric=soil_moisture&days=7",
+                     "/api/readings.csv?days=7"):
+            assert (await tablet.get(path, headers=header)).status_code == 200, path
+        for method, path, body in [("POST", "/api/devices/1a2b3c4d/pump", {"on": True}), ("POST", "/api/devices/1a2b3c4d/ping", {}),
+                                   ("PATCH", "/api/devices/1a2b3c4d", {"plant": "mint"}), ("POST", "/api/alerts/dismiss", {"ids": []}),
+                                   ("POST", "/api/devices/1a2b3c4d/tank/refilled", {})]:
+            response = await tablet.request(method, path, headers={**header, **CHANGE}, json=body)
+            assert response.status_code == 403 and "view only" in response.json()["detail"], (method, path)
+    assert services.db.device("1a2b3c4d")["plant"] == "basil"
+    # A link that can water says so too
+    key = (await make_link(services, "kitchen"))["link"]["key"]
+    async with client_for(services, "192.168.50.30", SERVER) as dashboard:
+        assert (await dashboard.get("/api/status", headers={remote.KEY_HEADER: key})).json()["view_only"] is False
+
+
 async def test_links_from_another_device_take_the_password_again(services):
     await allow_home_network(services)
     key = (await make_link(services))["link"]["key"]
