@@ -4,7 +4,7 @@
 
 One application for Windows, macOS and Linux to look after a fleet of ha-coap devices. It finds them on the network, shows their status, draws the Thread mesh they form, builds firmware with the settings you choose, keeps a library of firmware images, and updates devices over the air or over USB.
 
-It runs on your PC when you need it, or always on a server (see [Running it on a server](#running-it-on-a-server)). The app starts a small web server that only this computer can reach (`http://127.0.0.1:8710`), and opens it in your browser; your phone or another computer can open it too, after signing in, once you allow it (Settings → **Other devices**). Close the app's window and everything stops.
+It runs on your PC when you need it, or always on a server (see [Running it on a server](#running-it-on-a-server), and [Reaching the server](#reaching-the-server-ssh-and-vs-code) to open it, or edit its code in VS Code, from any PC). The app starts a small web server that only this computer can reach (`http://127.0.0.1:8710`), and opens it in your browser; your phone or another computer can open it too, after signing in, once you allow it (Settings → **Other devices**). Close the app's window and everything stops.
 
 **Status (2026-10-26):** version 0.1.0, the plan's phases 0–2, 5 and 6 (foundations, inventory, updates, builds, backups and releases), plus a dashboard, device pages with history charts and plant photos, groups, staged updates with signature and battery checks, alerts, a network map with each board's plant and readings, a floor plan, a signal heatmap, network history, a channel scan, a serial console, one-click setup of a new computer, flashing new boards over SWD, a connection check, battery drain per firmware, Home Assistant history import, labels, running in the background, watering forecasts, a photo timeline per plant, a wall display, a weekly summary, and a built-in demo. Tested against simulated devices and a simulated border router on Windows, macOS and Linux, and a real firmware build on Windows, **not yet with real boards, a real border router or a J-Link**. Since then: a board's settings changed from the app, its restarts and crashes, and its log over the air (firmware changes, see the main README). Commissioning comes later (see [the plan](../docs/FLEET-MANAGER-PLAN.md)). Until it has updated real boards, keep using the scripts or the web updater for anything important.
 
@@ -278,15 +278,90 @@ An always-on Linux machine (a Proxmox VM, a NAS, a mini PC, a Raspberry Pi) keep
 2. **The route to the boards:** Debian's network service takes it from the border router's announcements. To keep it if those lapse, add it once with metric 1024 (the announced one stays preferred), for example in `/etc/netplan/60-thread-route.yaml`: `routes: [{to: <the Thread prefix>/64, via: <the border router's fe80:: address>, metric: 1024}]` under the interface (`ip -6 route` shows the announced route and its `via`). Check with `ping -6 <a board's address>`.
 3. **Builds (optional):** `scripts/setup.sh` from the checkout installs the toolchain and the SDK (about 6 GB); copy `application/keys/` (and `local.conf`) from your PC, readable only by that user.
 4. **Start it with the machine:** a systemd service running `<checkout>/manager/.venv/bin/python -m hacoap_manager --no-browser --workdir <checkout>` as that user (`Restart=on-failure`), then `sudo systemctl enable --now <service>`. Its data folder is `~/.local/share/hacoap-manager`: restore a backup there from the page.
-5. **Open it:** from your PC through an SSH tunnel (`ssh -N -L 8710:127.0.0.1:8710 hacoap@<server>`, then `http://localhost:8710`), which counts as the computer itself; or allow other devices (Settings → **Other devices**, set up through the tunnel) and open `http://<server>:8710` from the network chosen, ZeroTier included.
+5. **Open it:** from your PC through an SSH tunnel (`ssh -N -L 8710:127.0.0.1:8710 hacoap@<server>`, then `http://localhost:8710`; see [Reaching the server](#reaching-the-server-ssh-and-vs-code) to set up SSH from any PC), which counts as the computer itself; or allow other devices (Settings → **Other devices**, set up through the tunnel) and open `http://<server>:8710` from the network chosen, ZeroTier included.
 
-**Editing the code on the server, with VS Code** (from any machine on your ZeroTier network):
-1. On the new machine, install VS Code with the **Remote - SSH** extension, and join the ZeroTier network.
-2. Run `scripts/connect-to-server.ps1` (Windows) or `scripts/connect-to-server.sh` (macOS, Linux). It makes this machine's SSH key (`~/.ssh/hacoap-server`), adds `hacoap` (over ZeroTier) and `hacoap-lan` (the home network) to `~/.ssh/config`, and prints one command.
-3. Run that command on a machine that can already connect: it adds the new key to the server. The server takes keys only, no passwords. Without another machine, paste the key into `~/.ssh/authorized_keys` from the VM's console in Proxmox.
-4. In VS Code: **Remote-SSH: Connect to Host → hacoap**, then open `~/ha-coap-server`. The first time, check that the server's key is `SHA256:QrVf83X9noTSwHB7HFWQsz/DJrmV4RTVVRxQGoPpzc8`.
-5. **Commit and push what you change** (once on the server: `gh auth login`, then `gh auth setup-git`). Changes left uncommitted on the server stop an update of its code from GitHub, so nothing is lost.
-6. After a change to the Python code: `sudo systemctl restart hacoap-manager`. A change to the page (HTML, JS, CSS) only needs a reload.
+## Reaching the server: SSH and VS Code
+From any PC on your ZeroTier network, at home or away, you can open a shell on the server, open its page, and edit its code in VS Code.
+
+| | |
+|---|---|
+| User | `hacoap` |
+| From anywhere (ZeroTier) | `10.243.120.130`, called `hacoap` in your SSH config |
+| At home (home network) | `192.168.50.178`, called `hacoap-lan` |
+| How you sign in | SSH keys only: password login is off |
+| The server's own key | `SHA256:QrVf83X9noTSwHB7HFWQsz/DJrmV4RTVVRxQGoPpzc8` (check it the first time a PC connects) |
+
+### Adding a PC
+Do this once per PC (Windows, macOS or Linux).
+1. **Join the ZeroTier network.**
+   - Install ZeroTier on the PC and join your network. To find its ID, run `sudo zerotier-cli listnetworks` on the server, or look in [ZeroTier Central](https://my.zerotier.com).
+   - The network is private: in ZeroTier Central, open the network, find the new PC under **Members**, and tick **Auth**.
+   - Check that the PC can reach the server: `ping 10.243.120.130`.
+2. **Run the script on the PC.** From a clone of this repository, run `scripts\connect-to-server.ps1` (Windows PowerShell) or `scripts/connect-to-server.sh` (macOS, Linux). It:
+   - makes the PC its own SSH key, `~/.ssh/hacoap-server`;
+   - adds `hacoap` and `hacoap-lan` to `~/.ssh/config`;
+   - prints one command.
+
+   It's safe to run again.
+3. **Let the PC's key in.** Run the printed command on a PC that can already connect. It adds the key to the server's `~/.ssh/authorized_keys`. With no such PC at hand, log in on the VM's console in Proxmox (the VM → **Console**) and add the key's line to that file there.
+4. **Test it:** run `ssh hacoap hostname` on the new PC. The first time, ssh shows the server's key: answer yes only if it's the one in the table above.
+
+Without the script, the same by hand:
+```
+ssh-keygen -t ed25519 -f ~/.ssh/hacoap-server -C "<this PC> for hacoap"
+```
+Then add this to `~/.ssh/config`:
+```
+Host hacoap
+  HostName 10.243.120.130
+  User hacoap
+  IdentityFile ~/.ssh/hacoap-server
+  IdentitiesOnly yes
+
+Host hacoap-lan
+  HostName 192.168.50.178
+  User hacoap
+  IdentityFile ~/.ssh/hacoap-server
+  IdentitiesOnly yes
+```
+Then add the line of `~/.ssh/hacoap-server.pub` to the server's `~/.ssh/authorized_keys` (step 3).
+
+### Using it
+- **A shell on the server:** `ssh hacoap` (or `ssh hacoap-lan` at home).
+- **The app's page:** run `ssh -N -L 8710:127.0.0.1:8710 hacoap`, then open `http://localhost:8710`. Through the tunnel, the page counts as the server itself, so there's no sign-in. You can also allow other devices (Settings → **Other devices**, with ZeroTier ticked) and open `http://10.243.120.130:8710` with the password.
+- **VS Code:** install the **Remote - SSH** extension. Then, from the command palette (F1):
+  1. Run **Remote-SSH: Connect to Host…** and choose `hacoap`.
+  2. Open the folder `/home/hacoap/ha-coap-server`.
+
+  The first connection takes a minute, while VS Code installs its server part there. To open the app's page from VS Code: in the **Ports** panel, forward port 8710, then open `http://localhost:8710`.
+
+### Changing the code on the server
+The server's checkout is on the `fleet-manager` branch, and commits as Yann.
+1. **Once, let the server push to GitHub:** in a terminal on the server, run:
+   ```
+   gh auth login
+   gh auth setup-git
+   ```
+   Choose GitHub.com, HTTPS, and log in with a web browser: it shows a code to enter at github.com/login/device.
+2. **Apply a change:**
+   - Python code: restart the app with `sudo systemctl restart hacoap-manager`. Its log is `journalctl -u hacoap-manager -f`.
+   - The page (HTML, JS, CSS): reload the page.
+3. **Commit and push when you're done.** Pull on your other PCs before editing there, so there's one version of the code. Updates of the server's code stop while it has changes that aren't committed or pushed, so nothing there is overwritten.
+
+### Removing a PC
+1. Delete its line from `~/.ssh/authorized_keys` on the server. Each line ends with the PC's name, such as `talho@YANN-MACHINE for hacoap`.
+2. Remove the PC from the network's **Members** in ZeroTier Central.
+
+### When it doesn't connect
+- **It waits, then times out:**
+  - Check that the PC is on the ZeroTier network and authorized: `zerotier-cli listnetworks` should show `OK` and a `10.243.x.x` address.
+  - At home, try `ssh hacoap-lan`.
+- **`Permission denied (publickey)`:**
+  - The PC's key isn't on the server yet (step 3), or
+  - ssh isn't using it: check `IdentityFile` in `~/.ssh/config`.
+- **`REMOTE HOST IDENTIFICATION HAS CHANGED`:**
+  - Expected if the server was reinstalled. Otherwise, something is in the way.
+  - Compare the key it shows with the one in the table above. If it matches, run `ssh-keygen -R 10.243.120.130` and connect again.
 
 ## Security
 - The server listens on 127.0.0.1: other computers on the network can't open it, unless you allow other devices (Settings → **Other devices**, off by default). Then it also listens on this computer's address in the networks chosen, and a device there must sign in with the password; turning that on, the networks, the password and stopping the app only change from the computer itself.
