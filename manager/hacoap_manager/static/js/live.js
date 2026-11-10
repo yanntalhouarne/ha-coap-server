@@ -12,6 +12,7 @@ import { onBuild, onBuildLog, onSetup, onSetupLog } from './builds.js';
 import { onConsoleLine, onConsoleState } from './console.js';
 import { renderDevicePhoto, renderDeviceStatus } from './device.js';
 import { refreshSimple } from './simple.js';
+import { borderRouterChanged } from './borderrouter.js';
 
 // ------------------------------------------------------------------ live events
 
@@ -50,6 +51,8 @@ export function connectEvents(delay = 1000) {
       loadDevices().catch(() => {});
     } else if (event.type === 'network') {
       if (!document.getElementById('tab-network').classList.contains('d-none')) loadNetwork().catch(() => {});
+    } else if (event.type === 'border-router') {
+      borderRouterChanged();
     } else if (event.type === 'alert') {
       onAlert(event.alert);
     } else if (event.type === 'alerts') {

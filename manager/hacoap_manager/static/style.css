@@ -174,6 +174,11 @@ td.error-text { color: var(--t-red); font-size: .8125em; }
 .build-log { max-height: 24rem; min-height: 6rem; overflow: auto; font-size: .7rem; line-height: 1.45;
   background: var(--t-bg-deep); color: var(--t-text-secondary); border: 1px solid var(--t-border-subtle);
   padding: .5rem .75rem; border-radius: 2px; white-space: pre-wrap; word-break: break-all; }
+/* The border router tab: its log fills its card, without the card's border twice */
+.br-log { max-height: 28rem; min-height: 8rem; overflow: auto; font-size: .7rem; line-height: 1.45;
+  background: var(--t-bg-deep); color: var(--t-text-secondary); padding: .5rem .75rem;
+  white-space: pre-wrap; word-break: break-all; }
+.br-job ol { max-height: 12rem; overflow: auto; }
 .setting-changed { border-color: var(--t-brand) !important; box-shadow: inset 2px 0 0 var(--t-brand); }
 fieldset legend { font-size: .75rem; font-weight: 600; margin-top: .75rem; text-transform: lowercase; color: var(--t-text-muted); }
 fieldset legend::before { content: "// "; color: var(--t-accent-text); }

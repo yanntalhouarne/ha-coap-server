@@ -27,6 +27,7 @@ from . import (__version__, autostart, backup, coap, config, demo, discovery, fe
                kconfig, mcuboot, otctl, remote, report, serial_ports, signing, summary, swd)
 from .alerts import AlertService
 from .appupdate import UpdateCheck
+from .borderrouter import BorderRouterService, BorderRouterSetupError
 from .builds import VARIANTS, BuildError, BuildRunner
 from .console import ConsoleError, SerialConsole
 from .db import Database
@@ -73,6 +74,7 @@ class Services:
     launch: dict = None   # how this app was started (for starting it with the computer)
     demo: bool = False    # this app is the demo (simulated boards, a throwaway data folder)
     remote: "remote.RemoteAccess" = None  # other devices (off unless chosen)
+    border_router: BorderRouterService = None  # the border router in Docker here
 
 
 def create_services(data_dir, discover=discovery.discover):
@@ -100,7 +102,8 @@ def create_services(data_dir, discover=discovery.discover):
     return Services(data_dir, settings, db, events, inventory, images, updates, repository, builds, network,
                     SerialConsole(events), setup, alerts, signing.SigningCheck(repository, data_dir),
                     PhotoStore(data_dir), UpdateCheck(), Doctor(db, settings, discover),
-                    homeassistant.TokenStore(data_dir), remote=remote.RemoteAccess(data_dir))
+                    homeassistant.TokenStore(data_dir), remote=remote.RemoteAccess(data_dir),
+                    border_router=BorderRouterService(data_dir, settings, events))
 
 
 def _host_name(host_header):
@@ -995,8 +998,69 @@ def create_app(services, background_tasks=True, on_quit=None, port=None):
             result = await asyncio.to_thread(backup.restore_backup, data, s.data_dir, s.db, s.settings)
         except backup.BackupError as exc:
             raise _bad_request(exc)
+        s.border_router.reload()
         s.events.publish("devices")
+        s.events.publish("border-router")
         return result
+
+    # ------------------------------------------------------------ the border router (Docker here)
+
+    def _border_router_error(exc):
+        return HTTPException(status_code=409 if str(exc).startswith("Busy") else 400, detail=str(exc))
+
+    @app.get("/api/border-router")
+    async def border_router_status():
+        return await asyncio.to_thread(s.border_router.status)
+
+    @app.get("/api/border-router/candidates")
+    async def border_router_candidates():
+        return await asyncio.to_thread(s.border_router.candidates)
+
+    @app.get("/api/border-router/logs")
+    async def border_router_logs(lines: int = 300, warnings: bool = False):
+        try:
+            return {"lines": await asyncio.to_thread(s.border_router.logs, lines, warnings)}
+        except BorderRouterSetupError as exc:
+            raise _border_router_error(exc)
+
+    @app.get("/api/border-router/network")
+    async def border_router_network():
+        try:
+            return await asyncio.to_thread(s.border_router.network_settings, False)
+        except BorderRouterSetupError as exc:
+            raise _border_router_error(exc)
+
+    @app.post("/api/border-router/network/reveal")
+    async def border_router_network_reveal():
+        """With the network key: a POST (with the app's header), so no other page can read it."""
+        try:
+            return await asyncio.to_thread(s.border_router.network_settings, True)
+        except BorderRouterSetupError as exc:
+            raise _border_router_error(exc)
+
+    @app.post("/api/border-router/network")
+    async def border_router_network_import(body: dict):
+        try:
+            return s.border_router.import_dataset(str(body.get("dataset", "")))
+        except BorderRouterSetupError as exc:
+            raise _border_router_error(exc)
+
+    @app.post("/api/border-router/setup")
+    async def border_router_setup(body: dict):
+        try:
+            return s.border_router.setup(str(body.get("rcp_device", "")), str(body.get("infra_if", "")))
+        except BorderRouterSetupError as exc:
+            raise _border_router_error(exc)
+
+    @app.post("/api/border-router/{action}")
+    async def border_router_action(action: str):
+        jobs = {"restart": s.border_router.restart, "update": s.border_router.update, "rollback": s.border_router.rollback}
+        if action not in jobs:
+            raise HTTPException(404, "Unknown action")
+        try:
+            return jobs[action]()
+        except BorderRouterSetupError as exc:
+            raise _border_router_error(exc)
 
     @app.get("/api/devices.csv")
     async def devices_csv():

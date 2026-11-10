@@ -2,7 +2,8 @@
 
 A backup holds the database (devices, images list, update history, build profiles and
 builds), the images themselves, the build profiles' .conf files, the plant photos, the
-public half of the signing key (never the private key) and the settings. Restoring replaces
+public half of the signing key (never the private key), the settings, and the border router's
+settings with its Thread network's (the network key included: keep backups private). Restoring replaces
 all of it, after saving the current data as a backup first.
 """
 
@@ -28,6 +29,7 @@ IMAGE_NAME = re.compile(r"images/[0-9a-f]{64}\.bin")
 BUILD_CONF_NAME = re.compile(r"builds/build-[0-9]+\.conf")
 PHOTO_NAME = re.compile(r"photos/[A-Za-z0-9_-]{1,32}(\.[0-9]{1,12})?")  # current, or one of the timeline
 PUBLIC_KEY = "signing-public-key.pem"
+BORDER_ROUTER = "border-router.json"  # the border router's settings and its network's (the network key)
 REQUIRED_TABLES = {"devices", "images", "updates"}
 
 
@@ -56,6 +58,8 @@ def create_backup(data_dir, db, settings):
             archive.writestr("settings.json", json.dumps(settings.as_dict(), indent=2))
             if (data_dir / PUBLIC_KEY).is_file():
                 archive.write(data_dir / PUBLIC_KEY, PUBLIC_KEY)
+            if (data_dir / BORDER_ROUTER).is_file():
+                archive.write(data_dir / BORDER_ROUTER, BORDER_ROUTER)
             for folder in ("images", "builds", "photos"):
                 for path in sorted((data_dir / folder).glob("*")):
                     if path.is_file():
@@ -108,6 +112,13 @@ def restore_backup(data, data_dir, db, settings):
 
     if PUBLIC_KEY in names:
         (data_dir / PUBLIC_KEY).write_bytes(archive.read(PUBLIC_KEY))
+    if BORDER_ROUTER in names:
+        try:
+            json.loads(archive.read(BORDER_ROUTER))
+        except ValueError:
+            pass  # damaged: the one here stays
+        else:
+            (data_dir / BORDER_ROUTER).write_bytes(archive.read(BORDER_ROUTER))
     if "settings.json" in names:
         try:
             settings.update(json.loads(archive.read("settings.json")))

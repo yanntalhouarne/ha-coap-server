@@ -22,6 +22,7 @@ from hacoap_manager.otbr import BorderRouter
 from hacoap_manager.simborder import SimulatedBorderRouter, scenario
 
 from conftest import NEW_HASH, NEW_IMAGE
+from test_borderrouter import FakeDocker
 
 CANDIDATES = [
     os.environ.get("CHROME", ""),
@@ -86,6 +87,7 @@ def page(tmp_path_factory):
     services.network.cache.write_text(__import__("json").dumps(topology))
     services.network.set_floorplan(tiny_png(), "home.png")
     services.network.set_position("1a2b3c4d", 0.5, 0.5)
+    services.border_router._run = FakeDocker()  # a border router in Docker here, made up
 
     app = create_app(services, background_tasks=False)
     server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=0, log_level="warning"))
@@ -125,6 +127,17 @@ def test_network_tab(page):
     assert "with signal strength" in dom
     assert "net-figure" in dom and "weakest link" in dom                       # the figures across the top
     assert 'class="net-row' in dom and "Your boards" in dom                    # the list of nodes
+
+
+def test_border_router_tab(page):
+    dom = page("border-router")
+    assert 'id="tab-border-router" class="tab"' in dom                          # shown
+    assert "test-net" in dom and "fd2a:83c:28ba:1::/64" in dom and ">router<" in dom
+    assert "OPENTHREAD/d9abe3071" in dom and "83ed278" in dom                   # radio firmware, the build's commit
+    assert "hidden" in dom and "Show the network key" in dom                    # the network key isn't shown
+    assert "00112233445566778899aabbccddeeff" not in dom
+    assert "no parent" in dom                                                   # its log
+    assert "Start it again with these" in dom and "Co-Processor" in dom         # set up: the radio found
 
 
 def test_tree_view(page):
