@@ -269,7 +269,7 @@ def test_simple_view(page):
     assert "water-menu d-none" in dom and dom.count('role="menuitem"') == 9   # how long: 1 to 9 s, hidden until asked
     assert "Soil, last 7 days" in dom and 'href="#device/1a2b3c4d"' in dom
     dom = page("alerts")
-    assert "basil" in dom and "simple-list" in dom
+    assert "basil" in dom and "simple-list" in dom and 'class="alert-dismiss"' in dom   # each one can be dismissed
     dom = page("more")
     assert "Advanced view" in dom and "Tokyo Night" in dom
 

@@ -163,6 +163,7 @@ LINK_ALLOWED = [
     (("GET", "HEAD"), re.compile(r"^/api/(network|network/history|network/floorplan|graph)$")),
     (("GET", "HEAD"), re.compile(r"^/api/network/history/[^/]+$")),
     (("POST",), re.compile(r"^/api/devices/[^/]+/(pump|ping)$")),
+    (("POST",), re.compile(r"^/api/alerts/(dismiss|\d+/dismiss)$")),
     (("PATCH",), re.compile(r"^/api/devices/[^/]+$")),  # its plant's name only (edit_device)
 ]
 LINK_EVENTS = {"device", "devices", "alert", "alerts"}  # what its page is told live
@@ -1176,6 +1177,15 @@ def create_app(services, background_tasks=True, on_quit=None, port=None):
 
     @app.get("/api/alerts")
     async def alerts():
+        return s.alerts.state()
+
+    @app.post("/api/alerts/dismiss")
+    async def dismiss_alerts(body: dict):
+        """Several at once ("Dismiss all": the ones shown, not one raised meanwhile)."""
+        ids = body.get("ids")
+        if not isinstance(ids, list) or not all(isinstance(i, int) and not isinstance(i, bool) for i in ids):
+            raise HTTPException(400, "ids: a list of alert IDs")
+        s.alerts.dismiss_many(ids)
         return s.alerts.state()
 
     @app.post("/api/alerts/{alert_id}/dismiss")

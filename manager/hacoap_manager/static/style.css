@@ -1214,5 +1214,9 @@ body.wall-mode .simple-top, body.wall-mode .simple-nav { display: none !importan
 .simple-list a:not(.btn) { color: var(--t-text); text-decoration: none; }
 .simple-list a:not(.btn):hover { color: var(--t-brand); }
 .simple-list .btn { white-space: nowrap; }
+.simple-list .alert-dismiss { flex: none; display: grid; place-items: center; width: 2rem; height: 2rem; margin: -.4rem -.4rem -.4rem 0;
+  padding: 0; border: 0; border-radius: 50%; background: none; color: var(--t-text-muted); }
+.simple-list .alert-dismiss:hover, .simple-list .alert-dismiss:focus-visible { background: var(--t-surface-2); color: var(--t-text); }
+.simple-list .alert-dismiss .icon { color: inherit; }
 .theme-pick { display: flex; flex-wrap: wrap; gap: .5rem; }
 .theme-pick .btn { min-height: 2.5rem; }

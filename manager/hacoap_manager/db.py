@@ -114,7 +114,8 @@ CREATE TABLE IF NOT EXISTS alerts (
     message   TEXT NOT NULL,
     raised    REAL NOT NULL,
     cleared   REAL,                            -- when it went away (or was dismissed)
-    dismissed INTEGER NOT NULL DEFAULT 0
+    dismissed INTEGER NOT NULL DEFAULT 0,
+    ended     REAL                             -- a dismissed one: when its condition ended (until then, it's not raised again)
 );
 CREATE INDEX IF NOT EXISTS alerts_open ON alerts (cleared);
 CREATE TABLE IF NOT EXISTS network_snapshots (
@@ -178,6 +179,7 @@ ADDED_COLUMNS = [
     ("devices", "srp_state", "TEXT NOT NULL DEFAULT ''"),
     ("devices", "power", "TEXT NOT NULL DEFAULT ''"),
     ("readings", "power", "TEXT NOT NULL DEFAULT ''"),
+    ("alerts", "ended", "REAL"),
 ]
 
 
@@ -195,6 +197,8 @@ class Database:
             exists = self._conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", (table,)).fetchone()
             if exists and column not in {row[1] for row in self._conn.execute(f"PRAGMA table_info({table})")}:
                 self._conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+                if (table, column) == ("alerts", "ended"):  # the ones dismissed before: long over
+                    self._conn.execute("UPDATE alerts SET ended = cleared WHERE dismissed = 1")
         self._conn.executescript(SCHEMA)
         self._conn.commit()
 
@@ -533,6 +537,13 @@ class Database:
     def clear_alert(self, alert_id, dismissed=False):
         return self._execute("UPDATE alerts SET cleared = ?, dismissed = ? WHERE id = ? AND cleared IS NULL",
                              (time.time(), int(dismissed), alert_id)).rowcount > 0
+
+    def quiet_alert_keys(self):
+        """What was dismissed while its condition lasts: not raised again until it ends."""
+        return {row["key"] for row in self._query("SELECT DISTINCT key FROM alerts WHERE dismissed = 1 AND ended IS NULL")}
+
+    def end_quiet_alert(self, key):
+        self._execute("UPDATE alerts SET ended = ? WHERE key = ? AND dismissed = 1 AND ended IS NULL", (time.time(), key))
 
     # ------------------------------------------------------------ network history
 

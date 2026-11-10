@@ -208,7 +208,9 @@ export async function loadAlerts() {
   renderAlerts();
 }
 
-function dismissAlert(alert) {
+// Dismissed: gone at once, sent after a few seconds unless undone. One about a state (a dry
+// plant, say) doesn't come back while it lasts.
+export function dismissAlert(alert) {
   dismissing.add(alert.id);
   state.alerts = state.alerts.filter((a) => a.id !== alert.id);
   renderAlerts();
@@ -220,6 +222,19 @@ function dismissAlert(alert) {
     dismissing.delete(alert.id);
     loadAlerts().catch(() => {});
   });
+}
+
+// All the open ones (those shown: one raised meanwhile stays)
+export function dismissAllAlerts() {
+  const ids = state.alerts.map((a) => a.id);
+  ids.forEach((id) => dismissing.add(id));
+  state.alerts = [];
+  renderAlerts();
+  const done = () => { ids.forEach((id) => dismissing.delete(id)); loadAlerts().catch(() => {}); };
+  undoable(`${ids.length} alerts dismissed.`, async () => {
+    await api('POST', '/api/alerts/dismiss', { ids }, { quiet: true, keepalive: true }).catch(() => {});
+    done();
+  }, done);
 }
 
 export function renderAlerts() {

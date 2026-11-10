@@ -160,6 +160,47 @@ async def test_needs_water_and_alerts(client, services):
     assert all(a["kind"] != "update" for a in response.json()["open"])
 
 
+async def test_a_dismissed_alert_stays_quiet_while_it_lasts(client, services):
+    services.db.upsert_device("aa", name="basil", soil_moisture=18, battery=80, last_seen=time.time())
+    dry = services.alerts.scan()[0]
+    assert (await client.post(f"/api/alerts/{dry['id']}/dismiss", headers=CHANGE)).json()["open"] == []
+    assert (await client.post(f"/api/alerts/{dry['id']}/dismiss", headers=CHANGE)).status_code == 404
+    # Still dry: not raised again, minute after minute
+    assert services.alerts.scan() == [] and services.alerts.scan() == []
+    assert (await client.get("/api/alerts")).json()["open"] == []
+    # Watered, then dry again: it's a new time, raised again
+    services.db.upsert_device("aa", soil_moisture=60)
+    assert services.alerts.scan() == []
+    services.db.upsert_device("aa", soil_moisture=15)
+    assert [a["kind"] for a in services.alerts.scan()] == ["dry"]
+
+    # Several at once ("Dismiss all"): the ones asked for only
+    services.db.upsert_device("bb", name="mint", soil_moisture=10, battery=80, last_seen=time.time())
+    services.db.upsert_device("cc", name="thyme", soil_moisture=10, battery=80, last_seen=time.time())
+    services.alerts.scan()
+    open_ids = {a["device_id"]: a["id"] for a in (await client.get("/api/alerts")).json()["open"]}
+    assert set(open_ids) == {"aa", "bb", "cc"}
+    left = (await client.post("/api/alerts/dismiss", json={"ids": [open_ids["aa"], open_ids["bb"]]}, headers=CHANGE)).json()
+    assert [a["device_id"] for a in left["open"]] == ["cc"]
+    assert services.alerts.scan() == []
+    for bad in ({}, {"ids": "1"}, {"ids": ["1"]}, {"ids": [True]}):
+        assert (await client.post("/api/alerts/dismiss", json=bad, headers=CHANGE)).status_code == 400
+
+
+def test_alerts_dismissed_before_the_upgrade_dont_stay_quiet(tmp_path):
+    import sqlite3
+    from hacoap_manager.db import Database
+    path = tmp_path / "old.db"
+    Database(path).close()
+    conn = sqlite3.connect(path)  # as an older version left it: no 'ended' column, one dry alert dismissed long ago
+    conn.executescript("ALTER TABLE alerts DROP COLUMN ended; "
+                       "INSERT INTO alerts (key, kind, message, raised, cleared, dismissed) VALUES ('dry:aa', 'dry', 'x', 1, 2, 1);")
+    conn.commit(); conn.close()
+    db = Database(path)
+    assert db.quiet_alert_keys() == set()
+    db.close()
+
+
 # ---------------------------------------------------------------- plant photos
 
 async def test_photos(client, services):

@@ -5,7 +5,7 @@
 import { ago, api, h, linkMode, onUsb, pct, powerText, state, svg } from './core.js';
 import { batteryRing } from './pages.js';
 import { linkMargin, waterIn } from './network.js';
-import { daysText, notificationsOn, toggleNotifications } from './dashboard.js';
+import { daysText, dismissAlert, dismissAllAlerts, notificationsOn, toggleNotifications } from './dashboard.js';
 import { lineChart } from './charts.js';
 import { devicePath, pingDevice } from './devices.js';
 import { showPumping, startPumping, waitForBoard } from './motion.js';
@@ -209,11 +209,15 @@ export function renderSimpleAlerts() {
   const badge = document.getElementById('simple-alert-count');
   badge.textContent = alerts.length;
   badge.classList.toggle('d-none', !alerts.length);
-  document.getElementById('simple-alerts').replaceChildren(alerts.length
-    ? h('ul', { class: 'simple-list' }, alerts.map((a) => h('li', { class: 'warn' }, icon('triangle-alert'),
+  document.getElementById('simple-alerts').replaceChildren(...(alerts.length ? [
+    h('ul', { class: 'simple-list' }, alerts.map((a) => h('li', { class: 'warn' }, icon('triangle-alert'),
       a.device_id ? h('a', { href: plantHref(a.device_id) }, a.message) : h('span', {}, a.message),
-      h('time', {}, ago(a.raised)))))
-    : h('p', { class: 'text-body-secondary' }, 'Nothing needs attention.'));
+      h('time', {}, ago(a.raised)),
+      h('button', { type: 'button', class: 'alert-dismiss', title: 'Dismiss', 'aria-label': `Dismiss: ${a.message}`,
+        onclick: () => dismissAlert(a) }, icon('x'))))),
+    alerts.length > 1 ? h('button', { type: 'button', class: 'btn btn-sm btn-outline-secondary mt-2', onclick: dismissAllAlerts },
+      `Dismiss all ${alerts.length}`) : null,
+  ] : [h('p', { class: 'text-body-secondary' }, 'Nothing needs attention.')]).filter(Boolean));
 }
 
 document.addEventListener('hacoap-alerts', renderSimpleAlerts);

@@ -1,6 +1,7 @@
 """Other devices (Settings → Other devices): off by default, then only from the chosen networks,
 on this computer's own address there, and only once signed in."""
 
+import time
 import socket
 import zipfile
 import io
@@ -260,6 +261,15 @@ async def test_a_dashboard_link_opens_the_plants_only(services):
                              ("POST", "/api/network/floorplan")]:
             response = await dashboard.request(method, path, headers={**header, **CHANGE}, json={"x": 0.5, "y": 0.5})
             assert response.status_code == 403, (method, path, response.status_code)
+        # Its alerts: dismissed, one by one or several at once
+        services.db.upsert_device("1a2b3c4d", soil_moisture=5, battery=80, last_seen=time.time())
+        services.db.upsert_device("5e6f7a8b", name="ha-coap-5e6f7a8b", soil_moisture=5, battery=80, last_seen=time.time())
+        services.alerts.scan()
+        ids = [a["id"] for a in (await dashboard.get("/api/alerts", headers=header)).json()["open"]]
+        assert len(ids) == 2
+        assert (await dashboard.post(f"/api/alerts/{ids[0]}/dismiss", headers={**header, **CHANGE})).status_code == 200
+        response = await dashboard.post("/api/alerts/dismiss", json={"ids": ids[1:]}, headers={**header, **CHANGE})
+        assert response.status_code == 200 and response.json()["open"] == []
         # Nothing else: not another field of a device, updates, settings, backups, the border router...
         assert (await dashboard.patch("/api/devices/1a2b3c4d", json={"address": "fd66::6"},
                                       headers={**header, **CHANGE})).status_code == 403

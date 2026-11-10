@@ -53,10 +53,13 @@ class AlertService:
         now = self.conditions()
         open_alerts = self.db.open_alerts()
         open_keys = {a["key"] for a in open_alerts}
+        quiet = self.db.quiet_alert_keys()  # dismissed: not again while it lasts
         new = []
         for key, (kind, device_id, message) in now.items():
-            if key not in open_keys:
+            if key not in open_keys and key not in quiet:
                 new.append(self._named(self.db.add_alert(key, kind, device_id, message)))
+        for key in quiet - now.keys():
+            self.db.end_quiet_alert(key)  # it ended: the next time, it's raised again
         cleared = [a for a in open_alerts if a["kind"] not in EVENTS and a["key"] not in now]
         for alert in cleared:
             self.db.clear_alert(alert["id"])
@@ -81,10 +84,17 @@ class AlertService:
         self.events.publish("alerts")
 
     def dismiss(self, alert_id):
+        """Clears an open alert. One about a state (a dry plant, say) isn't raised again while it lasts."""
         done = self.db.clear_alert(alert_id, dismissed=True)
         if done:
             self.events.publish("alerts")
         return done
+
+    def dismiss_many(self, alert_ids):
+        count = sum(self.db.clear_alert(alert_id, dismissed=True) for alert_id in alert_ids)
+        if count:
+            self.events.publish("alerts")
+        return count
 
     def state(self):
         return {"open": [self._named(a) for a in self.db.open_alerts()],
