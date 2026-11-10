@@ -26,6 +26,7 @@ import logging
 import re
 import subprocess
 import time
+import urllib.request
 from dataclasses import asdict, dataclass, fields
 from pathlib import Path
 
@@ -37,6 +38,9 @@ log = logging.getLogger(__name__)
 
 CONFIG_FILE = "border-router.json"
 IMAGE_REPO = "openthread/border-router"
+# Docker Hub's public list of the image's tags, newest first: "latest", and one "sha-<commit>" per build
+HUB_TAGS = f"https://hub.docker.com/v2/repositories/{IMAGE_REPO}/tags?page_size=50&ordering=last_updated"
+HUB_CHECK_S = 6 * 3600
 LATEST = f"{IMAGE_REPO}:latest"
 IMAGE_REF = re.compile(rf"^{re.escape(IMAGE_REPO)}(:[A-Za-z0-9_.-]{{1,128}})?(@sha256:[0-9a-f]{{64}})?$")
 RCP_DEVICE = re.compile(r"^/dev/(serial/by-id/[A-Za-z0-9_.:+@-]{1,200}|tty(ACM|USB)[0-9]{1,3})$")
@@ -167,6 +171,46 @@ class BorderRouterService:
         self.on_board_joined = None  # async, called when a new board registers while commissioning
         self._stop = False           # ends the commissioning window early
         self._loop = None
+        self._fetch = _fetch_json    # Docker Hub's API (replaced in tests)
+        self._hub = None             # its last answer about the builds: {checked, builds or error}
+
+    # ------------------------------------------------------------ is there a newer build?
+
+    def newest(self, refresh=False):
+        """Whether a newer build than the one pinned is on Docker Hub. Asks Docker Hub at most every
+        HUB_CHECK_S (or now, with refresh): only its public list of tags, nothing is downloaded."""
+        if refresh or self._hub is None or time.time() - self._hub["checked"] > HUB_CHECK_S:
+            try:
+                tags = self._fetch(HUB_TAGS)["results"]
+                builds = [{"tag": t["name"], "digest": t.get("digest") or "", "date": t.get("last_updated") or ""}
+                          for t in tags]
+                self._hub = {"checked": time.time(), "builds": builds}
+            except (OSError, ValueError, KeyError, TypeError) as exc:
+                self._hub = {"checked": time.time(), "error": f"Docker Hub didn't answer ({exc})"}
+        return self._newest_state()
+
+    def _newest_state(self):
+        hub = self._hub
+        if hub is None:
+            return {"checked": None}
+        if "error" in hub:
+            return {"checked": hub["checked"], "error": hub["error"]}
+        current = self.config.image.split("@", 1)[1] if "@" in self.config.image else ""
+        latest = next((b for b in hub["builds"] if b["tag"] == "latest"), None)
+        if latest is None:
+            return {"checked": hub["checked"], "error": "Docker Hub lists no 'latest' build"}
+        commit = lambda digest: next((b["tag"][4:] for b in hub["builds"]  # noqa: E731
+                                      if b["tag"].startswith("sha-") and b["digest"] == digest), "")
+        builds = [b for b in hub["builds"] if b["tag"].startswith("sha-")]
+        mine = next((b for b in builds if b["digest"] == current), None)
+        newer = [b for b in builds if mine and b["date"] > mine["date"] and b["digest"] != current]
+        return {"checked": hub["checked"], "latest": latest["digest"], "latest_date": latest["date"],
+                "latest_commit": commit(latest["digest"]), "current": current,
+                "current_date": mine["date"] if mine else "", "current_commit": commit(current),
+                # None: not pinned to a build, so it can't tell
+                "update_available": (latest["digest"] != current) if current else None,
+                # how many builds since this one (at least, if it's older than Docker Hub's list)
+                "newer_builds": len({b["digest"] for b in newer}) if mine else None}
 
     # ------------------------------------------------------------ config
 
@@ -258,6 +302,7 @@ class BorderRouterService:
             except BorderRouterError as exc:
                 result["thread"] = {"error": str(exc)}
         result["config"] = self.config.public()  # with the network's settings just kept
+        result["newest"] = self._newest_state()  # as last asked (newest() asks Docker Hub)
         return result
 
     def _thread_status(self):
@@ -733,6 +778,12 @@ class BorderRouterService:
                 raise BorderRouterSetupError(f"Settings applied, but not a router yet ({last})")
             return f"On the network '{values['network_name']}' ({last})"
         return self.start_job("import", work)
+
+
+def _fetch_json(url, timeout=10):
+    request = urllib.request.Request(url, headers={"Accept": "application/json", "User-Agent": "hacoap-manager"})
+    with urllib.request.urlopen(request, timeout=timeout) as response:
+        return json.loads(response.read().decode("utf-8"))
 
 
 def _int_or_none(text):

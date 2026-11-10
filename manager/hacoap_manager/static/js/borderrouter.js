@@ -2,7 +2,7 @@
 // its status, restart, safe updates with a way back, its log, its network's settings (kept in
 // the app's backups, shown and imported here), and setting it up on a new computer.
 
-import { api, busy, h, notify, when } from './core.js';
+import { ago, api, busy, h, notify, when } from './core.js';
 
 const br = { status: null, network: null, revealed: null, reloadTimer: null, scan: null };
 const $ = (id) => document.getElementById(id);
@@ -26,6 +26,51 @@ export async function loadBorderRouter() {
   br.status = status;
   renderStatus();
   loadLog();
+  loadNewest(false);
+}
+
+// Is there a newer build? Docker Hub's list of builds, asked at most every 6 hours (or now)
+async function loadNewest(refresh) {
+  const newest = await api('GET', `/api/border-router/newest${refresh ? '?refresh=true' : ''}`, undefined, { quiet: true })
+    .catch(() => null);
+  if (!newest || !br.status) return;
+  br.status = { ...br.status, newest };
+  renderNewest(newest);
+}
+
+const buildDate = (iso) => (iso ? new Date(iso).toLocaleDateString(undefined, { day: 'numeric', month: 'short' }) : '');
+const commitLink = (commit) => (commit ? h('a', { href: `https://github.com/openthread/ot-br-posix/commit/${commit}`,
+  target: '_blank', rel: 'noopener' }, commit) : null);
+
+function renderNewest(newest) {
+  const box = $('br-newest');
+  const update = $('br-update');
+  const available = Boolean(newest && newest.update_available);
+  update.classList.toggle('btn-primary', available);
+  update.classList.toggle('btn-outline-primary', !available);
+  if (!br.status || !br.status.container) { box.replaceChildren(); return; }
+  const check = h('button', { class: 'btn btn-link btn-sm p-0 align-baseline', type: 'button',
+    onclick: (event) => during(event.currentTarget, () => loadNewest(true)) }, 'check now');
+  const checked = newest && newest.checked ? [` · checked ${ago(newest.checked)} · `, check] : [' · ', check];
+  let text;
+  if (!newest || !newest.checked) {
+    text = [h('span', { class: 'text-body-secondary' }, 'Checking Docker Hub for a newer build…')];
+  } else if (newest.error) {
+    text = [h('span', { class: 'text-warning' }, newest.error)];
+  } else if (newest.update_available === null) {
+    text = [h('span', { class: 'text-body-secondary' }, 'It runs "latest", not a pinned build: an update pins it.')];
+  } else if (newest.update_available) {
+    const count = newest.newer_builds;
+    text = [h('span', { class: 'badge text-bg-info me-1' }, 'newer build'),
+      `OpenThread published a newer build on ${buildDate(newest.latest_date)}`,
+      newest.latest_commit ? [' (', commitLink(newest.latest_commit), ')'] : '',
+      count ? `: ${count} build${count > 1 ? 's' : ''} since yours` : '', '.'];
+  } else {
+    text = [h('span', { class: 'badge text-bg-success me-1' }, 'up to date'),
+      `This is the newest build (${buildDate(newest.latest_date)}`,
+      newest.latest_commit ? [', ', commitLink(newest.latest_commit)] : '', ').'];
+  }
+  box.replaceChildren(...text.flat(), ...(newest && newest.checked ? checked : [' · ', check]));
 }
 
 // Again soon after a change (a job's steps come one after another)
@@ -117,6 +162,7 @@ function renderStatus() {
   clearTimeout(br.pollTimer);
   if (busyJob || (thread && thread.pending)) br.pollTimer = setTimeout(borderRouterChanged, 15000);
   $('br-rollback').classList.toggle('d-none', !s.config.previous_image);
+  renderNewest(s.newest);
   $('br-setup-button').textContent = s.container ? 'Start it again with these' : 'Start the border router';
   renderJob(s.job);
 }

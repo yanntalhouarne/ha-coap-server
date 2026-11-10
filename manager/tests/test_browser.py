@@ -88,6 +88,11 @@ def page(tmp_path_factory):
     services.network.set_floorplan(tiny_png(), "home.png")
     services.network.set_position("1a2b3c4d", 0.5, 0.5)
     services.border_router._run = FakeDocker()  # a border router in Docker here, made up
+    # Docker Hub, made up too: a newer build than the one it runs
+    services.border_router._fetch = lambda url: {"results": [
+        {"name": "latest", "digest": "sha256:" + "c9" * 32, "last_updated": "2026-11-12T10:00:00Z"},
+        {"name": "sha-c9c9c9c", "digest": "sha256:" + "c9" * 32, "last_updated": "2026-11-12T10:00:00Z"},
+        {"name": "sha-b8b8b8b", "digest": "sha256:" + "b8" * 32, "last_updated": "2026-11-10T01:54:57Z"}]}
 
     app = create_app(services, background_tasks=False)
     server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=0, log_level="warning"))
@@ -137,6 +142,7 @@ def test_border_router_tab(page):
     assert "hidden" in dom and "Show the network key" in dom                    # the network key isn't shown
     assert "00112233445566778899aabbccddeeff" not in dom
     assert "no parent" in dom                                                   # its log
+    assert "newer build" in dom and "c9c9c9c" in dom and "check now" in dom     # a newer build is out
     assert "Start it again with these" in dom and "Co-Processor" in dom         # set up: the radio found
     assert "Let boards join" in dom and 'type="password"' in dom                # adding boards: the PSKd hidden
     assert "16 · noise up to" in dom or ">16<" in dom or "16</option>" in dom   # the channels to move to

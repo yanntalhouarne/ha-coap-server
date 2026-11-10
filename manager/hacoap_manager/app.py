@@ -1015,6 +1015,11 @@ def create_app(services, background_tasks=True, on_quit=None, port=None):
     async def border_router_status():
         return await asyncio.to_thread(s.border_router.status)
 
+    @app.get("/api/border-router/newest")
+    async def border_router_newest(refresh: bool = False):
+        """Whether Docker Hub has a newer build (asked at most every 6 hours, or now with refresh)."""
+        return await asyncio.to_thread(s.border_router.newest, refresh)
+
     @app.get("/api/border-router/candidates")
     async def border_router_candidates():
         return await asyncio.to_thread(s.border_router.candidates)

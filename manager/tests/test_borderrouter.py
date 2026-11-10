@@ -483,3 +483,67 @@ async def test_api_joining_and_channel(tmp_path):
         await br._task
         assert br.job["state"] == "done" and docker.channel == 20
     services.db.close()
+
+
+def hub_tags(latest_digest, builds):
+    """Docker Hub's tag list: 'latest', and a sha-<commit> tag per build ([(commit, digest, date)], newest first)."""
+    latest_date = next(d for c, dg, d in builds if dg == latest_digest)
+    results = [{"name": "latest", "digest": latest_digest, "last_updated": latest_date}]
+    results += [{"name": f"sha-{c}", "digest": dg, "last_updated": d} for c, dg, d in builds]
+    return {"results": results}
+
+
+BUILDS = [("c9c9c9c", "sha256:" + "c9" * 32, "2026-11-12T10:00:00Z"),
+          ("aaaaaaa", "sha256:" + "aa" * 32, "2026-11-11T10:00:00Z"),
+          ("b8b8b8b", "sha256:" + "b8" * 32, "2026-11-10T01:54:57Z"),
+          ("0000000", "sha256:" + "00" * 32, "2026-11-09T10:00:00Z")]
+
+
+def test_a_newer_build(tmp_path):
+    service = service_with(tmp_path, FakeDocker())
+    service.status()  # adopts the container: pinned to OLD (b8...)
+    asked = []
+    service._fetch = lambda url: asked.append(url) or hub_tags("sha256:" + "c9" * 32, BUILDS)
+    newest = service.newest()
+    assert newest["update_available"] is True and newest["newer_builds"] == 2
+    assert (newest["latest_commit"], newest["current_commit"]) == ("c9c9c9c", "b8b8b8b")
+    assert newest["latest_date"].startswith("2026-11-12")
+    # Asked once, then kept for a while (opening the tab again doesn't ask again)...
+    service.newest()
+    assert len(asked) == 1 and "hub.docker.com" in asked[0]
+    # ...unless asked to check now
+    service.newest(refresh=True)
+    assert len(asked) == 2
+    # The status says it too, without asking
+    assert service.status()["newest"]["update_available"] is True and len(asked) == 2
+
+
+def test_up_to_date_and_errors(tmp_path):
+    service = service_with(tmp_path, FakeDocker())
+    service.status()
+    assert service.status()["newest"] == {"checked": None}  # not asked yet
+    service._fetch = lambda url: hub_tags("sha256:" + "b8" * 32, BUILDS[2:])
+    newest = service.newest()
+    assert newest["update_available"] is False and newest["newer_builds"] == 0
+
+    def offline(url):
+        raise OSError("no route to host")
+    service._fetch = offline
+    assert "didn't answer" in service.newest(refresh=True)["error"]
+
+    service.config.image = LATEST  # not pinned: can't tell
+    service._fetch = lambda url: hub_tags("sha256:" + "c9" * 32, BUILDS)
+    assert service.newest(refresh=True)["update_available"] is None
+
+
+async def test_api_newest(tmp_path):
+    services = create_services(tmp_path, discover=None)
+    services.border_router._run = FakeDocker()
+    services.border_router._fetch = lambda url: hub_tags("sha256:" + "c9" * 32, BUILDS)
+    app = create_app(services, background_tasks=False)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://127.0.0.1:8710") as client:
+        await client.get("/api/border-router")
+        newest = (await client.get("/api/border-router/newest")).json()
+        assert newest["update_available"] and newest["latest_commit"] == "c9c9c9c"
+        assert (await client.get("/api/border-router/newest?refresh=true")).status_code == 200
+    services.db.close()
