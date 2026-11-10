@@ -153,11 +153,15 @@ def _access(services, client, host_header, cookies, key=None):
 
 
 # What a dashboard link opens: the page, and the plants (simple view) with watering, beeping and
-# naming them. Never updates, builds, settings, backups, the border router...
+# naming them; the network map and the charts, to look at. Never updates, builds, settings,
+# backups, the border router...
 LINK_ALLOWED = [
     (("GET", "HEAD"), re.compile(r"^/$")),
     (("GET", "HEAD"), re.compile(r"^/api/(devices|wall|alerts|status|activity-feed|images|updates|setup)$")),
     (("GET", "HEAD"), re.compile(r"^/api/devices/[^/]+/(details|photo)$")),
+    # Read-only: the network's map (mesh, tree, floor plan) and its history, and the charts
+    (("GET", "HEAD"), re.compile(r"^/api/(network|network/history|network/floorplan|graph)$")),
+    (("GET", "HEAD"), re.compile(r"^/api/network/history/[^/]+$")),
     (("POST",), re.compile(r"^/api/devices/[^/]+/(pump|ping)$")),
     (("PATCH",), re.compile(r"^/api/devices/[^/]+$")),  # its plant's name only (edit_device)
 ]

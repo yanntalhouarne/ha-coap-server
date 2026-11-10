@@ -252,6 +252,14 @@ async def test_a_dashboard_link_opens_the_plants_only(services):
         assert (await dashboard.get("/api/status", headers=header)).json()["access"] == "link"
         renamed = await dashboard.patch("/api/devices/1a2b3c4d", json={"plant": "Genovese basil"}, headers={**header, **CHANGE})
         assert renamed.status_code == 200 and renamed.json()["plant"] == "Genovese basil"
+        # The network map (and its history) and the charts, to look at
+        for path in ("/api/network", "/api/network/history", "/api/graph?metric=soil_moisture&days=7"):
+            assert (await dashboard.get(path, headers=header)).status_code == 200, path
+        for method, path in [("POST", "/api/network/refresh"), ("PUT", "/api/network/positions/1a2b3c4d"),
+                             ("POST", "/api/network/channel-scan"), ("DELETE", "/api/network/floorplan"),
+                             ("POST", "/api/network/floorplan")]:
+            response = await dashboard.request(method, path, headers={**header, **CHANGE}, json={"x": 0.5, "y": 0.5})
+            assert response.status_code == 403, (method, path, response.status_code)
         # Nothing else: not another field of a device, updates, settings, backups, the border router...
         assert (await dashboard.patch("/api/devices/1a2b3c4d", json={"address": "fd66::6"},
                                       headers={**header, **CHANGE})).status_code == 403

@@ -1,6 +1,6 @@
 // The Network tab's floor plan, switching between the views, and the channel scan.
 
-import { ago, api, busy, h, photoUrl, state, svg } from './core.js';
+import { ago, api, busy, h, linkMode, photoUrl, state, svg, withKey } from './core.js';
 import { applyFocus, boardAvatar, enableZoom, heatmapLayer, linkKey, linkPath, linkStrength, meshTree, nameChip, net, nodeEvents,
   nodeLabel, nodeShape, qualityColors, renderHeatmapNote, renderNetwork, selectNode, shownName, shownTopology, wayLink } from './network.js';
 import { showMore } from './netframe.js';
@@ -44,7 +44,7 @@ export function renderFloorplan() {
     return;
   }
   const img = new Image();
-  img.src = `/api/network/floorplan?t=${plan.time}`;
+  img.src = withKey(`/api/network/floorplan?t=${plan.time}`);
   img.addEventListener('load', () => {
     container.querySelectorAll('.floorplan-stage').forEach((e) => e.remove());
     const stage = h('div', { class: 'floorplan-stage' });
@@ -150,6 +150,7 @@ export function drawFloorplanNodes(stage, img) {
     return point.matrixTransform(drawing.getScreenCTM().inverse());
   };
   const save = async (node, at) => {
+    if (linkMode()) { drawFloorplanNodes(stage, img); return; }  // a dashboard link only looks: the node goes back
     const off = !at || at.x < 0 || at.y < 0 || at.x > W || at.y > H;  // dropped off the picture: unplaced
     const body = off ? { x: null, y: null } : { x: at.x / W, y: at.y / H };
     await api('PUT', `/api/network/positions/${encodeURIComponent(nodeKey(node))}`, body).catch(() => {});

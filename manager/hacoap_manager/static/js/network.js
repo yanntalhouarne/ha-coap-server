@@ -2,7 +2,7 @@
 // view), how strong each link is, each node's way to the border router, the highlight every view
 // and the node list share, the details drawer, loading and history, the heatmap, pulses.
 
-import { ago, api, busy, h, notify, onUsb, pct, photoUrl, powerText, state, svg, when } from './core.js';
+import { ago, api, busy, h, linkMode, notify, onUsb, pct, photoUrl, powerText, state, svg, when } from './core.js';
 import { currentRoute } from './tabs.js';
 import { daysText } from './dashboard.js';
 import { deviceName, devicePath, otherName, pingDevice } from './devices.js';
@@ -686,7 +686,7 @@ export function showNodeDetails(node, reveal = false) {
 export function boardCard(device) {
   const photo = device.photo
     ? h('img', { class: 'net-board-photo', src: photoUrl(device), alt: device.plant ? `The ${device.plant}` : `The plant of ${deviceName(device)}` })
-    : h('a', { class: 'net-board-photo empty', href: `#device/${encodeURIComponent(device.device_id)}`, title: 'Add a photo on its page' },
+    : h('a', { class: 'net-board-photo empty', href: `#${linkMode() ? 'plant' : 'device'}/${encodeURIComponent(device.device_id)}`, title: 'Add a photo on its page' },
       svg('svg', { viewBox: '0 0 512 512' }, svg('use', { href: '#hacoap-glyph' })), h('span', {}, 'no photo yet'));
   const has = (v) => v !== null && v !== undefined;
   const forecast = h('div', { class: 'net-stat-note' });
@@ -706,7 +706,7 @@ export function boardCard(device) {
       stat('Temperature', has(device.temperature) ? `${device.temperature} °C` : '–')),
     device.last_error ? h('div', { class: 'small text-danger mt-2' }, device.last_error) : null,
     h('div', { class: 'd-flex flex-wrap gap-2 mt-2' },
-      h('a', { class: 'btn btn-sm btn-primary', href: `#device/${encodeURIComponent(device.device_id)}` }, 'Open its page'),
+      h('a', { class: 'btn btn-sm btn-primary', href: `#${linkMode() ? 'plant' : 'device'}/${encodeURIComponent(device.device_id)}` }, 'Open its page'),
       device.needs_water ? h('button', { class: 'btn btn-sm btn-outline-primary', type: 'button',
         onclick: (e) => waitForBoard(e.currentTarget, async () => {
           const result = await api('POST', devicePath(device, '/pump'), { on: true });

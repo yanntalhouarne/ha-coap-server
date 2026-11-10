@@ -3,9 +3,10 @@
 // remembered in this browser, and theme.js marks the page with it before it's drawn.
 
 const KEY = 'hacoap-mode';
-// A dashboard link only opens the plants (and the wall display): the simple view, always
+// A dashboard link only opens the plants (the simple view, always), the wall display, and the network
+// map and charts to look at
 const LINK = new URLSearchParams(location.search).has('key');
-export const LINK_ROUTES = ['plants', 'plant', 'alerts', 'more', 'wall'];
+export const LINK_ROUTES = ['plants', 'plant', 'alerts', 'more', 'wall', 'network', 'charts'];
 
 // The routes of the simple view; every other tab is the advanced one's
 export const SIMPLE_ROUTES = ['plants', 'plant', 'alerts', 'more'];
