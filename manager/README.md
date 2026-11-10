@@ -280,6 +280,14 @@ An always-on Linux machine (a Proxmox VM, a NAS, a mini PC, a Raspberry Pi) keep
 4. **Start it with the machine:** a systemd service running `<checkout>/manager/.venv/bin/python -m hacoap_manager --no-browser --workdir <checkout>` as that user (`Restart=on-failure`), then `sudo systemctl enable --now <service>`. Its data folder is `~/.local/share/hacoap-manager`: restore a backup there from the page.
 5. **Open it:** from your PC through an SSH tunnel (`ssh -N -L 8710:127.0.0.1:8710 hacoap@<server>`, then `http://localhost:8710`), which counts as the computer itself; or allow other devices (Settings → **Other devices**, set up through the tunnel) and open `http://<server>:8710` from the network chosen, ZeroTier included.
 
+**Editing the code on the server, with VS Code** (from any machine on your ZeroTier network):
+1. On the new machine, install VS Code with the **Remote - SSH** extension, and join the ZeroTier network.
+2. Run `scripts/connect-to-server.ps1` (Windows) or `scripts/connect-to-server.sh` (macOS, Linux). It makes this machine's SSH key (`~/.ssh/hacoap-server`), adds `hacoap` (over ZeroTier) and `hacoap-lan` (the home network) to `~/.ssh/config`, and prints one command.
+3. Run that command on a machine that can already connect: it adds the new key to the server. The server takes keys only, no passwords. Without another machine, paste the key into `~/.ssh/authorized_keys` from the VM's console in Proxmox.
+4. In VS Code: **Remote-SSH: Connect to Host → hacoap**, then open `~/ha-coap-server`. The first time, check that the server's key is `SHA256:QrVf83X9noTSwHB7HFWQsz/DJrmV4RTVVRxQGoPpzc8`.
+5. **Commit and push what you change** (once on the server: `gh auth login`, then `gh auth setup-git`). Changes left uncommitted on the server stop an update of its code from GitHub, so nothing is lost.
+6. After a change to the Python code: `sudo systemctl restart hacoap-manager`. A change to the page (HTML, JS, CSS) only needs a reload.
+
 ## Security
 - The server listens on 127.0.0.1: other computers on the network can't open it, unless you allow other devices (Settings → **Other devices**, off by default). Then it also listens on this computer's address in the networks chosen, and a device there must sign in with the password; turning that on, the networks, the password and stopping the app only change from the computer itself.
 - Other websites open in the same browser can't use it either. The server only answers requests addressed to 127.0.0.1 or localhost (or, for another device, to this computer's address in a chosen network), which blocks DNS rebinding. Every change must carry an `X-HACoap` header, which a page from another site can't add, and a signed-in device's cookie is never sent by another site (`SameSite=Strict`).
