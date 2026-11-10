@@ -265,11 +265,16 @@ export async function loadRemoteAccess() {
   try {
     st = await api('GET', '/api/remote-access', undefined, { quiet: true });
   } catch {
-    // Another device: these settings only change on the computer the app runs on
     document.getElementById('remote-local-only').classList.remove('d-none');
     form.classList.add('d-none');
     return;
   }
+  // Another device (signed in): turning it on or off, the networks and the password only change on the
+  // app's computer; links and sign-outs take the password again
+  const remote = st.here === 'remote';
+  document.getElementById('remote-local-only').classList.toggle('d-none', !remote);
+  document.getElementById('remote-confirm').classList.toggle('d-none', !remote);
+  form.classList.toggle('d-none', remote);
   document.getElementById('remote-enabled').checked = st.wanted;
   const chosen = new Set(st.networks);
   const available = st.available.map((n) => n.network);
@@ -300,16 +305,23 @@ export async function loadRemoteAccess() {
   }
   sessions.replaceChildren(h('div', { class: 'd-flex align-items-center gap-2 mb-1' }, h('b', {}, 'Signed in'),
     h('button', { class: 'btn btn-sm btn-outline-danger ms-auto', type: 'button', onclick: (e) => busy(e.target, async () => {
-      await api('DELETE', '/api/remote-access/sessions');
+      await api('DELETE', '/api/remote-access/sessions', undefined, confirmed());
       loadRemoteAccess();
     }) }, 'Sign everyone out')),
   h('ul', { class: 'list-unstyled mb-0' }, st.sessions.map((session) => h('li', { class: 'd-flex align-items-center gap-2 py-1' },
     h('div', { class: 'flex-grow-1 text-truncate', title: session.device }, `${browserName(session.device)} · ${session.address}`,
       h('div', { class: 'text-body-secondary' }, `signed in ${when(session.created)}, last used ${when(session.last_used)}`)),
     h('button', { class: 'btn btn-sm btn-outline-secondary text-nowrap', type: 'button', onclick: (e) => busy(e.target, async () => {
-      await api('DELETE', `/api/remote-access/sessions/${encodeURIComponent(session.id)}`);
+      await api('DELETE', `/api/remote-access/sessions/${encodeURIComponent(session.id)}`, undefined, confirmed());
       loadRemoteAccess();
     }) }, 'Sign out')))));
+}
+
+// From another device, these changes carry the password typed again (none needed on the app's computer)
+function confirmed() {
+  const field = document.getElementById('remote-confirm');
+  const password = document.getElementById('remote-confirm-password').value;
+  return field.classList.contains('d-none') ? {} : { headers: { 'X-HACoap-Password': password } };
 }
 
 // Dashboard links: for a page that shows the app in a frame (Home Assistant), the plants only
@@ -327,7 +339,7 @@ function renderLinks(st) {
     h('button', { class: 'btn btn-sm btn-outline-danger text-nowrap', type: 'button', onclick: (e) => {
       if (!confirm(`Revoke the link "${link.name}"? Whatever shows it stops working at once.`)) return;
       busy(e.target, async () => {
-        await api('DELETE', `/api/remote-access/links/${encodeURIComponent(link.id)}`);
+        await api('DELETE', `/api/remote-access/links/${encodeURIComponent(link.id)}`, undefined, confirmed());
         document.getElementById('remote-link-new').replaceChildren();
         loadRemoteAccess();
       });
@@ -339,7 +351,7 @@ document.getElementById('remote-link-form').addEventListener('submit', (event) =
   const name = document.getElementById('remote-link-name').value.trim();
   if (!name) return notify("Name the link: what it's for, such as Home Assistant", 'warning');
   busy(event.submitter, async () => {
-    const made = await api('POST', '/api/remote-access/links', { name });
+    const made = await api('POST', '/api/remote-access/links', { name }, confirmed());
     document.getElementById('remote-link-name').value = '';
     const copy = (text) => h('button', { class: 'btn btn-sm btn-outline-secondary ms-2', type: 'button', onclick: async () => {
       try { await navigator.clipboard.writeText(text); notify('Copied', 'success', 2000); } catch (error) { prompt('Copy the link:', text); }

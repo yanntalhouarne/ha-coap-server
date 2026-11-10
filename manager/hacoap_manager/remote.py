@@ -13,7 +13,9 @@ address (?key=...), which the page then sends with each request. A link only ope
 the chosen networks only, like signing in, and until it's revoked. Only the key's hash is kept.
 
 The settings, the password's hash, the sessions and the links are in remote-access.json, readable
-only by this user and never in a backup. Only this computer changes them.
+only by this user and never in a backup. Turning other devices on or off, the networks and the
+password change on this computer only (or through an SSH tunnel to it). A signed-in device may
+make and revoke dashboard links and sign devices out, with the password typed again for each.
 """
 
 import asyncio
@@ -205,9 +207,9 @@ class RemoteAccess:
             self._save()
         return session
 
-    def sign_in(self, address, password, device=""):
-        """A new session's token for the right password; RemoteError otherwise (and after too
-        many wrong ones, until the wait is over)."""
+    def check_password(self, address, password):
+        """RemoteError unless 'password' is the password (and after too many wrong ones from
+        'address', until the wait is over): for signing in, and for confirming a change."""
         now = time.time()
         tries, until = self._failures.get(address, (0, 0))
         if now < until:
@@ -225,6 +227,12 @@ class RemoteAccess:
             log.warning("wrong password from %s (%d)", address, tries)
             raise RemoteError("Wrong password")
         self._failures.pop(address, None)
+
+    def sign_in(self, address, password, device=""):
+        """A new session's token for the right password; RemoteError otherwise (and after too
+        many wrong ones, until the wait is over)."""
+        self.check_password(address, password)
+        now = time.time()
         token = secrets.token_urlsafe(32)
         sessions = dict(self._live_sessions(now))
         while len(sessions) >= MAX_SESSIONS:  # the least recently used goes

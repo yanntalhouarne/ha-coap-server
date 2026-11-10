@@ -51,7 +51,10 @@ LINK_REVOKED_PAGE = ("<!doctype html><meta charset=\"utf-8\"><meta name=\"viewpo
                      "<title>HA-CoAP</title><body style=\"font-family:sans-serif;padding:1.5rem;color:#888\">"
                      "<p>This dashboard link doesn't work any more: it was revoked, or the app doesn't accept other "
                      "devices now. Make a new one in the app's Settings, Other devices.</p></body>")
-LOCAL_ONLY_PATHS = ("/api/remote-access", "/api/quit")         # never from another device
+# Never from another device: turning other devices on or off, their networks and the password
+# (the rest of Other devices takes the password again, from a signed-in device), and quitting
+LOCAL_ONLY = [(("PUT",), "/api/remote-access"), (("POST",), "/api/quit")]
+CONFIRM_HEADER = "X-HACoap-Password"  # the password typed again, for a change from another device
 EVENTS_SESSION_CHECK_S = 15  # how soon a signed-out device's live events stop
 DAY_S = 86400
 
@@ -219,7 +222,7 @@ def create_app(services, background_tasks=True, on_quit=None, port=None):
             if path.startswith("/api/"):
                 return JSONResponse({"detail": "Sign in first"}, status_code=401)
             return Response(status_code=303, headers={"Location": "/login"})
-        if access != "local" and path.startswith(LOCAL_ONLY_PATHS):
+        if access != "local" and any(request.method in methods and path == p for methods, p in LOCAL_ONLY):
             return JSONResponse({"detail": "Only on the computer the app runs on"}, status_code=403)
         if request.method not in ("GET", "HEAD") and request.headers.get(CHANGE_HEADER) != "1":
             return JSONResponse({"detail": f"Missing {CHANGE_HEADER} header"}, status_code=403)
@@ -1308,11 +1311,24 @@ def create_app(services, background_tasks=True, on_quit=None, port=None):
         return response
 
     @app.get("/api/remote-access")
-    async def remote_access():
-        return await asyncio.to_thread(s.remote.describe, port)
+    async def remote_access(request: Request):
+        state = await asyncio.to_thread(s.remote.describe, port)
+        return {**state, "here": request.state.access}  # "remote": only links and sign-outs, with the password
+
+    async def _confirm(request):
+        """From another device (signed in), a change here needs the password typed again."""
+        if request.state.access == "local":
+            return
+        password = request.headers.get(CONFIRM_HEADER, "")
+        if not password:  # not a wrong password: nothing typed yet
+            raise HTTPException(403, "Type the password again to confirm, from this device")
+        try:
+            await asyncio.to_thread(s.remote.check_password, request.client.host, password)
+        except remote.RemoteError as exc:
+            raise HTTPException(403, f"{exc} (type the password again to confirm)") from None
 
     @app.put("/api/remote-access")
-    async def put_remote_access(body: dict):
+    async def put_remote_access(body: dict, request: Request):
         password = body.get("password") or None
         try:
             await asyncio.to_thread(s.remote.configure, body.get("enabled"), body.get("networks"), password)
@@ -1320,35 +1336,39 @@ def create_app(services, background_tasks=True, on_quit=None, port=None):
             raise _bad_request(exc)
         if listener is not None:
             await listener.apply(s.remote.addresses())
-        return await remote_access()
+        return await remote_access(request)
 
     @app.delete("/api/remote-access/sessions")
-    async def sign_everyone_out():
+    async def sign_everyone_out(request: Request):
+        await _confirm(request)
         s.remote.sign_out(everyone=True)
-        return await remote_access()
+        return await remote_access(request)
 
     @app.delete("/api/remote-access/sessions/{session_id}")
-    async def sign_one_out(session_id: str):
+    async def sign_one_out(session_id: str, request: Request):
+        await _confirm(request)
         s.remote.sign_out(session_id=session_id)
-        return await remote_access()
+        return await remote_access(request)
 
     @app.post("/api/remote-access/links")
-    async def make_link(body: dict):
+    async def make_link(body: dict, request: Request):
         """A dashboard link: its addresses carry the key, shown this once."""
+        await _confirm(request)
         try:
             key = await asyncio.to_thread(s.remote.create_link, body.get("name", ""))
         except remote.RemoteError as exc:
             raise _bad_request(exc)
         addresses = [f"http://{a}:{port}/?key={key}#plants" for a in s.remote.addresses()] if port else []
-        return {**(await remote_access()), "link": {"key": key, "addresses": addresses}}
+        return {**(await remote_access(request)), "link": {"key": key, "addresses": addresses}}
 
     @app.delete("/api/remote-access/links/{link_id}")
-    async def revoke_link(link_id: str):
+    async def revoke_link(link_id: str, request: Request):
+        await _confirm(request)
         try:
             await asyncio.to_thread(s.remote.revoke_link, link_id)
         except remote.RemoteError as exc:
             raise HTTPException(404, str(exc))
-        return await remote_access()
+        return await remote_access(request)
 
     # ------------------------------------------------------------ live events
 

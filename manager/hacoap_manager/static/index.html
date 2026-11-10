@@ -1060,10 +1060,17 @@
             <p class="small text-body-secondary mb-2">By default only this computer opens the app (and SSH tunnels to
               it). Allowed here, your phone or another computer on the networks you choose (your home network,
               ZeroTier…) opens it too, after signing in with the password. Whoever signs in can update and flash your
-              boards, so choose a strong password. These settings only change on the computer the app runs on.</p>
-            <div id="remote-local-only" class="small text-warning d-none mb-2">You're on another device, so they're
-              read-only here. To change them, open the app on its computer, or through an SSH tunnel to it:
-              <code>ssh -N -L 8710:127.0.0.1:8710 hacoap</code>, then <code>http://localhost:8710</code>.</div>
+              boards, so choose a strong password.</p>
+            <div id="remote-local-only" class="small text-warning d-none mb-2">You're on another device. Turning this
+              on or off, the networks and the password only change on the app's computer, or through an SSH tunnel to it
+              (<code>ssh -N -L 8710:127.0.0.1:8710 hacoap</code>, then <code>http://localhost:8710</code>). From here,
+              you can make and revoke dashboard links and sign devices out, with the password.</div>
+            <div id="remote-confirm" class="d-none mb-2">
+              <label class="form-label small mb-1" for="remote-confirm-password">The password, to confirm changes from
+                this device</label>
+              <input class="form-control form-control-sm" id="remote-confirm-password" type="password"
+                autocomplete="current-password" style="max-width: 20rem">
+            </div>
             <form id="remote-form" class="row g-2">
               <div class="col-12">
                 <div class="form-check form-switch">

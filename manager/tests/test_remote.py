@@ -88,8 +88,10 @@ async def test_another_device_signs_in_first(services):
         assert (await phone.get("/")).status_code == 200
         # Changes still need the header (against other websites)
         assert (await phone.post("/api/discover")).status_code == 403
-        # Never from another device: these settings, and stopping the app
-        assert (await phone.get("/api/remote-access")).status_code == 403
+        # Never from another device: turning it off, the networks, the password, and stopping the app.
+        # It sees them (to make links and sign devices out, with the password again).
+        seen = await phone.get("/api/remote-access")
+        assert seen.status_code == 200 and seen.json()["here"] == "remote" and "hash" not in seen.text
         assert (await phone.put("/api/remote-access", json={"enabled": False}, headers=CHANGE)).status_code == 403
         assert (await phone.post("/api/quit", headers=CHANGE)).status_code == 403
 
@@ -278,12 +280,39 @@ async def test_a_dashboard_link_opens_the_plants_only(services):
         assert (await dashboard.get("/api/wall", headers={remote.KEY_HEADER: key})).status_code == 401
 
 
-async def test_links_are_made_on_this_computer_only(services):
+async def test_links_from_another_device_take_the_password_again(services):
     await allow_home_network(services)
     key = (await make_link(services))["link"]["key"]
     async with client_for(services, "192.168.50.20", SERVER) as phone:
         await phone.post("/api/login", json={"password": PASSWORD}, headers=CHANGE)
-        assert (await phone.post("/api/remote-access/links", json={"name": "mine"}, headers=CHANGE)).status_code == 403
+        confirm = lambda password: {**CHANGE, "X-HACoap-Password": password}  # noqa: E731
+        make = lambda headers: phone.post("/api/remote-access/links", json={"name": "phone's"}, headers=headers)  # noqa: E731
+        nothing = await make(CHANGE)
+        assert nothing.status_code == 403 and "Type the password" in nothing.json()["detail"]
+        assert services.remote._failures == {}  # nothing typed isn't a wrong password
+        assert (await make(confirm("wrong"))).status_code == 403
+        made = await make(confirm(PASSWORD))
+        assert made.status_code == 200 and made.json()["link"]["key"]
+        link_id = next(l["id"] for l in made.json()["links"] if l["name"] == "phone's")
+        assert (await phone.delete(f"/api/remote-access/links/{link_id}", headers=CHANGE)).status_code == 403
+        assert (await phone.delete(f"/api/remote-access/links/{link_id}", headers=confirm(PASSWORD))).status_code == 200
+        # Signing devices out too (itself included)
+        assert (await phone.delete("/api/remote-access/sessions", headers=CHANGE)).status_code == 403
+        assert (await phone.delete("/api/remote-access/sessions", headers=confirm(PASSWORD))).status_code == 200
+        assert (await phone.get("/api/devices")).status_code == 401
+        # Wrong ones count with the sign-ins: five, then a wait
+    async with client_for(services, "192.168.50.21", SERVER) as tablet:
+        await tablet.post("/api/login", json={"password": PASSWORD}, headers=CHANGE)
+        for _ in range(5):
+            await tablet.post("/api/remote-access/links", json={"name": "x"}, headers={**CHANGE, "X-HACoap-Password": "nope"})
+        waiting = await tablet.post("/api/remote-access/links", json={"name": "x"},
+                                    headers={**CHANGE, "X-HACoap-Password": PASSWORD})
+        assert waiting.status_code == 403 and "Too many wrong passwords" in waiting.json()["detail"]
+    # A dashboard link reaches none of it
+    async with client_for(services, "192.168.50.30", SERVER) as dashboard:
+        for method in ("GET", "POST"):
+            assert (await dashboard.request(method, "/api/remote-access/links" if method == "POST" else "/api/remote-access",
+                                            headers={remote.KEY_HEADER: key, **CHANGE}, json={"name": "x"})).status_code == 403
     async with client_for(services) as local:
         assert (await local.post("/api/remote-access/links", json={"name": "  "}, headers=CHANGE)).status_code == 400
         # Other devices turned off: links stop too

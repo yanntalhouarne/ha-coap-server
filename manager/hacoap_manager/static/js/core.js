@@ -51,6 +51,7 @@ export async function api(method, path, body, options = {}) {
   const init = { method, headers: {}, keepalive: !!options.keepalive };
   if (method !== 'GET') init.headers['X-HACoap'] = '1';
   if (LINK_KEY) init.headers['X-HACoap-Key'] = LINK_KEY;
+  Object.assign(init.headers, options.headers || {});
   if (body instanceof Blob || body instanceof ArrayBuffer) {
     init.body = body;
     init.headers['Content-Type'] = 'application/octet-stream';
