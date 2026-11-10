@@ -6,8 +6,14 @@ in the networks chosen (the home network, ZeroTier...), and a device there must 
 the password first. Its session is a random token in a cookie (HttpOnly, SameSite=Strict),
 kept here only as a hash, and ends after 30 days without use or when signed out.
 
-The settings, the password's hash and the sessions are in remote-access.json, readable only
-by this user and never in a backup. Only this computer changes them.
+Dashboard links open the app without the password, for a page that shows it in a frame (Home
+Assistant's dashboards), where browsers don't send its cookie: a long random key in the link's
+address (?key=...), which the page then sends with each request. A link only opens the plants
+(the simple view: their readings, watering, beeping, naming them), never the rest. It works from
+the chosen networks only, like signing in, and until it's revoked. Only the key's hash is kept.
+
+The settings, the password's hash, the sessions and the links are in remote-access.json, readable
+only by this user and never in a backup. Only this computer changes them.
 """
 
 import asyncio
@@ -34,6 +40,9 @@ SCRYPT = {"n": 2 ** 14, "r": 8, "p": 1}
 FREE_TRIES = 5           # wrong passwords from one address before it has to wait
 WAIT_S = (30, 15 * 60)   # then 30 s, doubling with each wrong one, at most 15 min
 TOUCH_S = 600            # a session's last use is saved at most this often
+KEY_HEADER = "X-HACoap-Key"  # a dashboard link's key, as the page sends it (or ?key= in an address)
+MAX_LINKS = 20
+MAX_LINK_NAME = 80
 
 
 class RemoteError(Exception):
@@ -97,6 +106,7 @@ class RemoteAccess:
         state.setdefault("networks", [])
         state.setdefault("password", None)
         state.setdefault("sessions", {})
+        state.setdefault("links", {})  # key hash: {name, created, last_used, address}
         return state
 
     def _save(self):
@@ -118,7 +128,9 @@ class RemoteAccess:
         return {"enabled": self.enabled, "wanted": self._state["enabled"], "networks": self._state["networks"],
                 "password_set": bool(self._state["password"]), "available": self._networks(),
                 "addresses": [f"http://{a}:{port}/" for a in self.addresses()] if port else [],
-                "sessions": sorted(sessions, key=lambda s: -s["last_used"])}
+                "sessions": sorted(sessions, key=lambda s: -s["last_used"]),
+                "links": sorted(({"id": key[:12], **link} for key, link in self._state["links"].items()),
+                                key=lambda link: -link["created"])}
 
     def configure(self, enabled=None, networks=None, password=None):
         """Changes what's given (None: unchanged), all of it or nothing (RemoteError)."""
@@ -222,6 +234,41 @@ class RemoteAccess:
         self._save()
         log.info("signed in from %s", address)
         return token
+
+    # ------------------------------------------------------------ dashboard links
+
+    def create_link(self, name):
+        """A new dashboard link: returns its key (shown once: only its hash is kept)."""
+        name = " ".join(str(name or "").split())[:MAX_LINK_NAME]
+        if not name:
+            raise RemoteError("Name the link (such as: Home Assistant, plants)")
+        if len(self._state["links"]) >= MAX_LINKS:
+            raise RemoteError(f"At most {MAX_LINKS} links: revoke one first")
+        key = secrets.token_urlsafe(32)
+        self._state["links"][_token_hash(key)] = {"name": name, "created": time.time(), "last_used": None, "address": ""}
+        self._save()
+        log.info("dashboard link made: %s", name)
+        return key
+
+    def link(self, key, address=""):
+        """The dashboard link for a key, or None (also while other devices are off). Notes its use."""
+        if not key or not self.enabled:
+            return None
+        link = self._state["links"].get(_token_hash(key))
+        if link is None:
+            return None
+        now = time.time()
+        if link["last_used"] is None or now - link["last_used"] > TOUCH_S or link["address"] != address:
+            link["last_used"], link["address"] = now, address
+            self._save()
+        return link
+
+    def revoke_link(self, link_id):
+        before = len(self._state["links"])
+        self._state["links"] = {k: v for k, v in self._state["links"].items() if not k.startswith(str(link_id))}
+        if len(self._state["links"]) == before:
+            raise RemoteError("No such link")
+        self._save()
 
     def sign_out(self, token=None, session_id=None, everyone=False):
         if everyone:

@@ -220,3 +220,94 @@ async def test_the_listener_serves_and_stops(services):
 def test_this_computers_networks():
     for network in remote.local_networks():
         assert network["kind"] in ("lan", "zerotier") and "/" in network["network"]
+
+
+# ---------------------------------------------------------------- dashboard links
+
+async def make_link(services, name="Home Assistant"):
+    async with client_for(services) as local:
+        made = await local.post("/api/remote-access/links", json={"name": name}, headers=CHANGE)
+        assert made.status_code == 200, made.text
+        return made.json()
+
+
+async def test_a_dashboard_link_opens_the_plants_only(services):
+    await allow_home_network(services)
+    services.db.upsert_device("1a2b3c4d", name="ha-coap-1a2b3c4d", plant="basil", address="fd11::1")
+    made = await make_link(services)
+    key = made["link"]["key"]
+    assert made["link"]["addresses"] == [f"http://192.168.50.178:8710/?key={key}#plants"]
+    assert made["links"][0]["name"] == "Home Assistant" and made["links"][0]["last_used"] is None
+    assert key not in str(made["links"]) and key not in (services.data_dir / remote.FILE_NAME).read_text()
+
+    async with client_for(services, "192.168.50.30", SERVER) as dashboard:
+        header = {remote.KEY_HEADER: key}
+        # The page with the key in its address (as a Home Assistant card opens it), then the plants' API
+        assert (await dashboard.get(f"/?key={key}")).status_code == 200
+        assert (await dashboard.get("/api/wall", headers=header)).status_code == 200
+        assert (await dashboard.get("/api/devices", headers=header)).status_code == 200
+        assert (await dashboard.get("/api/devices/1a2b3c4d/details", headers=header)).status_code == 200
+        assert (await dashboard.get("/api/status", headers=header)).json()["access"] == "link"
+        renamed = await dashboard.patch("/api/devices/1a2b3c4d", json={"plant": "Genovese basil"}, headers={**header, **CHANGE})
+        assert renamed.status_code == 200 and renamed.json()["plant"] == "Genovese basil"
+        # Nothing else: not another field of a device, updates, settings, backups, the border router...
+        assert (await dashboard.patch("/api/devices/1a2b3c4d", json={"address": "fd66::6"},
+                                      headers={**header, **CHANGE})).status_code == 403
+        for method, path in [("GET", "/api/backup"), ("GET", "/api/settings"), ("PUT", "/api/settings"),
+                             ("POST", "/api/updates"), ("GET", "/api/border-router/network"),
+                             ("POST", "/api/border-router/network/reveal"), ("GET", "/api/remote-access"),
+                             ("POST", "/api/remote-access/links"), ("DELETE", "/api/devices/1a2b3c4d"),
+                             ("POST", "/api/firmware-builds"), ("GET", "/api/home-assistant")]:
+            response = await dashboard.request(method, path, headers={**header, **CHANGE}, json={})
+            assert response.status_code == 403, (method, path, response.status_code)
+        # A wrong key is no key: sign in, as before
+        assert (await dashboard.get("/api/devices", headers={remote.KEY_HEADER: "nope"})).status_code == 401
+        # It's not a key for another network either
+    async with client_for(services, "10.147.17.40", "http://10.147.17.5:8710") as elsewhere:
+        assert (await elsewhere.get("/api/devices", headers={remote.KEY_HEADER: key})).status_code == 403
+
+    async with client_for(services) as local:
+        link = (await local.get("/api/remote-access")).json()["links"][0]
+        assert link["address"] == "192.168.50.30" and link["last_used"]
+        # Revoked: it stops at once, and says so (no password page in a dashboard)
+        assert (await local.delete(f"/api/remote-access/links/{link['id']}", headers=CHANGE)).status_code == 200
+        assert (await local.delete(f"/api/remote-access/links/{link['id']}", headers=CHANGE)).status_code == 404
+    async with client_for(services, "192.168.50.30", SERVER) as dashboard:
+        page = await dashboard.get(f"/?key={key}")
+        assert page.status_code == 401 and "doesn't work any more" in page.text
+        assert (await dashboard.get("/api/wall", headers={remote.KEY_HEADER: key})).status_code == 401
+
+
+async def test_links_are_made_on_this_computer_only(services):
+    await allow_home_network(services)
+    key = (await make_link(services))["link"]["key"]
+    async with client_for(services, "192.168.50.20", SERVER) as phone:
+        await phone.post("/api/login", json={"password": PASSWORD}, headers=CHANGE)
+        assert (await phone.post("/api/remote-access/links", json={"name": "mine"}, headers=CHANGE)).status_code == 403
+    async with client_for(services) as local:
+        assert (await local.post("/api/remote-access/links", json={"name": "  "}, headers=CHANGE)).status_code == 400
+        # Other devices turned off: links stop too
+        await local.put("/api/remote-access", json={"enabled": False}, headers=CHANGE)
+    async with client_for(services, "192.168.50.30", SERVER) as dashboard:
+        assert (await dashboard.get("/api/wall", headers={remote.KEY_HEADER: key})).status_code == 403
+
+
+def test_a_dashboard_links_live_events(services, monkeypatch):
+    from starlette.testclient import TestClient
+    from starlette.websockets import WebSocketDisconnect
+    from hacoap_manager import app as app_module
+
+    monkeypatch.setattr(app_module, "EVENTS_SESSION_CHECK_S", 0.1)
+    services.remote.configure(enabled=True, networks=["192.168.50.0/24"], password=PASSWORD)
+    key = services.remote.create_link("Home Assistant")
+    app = create_app(services, background_tasks=False, port=8710)
+    with TestClient(app, base_url=SERVER, client=("192.168.50.30", 50000)) as dashboard:
+        with dashboard.websocket_connect(f"/api/events?key={key}", headers=WS_HEADERS) as ws:
+            services.events.publish("build-log", line="secret build output")  # not for a link
+            services.events.publish("devices")
+            assert ws.receive_json()["type"] == "devices"
+            link_id = next(iter(services.remote.describe()["links"]))["id"]
+            services.remote.revoke_link(link_id)
+            with pytest.raises(WebSocketDisconnect) as closed:
+                ws.receive_json()
+            assert closed.value.code == 1008

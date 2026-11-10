@@ -292,6 +292,7 @@ export async function loadRemoteAccess() {
     'Open it from the other devices at ',
     ...st.addresses.flatMap((url, i) => [i ? ' or ' : '', h('span', { class: 'access-address' }, url)]), '.',
   ] : []));
+  renderLinks(st);
   const sessions = document.getElementById('remote-sessions');
   if (!st.sessions.length) {
     sessions.replaceChildren(st.enabled ? h('span', { class: 'text-body-secondary' }, 'No device signed in.') : '');
@@ -310,6 +311,48 @@ export async function loadRemoteAccess() {
       loadRemoteAccess();
     }) }, 'Sign out')))));
 }
+
+// Dashboard links: for a page that shows the app in a frame (Home Assistant), the plants only
+function renderLinks(st) {
+  document.getElementById('remote-links-section').classList.toggle('d-none', !st.enabled);
+  const list = document.getElementById('remote-links');
+  if (!st.links.length) {
+    list.replaceChildren(h('span', { class: 'text-body-secondary' }, 'No dashboard link yet.'));
+    return;
+  }
+  list.replaceChildren(h('ul', { class: 'list-unstyled mb-0' }, st.links.map((link) => h('li', { class: 'd-flex align-items-center gap-2 py-1' },
+    h('div', { class: 'flex-grow-1 text-truncate' }, h('b', {}, link.name),
+      h('div', { class: 'text-body-secondary' }, `made ${when(link.created)}, `,
+        link.last_used ? `last used ${when(link.last_used)} from ${link.address}` : 'never used yet')),
+    h('button', { class: 'btn btn-sm btn-outline-danger text-nowrap', type: 'button', onclick: (e) => {
+      if (!confirm(`Revoke the link "${link.name}"? Whatever shows it stops working at once.`)) return;
+      busy(e.target, async () => {
+        await api('DELETE', `/api/remote-access/links/${encodeURIComponent(link.id)}`);
+        document.getElementById('remote-link-new').replaceChildren();
+        loadRemoteAccess();
+      });
+    } }, 'Revoke')))));
+}
+
+document.getElementById('remote-link-form').addEventListener('submit', (event) => {
+  event.preventDefault();
+  const name = document.getElementById('remote-link-name').value.trim();
+  if (!name) return notify("Name the link: what it's for, such as Home Assistant", 'warning');
+  busy(event.submitter, async () => {
+    const made = await api('POST', '/api/remote-access/links', { name });
+    document.getElementById('remote-link-name').value = '';
+    const copy = (text) => h('button', { class: 'btn btn-sm btn-outline-secondary ms-2', type: 'button', onclick: async () => {
+      try { await navigator.clipboard.writeText(text); notify('Copied', 'success', 2000); } catch (error) { prompt('Copy the link:', text); }
+    } }, 'Copy');
+    document.getElementById('remote-link-new').replaceChildren(h('div', { class: 'alert alert-info py-2 small' },
+      h('div', { class: 'mb-1' }, h('b', {}, 'Copy it now: '), "it isn't shown again (make another if it's lost). In Home ",
+        'Assistant, put it in a Webpage card.'),
+      made.link.addresses.length ? made.link.addresses.map((url) => h('div', { class: 'd-flex align-items-center' },
+        h('code', { class: 'text-break' }, url), copy(url)))
+        : h('div', {}, "The app isn't listening on another network yet: the link works once it is.")));
+    loadRemoteAccess();
+  });
+});
 
 document.getElementById('remote-form').addEventListener('submit', async (event) => {
   event.preventDefault();

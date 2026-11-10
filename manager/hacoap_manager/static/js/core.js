@@ -6,6 +6,13 @@ export const state = {
   alerts: [], appUpdate: null,
 };
 
+// A dashboard link (Settings > Other devices): its key, from the page's address (?key=...), goes
+// with every request instead of a sign-in, and the page only shows the plants
+export const LINK_KEY = new URLSearchParams(location.search).get('key') || '';
+export const linkMode = () => Boolean(LINK_KEY);
+export const withKey = (url) => (LINK_KEY ? `${url}${url.includes('?') ? '&' : '?'}key=${encodeURIComponent(LINK_KEY)}` : url);
+if (LINK_KEY) document.documentElement.classList.add('link-mode');
+
 // ------------------------------------------------------------------ helpers
 
 export const SVG_NS = 'http://www.w3.org/2000/svg';
@@ -43,6 +50,7 @@ export function h(tag, attrs = {}, ...children) {
 export async function api(method, path, body, options = {}) {
   const init = { method, headers: {}, keepalive: !!options.keepalive };
   if (method !== 'GET') init.headers['X-HACoap'] = '1';
+  if (LINK_KEY) init.headers['X-HACoap-Key'] = LINK_KEY;
   if (body instanceof Blob || body instanceof ArrayBuffer) {
     init.body = body;
     init.headers['Content-Type'] = 'application/octet-stream';
@@ -52,7 +60,8 @@ export async function api(method, path, body, options = {}) {
   }
   const response = await fetch(path, init);
   if (response.status === 401 && path !== '/api/login') {
-    window.location.href = '/login';  // another device whose session ended
+    // Another device whose session ended (a revoked dashboard link: the page says so)
+    if (LINK_KEY) window.location.reload(); else window.location.href = '/login';
   }
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
@@ -122,4 +131,4 @@ export function ago(seconds) {
 export const when = (seconds) => seconds ? new Date(seconds * 1000).toLocaleString() : '';
 export const pct = (value) => (value === null || value === undefined) ? '–' : `${value} %`;
 export const shortHash = (hash) => hash ? hash.slice(0, 8) : '';
-export const photoUrl = (device) => `/api/devices/${encodeURIComponent(device.device_id)}/photo?t=${device.photo}`;
+export const photoUrl = (device) => withKey(`/api/devices/${encodeURIComponent(device.device_id)}/photo?t=${device.photo}`);

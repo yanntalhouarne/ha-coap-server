@@ -3,16 +3,20 @@
 // remembered in this browser, and theme.js marks the page with it before it's drawn.
 
 const KEY = 'hacoap-mode';
+// A dashboard link only opens the plants (and the wall display): the simple view, always
+const LINK = new URLSearchParams(location.search).has('key');
+export const LINK_ROUTES = ['plants', 'plant', 'alerts', 'more', 'wall'];
 
 // The routes of the simple view; every other tab is the advanced one's
 export const SIMPLE_ROUTES = ['plants', 'plant', 'alerts', 'more'];
 
-let mode = document.documentElement.classList.contains('simple-mode') ? 'simple' : 'advanced';
+let mode = LINK || document.documentElement.classList.contains('simple-mode') ? 'simple' : 'advanced';
+if (LINK) document.documentElement.classList.add('simple-mode');
 
 export const simpleMode = () => mode === 'simple';
 
 export function setMode(next) {
-  mode = next === 'advanced' ? 'advanced' : 'simple';
+  mode = next === 'advanced' && !LINK ? 'advanced' : 'simple';
   document.documentElement.classList.toggle('simple-mode', mode === 'simple');
   try { localStorage.setItem(KEY, mode); } catch (error) { /* only for this visit */ }
 }

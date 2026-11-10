@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse, JSONResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 import re
@@ -46,6 +46,11 @@ STATIC = Path(__file__).parent / "static"
 LOCAL_HOSTS = {"127.0.0.1", "localhost", "[::1]"}
 CHANGE_HEADER = "x-hacoap"
 SIGNED_OUT_PATHS = ("/login", "/api/login", "/static/", "/v/")  # the sign-in page and what it loads
+# What a revoked dashboard link shows instead of the password page (inside a dashboard, no one would sign in there)
+LINK_REVOKED_PAGE = ("<!doctype html><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width\">"
+                     "<title>HA-CoAP</title><body style=\"font-family:sans-serif;padding:1.5rem;color:#888\">"
+                     "<p>This dashboard link doesn't work any more: it was revoked, or the app doesn't accept other "
+                     "devices now. Make a new one in the app's Settings, Other devices.</p></body>")
 LOCAL_ONLY_PATHS = ("/api/remote-access", "/api/quit")         # never from another device
 EVENTS_SESSION_CHECK_S = 15  # how soon a signed-out device's live events stop
 DAY_S = 86400
@@ -126,9 +131,10 @@ def _is_ip(text):
         return False
 
 
-def _access(services, client, host_header, cookies):
+def _access(services, client, host_header, cookies, key=None):
     """'local' for this computer (and SSH tunnels to it), 'remote' for a signed-in device on a
-    chosen network, 'sign-in' for one that isn't signed in yet, or None."""
+    chosen network, 'link' for a dashboard link's key there (the plants only), 'sign-in' for a
+    device that isn't signed in yet, or None."""
     host = _host_name(host_header)
     address = client.host if client else ""
     if host in LOCAL_HOSTS and (remote.is_loopback(address) or not _is_ip(address)):  # not an IP: a test client
@@ -136,7 +142,31 @@ def _access(services, client, host_header, cookies):
     access = services.remote
     if access is None or not access.allows(address) or host not in access.addresses():
         return None
-    return "remote" if access.session(cookies.get(remote.COOKIE)) else "sign-in"
+    if access.session(cookies.get(remote.COOKIE)):
+        return "remote"
+    if key and access.link(key, address):
+        return "link"
+    return "sign-in"
+
+
+# What a dashboard link opens: the page, and the plants (simple view) with watering, beeping and
+# naming them. Never updates, builds, settings, backups, the border router...
+LINK_ALLOWED = [
+    (("GET", "HEAD"), re.compile(r"^/$")),
+    (("GET", "HEAD"), re.compile(r"^/api/(devices|wall|alerts|status|activity-feed|images|updates|setup)$")),
+    (("GET", "HEAD"), re.compile(r"^/api/devices/[^/]+/(details|photo)$")),
+    (("POST",), re.compile(r"^/api/devices/[^/]+/(pump|ping)$")),
+    (("PATCH",), re.compile(r"^/api/devices/[^/]+$")),  # its plant's name only (edit_device)
+]
+LINK_EVENTS = {"device", "devices", "alert", "alerts"}  # what its page is told live
+
+
+def _link_allows(method, path):
+    return any(method in methods and pattern.match(path) for methods, pattern in LINK_ALLOWED)
+
+
+def _link_key(request):
+    return request.headers.get(remote.KEY_HEADER) or request.query_params.get("key")
 
 
 def create_app(services, background_tasks=True, on_quit=None, port=None):
@@ -174,9 +204,17 @@ def create_app(services, background_tasks=True, on_quit=None, port=None):
     @app.middleware("http")
     async def guard(request: Request, call_next):
         path = request.url.path
-        access = _access(s, request.client, request.headers.get("host", ""), request.cookies)
+        key = _link_key(request)
+        access = _access(s, request.client, request.headers.get("host", ""), request.cookies, key)
         if access is None:
             return JSONResponse({"detail": "This app only answers on this computer (127.0.0.1)"}, status_code=403)
+        if access == "sign-in" and key and not path.startswith(SIGNED_OUT_PATHS):
+            # A dashboard link that was revoked (or other devices turned off): say so, no password page
+            if path.startswith("/api/"):
+                return JSONResponse({"detail": "This dashboard link doesn't work any more"}, status_code=401)
+            return HTMLResponse(LINK_REVOKED_PAGE, status_code=401)
+        if access == "link" and not _link_allows(request.method, path):
+            return JSONResponse({"detail": "A dashboard link only opens the plants"}, status_code=403)
         if access == "sign-in" and not path.startswith(SIGNED_OUT_PATHS):
             if path.startswith("/api/"):
                 return JSONResponse({"detail": "Sign in first"}, status_code=401)
@@ -237,7 +275,9 @@ def create_app(services, background_tasks=True, on_quit=None, port=None):
             raise _bad_request(exc)
 
     @app.patch("/api/devices/{device_id}")
-    async def edit_device(device_id: str, body: dict):
+    async def edit_device(device_id: str, body: dict, request: Request):
+        if getattr(request.state, "access", None) == "link" and set(body) - {"plant"}:
+            raise HTTPException(403, "A dashboard link only names the plant")  # not its address, notes...
         if s.db.device(device_id) is None:
             raise HTTPException(404, "Unknown device")
         fields = {k: str(v).strip() for k, v in body.items() if k in ("name", "notes", "address", "location", "plant")}
@@ -1292,14 +1332,33 @@ def create_app(services, background_tasks=True, on_quit=None, port=None):
         s.remote.sign_out(session_id=session_id)
         return await remote_access()
 
+    @app.post("/api/remote-access/links")
+    async def make_link(body: dict):
+        """A dashboard link: its addresses carry the key, shown this once."""
+        try:
+            key = await asyncio.to_thread(s.remote.create_link, body.get("name", ""))
+        except remote.RemoteError as exc:
+            raise _bad_request(exc)
+        addresses = [f"http://{a}:{port}/?key={key}#plants" for a in s.remote.addresses()] if port else []
+        return {**(await remote_access()), "link": {"key": key, "addresses": addresses}}
+
+    @app.delete("/api/remote-access/links/{link_id}")
+    async def revoke_link(link_id: str):
+        try:
+            await asyncio.to_thread(s.remote.revoke_link, link_id)
+        except remote.RemoteError as exc:
+            raise HTTPException(404, str(exc))
+        return await remote_access()
+
     # ------------------------------------------------------------ live events
 
     @app.websocket("/api/events")
     async def events(websocket: WebSocket):
         origin = websocket.headers.get("origin", "")
         host = websocket.headers.get("host", "")
-        access = _access(s, websocket.client, host, websocket.cookies)
-        if access not in ("local", "remote") or (origin and origin.split("//", 1)[-1] != host):
+        key = websocket.query_params.get("key")
+        access = _access(s, websocket.client, host, websocket.cookies, key)
+        if access not in ("local", "remote", "link") or (origin and origin.split("//", 1)[-1] != host):
             await websocket.close(code=1008)
             return
         token = websocket.cookies.get(remote.COOKIE)
@@ -1311,11 +1370,12 @@ def create_app(services, background_tasks=True, on_quit=None, port=None):
                         event = await asyncio.wait_for(queue.get(), timeout=EVENTS_SESSION_CHECK_S)
                     except asyncio.TimeoutError:
                         event = None
-                    # Another device signed out (or other devices turned off) stops getting events
-                    if access == "remote" and s.remote.session(token) is None:
+                    # Another device signed out, a link revoked (or other devices turned off): no more events
+                    if (access == "remote" and s.remote.session(token) is None) or \
+                            (access == "link" and s.remote.link(key, websocket.client.host) is None):
                         await websocket.close(code=1008)
                         break
-                    if event is not None:
+                    if event is not None and (access != "link" or event.get("type") in LINK_EVENTS):
                         await websocket.send_json(event)
             except (WebSocketDisconnect, RuntimeError):
                 pass

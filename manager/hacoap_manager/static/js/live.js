@@ -1,6 +1,6 @@
 // Live events from the app, the status bar, and the app's status.
 
-import { api, notify, state } from './core.js';
+import { api, notify, state, withKey } from './core.js';
 import { currentRoute } from './tabs.js';
 import { loadAlerts, loadDashboard, onAlert } from './dashboard.js';
 import { loadDevices, removing, renderDevices } from './devices.js';
@@ -18,7 +18,7 @@ import { borderRouterChanged } from './borderrouter.js';
 
 export function connectEvents(delay = 1000) {
   const indicator = document.getElementById('connection');
-  const socket = new WebSocket(`ws://${location.host}/api/events`);
+  const socket = new WebSocket(withKey(`ws://${location.host}/api/events`));
   socket.addEventListener('open', () => {
     indicator.className = 'live';
     indicator.title = 'Connected to the app';

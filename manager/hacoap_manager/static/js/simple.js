@@ -2,7 +2,7 @@
 // settings, with tabs at the bottom; made for a phone first. Everything else is in the advanced
 // view, one link away.
 
-import { ago, api, h, onUsb, pct, powerText, state, svg } from './core.js';
+import { ago, api, h, linkMode, onUsb, pct, powerText, state, svg } from './core.js';
 import { batteryRing } from './pages.js';
 import { linkMargin, waterIn } from './network.js';
 import { daysText, notificationsOn, toggleNotifications } from './dashboard.js';
@@ -234,6 +234,20 @@ function renderSimpleMore() {
     h('div', { class: 'd-flex flex-wrap gap-2 justify-content-end flex-grow-0' }, ...actions));
   const notifications = notificationsOn();
   const signOut = document.getElementById('sign-out');
+  if (linkMode()) {
+    // A dashboard link: the plants only, so nothing that leads elsewhere
+    document.getElementById('simple-more').replaceChildren(
+      h('h2', { class: 'simple-h' }, 'View'),
+      h('ul', { class: 'simple-list' },
+        row('Wall display', 'Every plant big, for a spare screen', h('a', { class: 'btn btn-sm btn-outline-secondary', href: '#wall' }, 'Open'))),
+      h('h2', { class: 'simple-h' }, 'Colours'),
+      h('div', { class: 'theme-pick' }, themes.map((t) => h('button', {
+        class: `btn btn-sm ${t.id === current ? 'btn-primary' : 'btn-outline-secondary'}`, type: 'button', 'aria-pressed': String(t.id === current),
+        onclick: () => { setTheme(t.id); renderSimpleMore(); } }, t.name))),
+      h('p', { class: 'small text-body-secondary mt-3' }, 'Opened with a dashboard link: the plants only. The rest of the app opens on its ',
+        'computer, or after signing in on a network it allows.'));
+    return;
+  }
   document.getElementById('simple-more').replaceChildren(
     h('h2', { class: 'simple-h' }, 'View'),
     h('ul', { class: 'simple-list' },

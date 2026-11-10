@@ -13,7 +13,8 @@ import { loadHistory, renderUpdateForm } from './updates.js';
 import { loadNetwork, net } from './network.js';
 import { loadSummary, loadWall, stopWall, wall } from './pages.js';
 import { setNetworkView } from './floorplan.js';
-import { SIMPLE_ROUTES, homeRoute, setMode } from './mode.js';
+import { LINK_ROUTES, SIMPLE_ROUTES, homeRoute, setMode } from './mode.js';
+import { linkMode } from './core.js';
 import { loadSimple } from './simple.js';
 
 // ------------------------------------------------------------------ tabs
@@ -32,6 +33,7 @@ let fromWall = false;
 // nothing) is the current view's first page.
 export function showTab(route) {
   if (route === 'home' || route === '') route = homeRoute();
+  if (linkMode() && !LINK_ROUTES.includes(route.split('/')[0])) route = 'plants';  // a dashboard link: the plants only
   const [name, ...rest] = route.split('/');
   if (SIMPLE_ROUTES.includes(name)) setMode('simple');
   else if (name === 'device' || TABS.includes(name)) setMode('advanced');
