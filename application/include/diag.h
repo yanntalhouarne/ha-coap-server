@@ -50,10 +50,10 @@ void diag_link_read(otInstance *instance, struct diag_link *link);
 
 /* Writes the 'diag' payload, for example
  * "boots=12,up=3600,reset=crash,fault=3@0001a2b4,role=child,srp=registered,rloc=5c01,parent=5c00,rssi=-62,
- *  last_rssi=-60,lq=3,soil_mv=1696,power=charging"
+ *  last_rssi=-60,lq=3,soil_mv=1696,power=charging,button_s=6"
  * ('fault' only after a crash, the link only when attached; 'srp' is srp_state(), 'power'
- * power_name()). Returns its length. */
+ * power_name(), 'button_s' pump_button_seconds()). Returns its length. */
 size_t diag_format(char *payload, size_t size, const struct diag_link *link, const char *srp, int32_t soil_mv,
-		   const char *power);
+		   const char *power, uint32_t button_s);
 
 #endif // DIAG_H_

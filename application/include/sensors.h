@@ -30,6 +30,12 @@ struct sensors_data
 	uint32_t samples;      // samples taken since boot
 };
 
+/* Called after each sample, from the system work queue (or from sensors_start() for the first). */
+typedef void (*sensors_sampled_cb_t)(const struct sensors_data *data);
+
+/* Sets the function called after each sample (before sensors_start(), to have the first). */
+void sensors_set_sampled_cb(sensors_sampled_cb_t cb);
+
 /* Checks the sensors and configures the soil sensor power outputs (off).
  * Returns a mask of the SENSOR_* bits that are not available (0 if all are). */
 uint32_t sensors_init(void);

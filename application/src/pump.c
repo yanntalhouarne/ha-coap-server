@@ -31,6 +31,7 @@ static struct gpio_callback usr_button_cb_data;
 
 static atomic_t running;
 static uint8_t duration_s = CONFIG_HACOAP_PUMP_DEFAULT_DURATION;
+static atomic_t button_seconds; // run time started with S1 since boot
 
 /* Turns the pump and the user LED on or off. */
 static void pump_set(bool on)
@@ -96,6 +97,12 @@ static void on_usr_button_work(struct k_work *work)
 	ARG_UNUSED(work);
 
 	pump_start();
+	(void)atomic_add(&button_seconds, duration_s);
+}
+
+uint32_t pump_button_seconds(void)
+{
+	return (uint32_t)atomic_get(&button_seconds);
 }
 
 static K_WORK_DEFINE(usr_button_work, on_usr_button_work);

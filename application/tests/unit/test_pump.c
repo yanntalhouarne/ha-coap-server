@@ -31,6 +31,7 @@ void status_led_user(bool on)
 static void reset_module(void)
 {
 	running = 0;
+	button_seconds = 0;
 	duration_s = CONFIG_HACOAP_PUMP_DEFAULT_DURATION;
 	pump_timer.running = false;
 	pump_timer.starts = 0;
@@ -134,6 +135,19 @@ static void test_button_starts_the_pump_from_the_work_queue(void)
 	check_pump(true);
 }
 
+static void test_the_buttons_runs_are_counted(void)
+{
+	reset_module();
+	CHECK(pump_set_duration(3));
+	pump_start();                              // over CoAP: the app counts those itself
+	CHECK_EQ(pump_button_seconds(), 0);
+	fake_gpio_callback->handler(&fake_gpio_dev, fake_gpio_callback, BIT(FAKE_PIN_usrbutton));
+	fake_work_run(&usr_button_work);
+	fake_gpio_callback->handler(&fake_gpio_dev, fake_gpio_callback, BIT(FAKE_PIN_usrbutton));
+	fake_work_run(&usr_button_work);
+	CHECK_EQ(pump_button_seconds(), 6);        // two presses of 3 s
+}
+
 static void test_s1_can_be_read(void)
 {
 	CHECK(!pump_button_pressed());
@@ -151,6 +165,7 @@ int main(void)
 	RUN_TEST(test_run_time_range);
 	RUN_TEST(test_start_uses_the_new_run_time);
 	RUN_TEST(test_button_starts_the_pump_from_the_work_queue);
+	RUN_TEST(test_the_buttons_runs_are_counted);
 	RUN_TEST(test_s1_can_be_read);
 	return TEST_RESULT();
 }

@@ -246,6 +246,10 @@ otMessageInfo fake_response_info;
 int fake_responses_sent;
 int fake_messages_allocated;
 int fake_messages_freed;
+otMessage fake_request_sent;
+otMessageInfo fake_request_info;
+int fake_requests_sent;
+otError fake_send_request_error;
 
 static otMessage message_pool[4];
 static int message_pool_next;
@@ -279,7 +283,8 @@ otMessage *otCoapNewMessage(otInstance *instance, const otMessageSettings *setti
 
 otError otCoapMessageInitResponse(otMessage *response, const otMessage *request, otCoapType type, otCoapCode code)
 {
-	(void)request;
+	memcpy(response->token, request->token, sizeof(response->token)); // as OpenThread does
+	response->token_length = request->token_length;
 	response->type = type;
 	response->code = code;
 	response->initialized = true;
@@ -333,7 +338,7 @@ uint16_t otMessageRead(const otMessage *message, uint16_t offset, void *buf, uin
 	return count;
 }
 
-/* The fake message only has Uri-Query options. */
+/* The fake message only has Uri-Query options, and an Observe one. */
 otError otCoapOptionIteratorInit(otCoapOptionIterator *iterator, const otMessage *message)
 {
 	memset(iterator, 0, sizeof(*iterator));
@@ -343,6 +348,18 @@ otError otCoapOptionIteratorInit(otCoapOptionIterator *iterator, const otMessage
 
 const otCoapOption *otCoapOptionIteratorGetNextOptionMatching(otCoapOptionIterator *iterator, uint16_t option)
 {
+	if (option == OT_COAP_OPTION_OBSERVE)
+	{
+		if (!iterator->mMessage->has_observe || (iterator->mCurrent == OT_COAP_OPTION_OBSERVE))
+		{
+			return NULL;
+		}
+		iterator->mCurrent = OT_COAP_OPTION_OBSERVE;
+		iterator->mOption.mNumber = option;
+		iterator->mOption.mLength = 4;
+		return &iterator->mOption;
+	}
+	iterator->mCurrent = OT_COAP_OPTION_URI_QUERY;
 	if ((option != OT_COAP_OPTION_URI_QUERY) || (iterator->mNextOptionOffset >= iterator->mMessage->query_count))
 	{
 		return NULL;
@@ -356,6 +373,7 @@ const otCoapOption *otCoapOptionIteratorGetNextOptionMatching(otCoapOptionIterat
 const otCoapOption *otCoapOptionIteratorGetFirstOptionMatching(otCoapOptionIterator *iterator, uint16_t option)
 {
 	iterator->mNextOptionOffset = 0;
+	iterator->mCurrent = 0;
 	return otCoapOptionIteratorGetNextOptionMatching(iterator, option);
 }
 
@@ -367,6 +385,79 @@ otError otCoapOptionIteratorGetOptionValue(otCoapOptionIterator *iterator, void 
 	}
 	memcpy(value, iterator->mMessage->queries[iterator->mNextOptionOffset - 1], iterator->mOption.mLength);
 	return OT_ERROR_NONE;
+}
+
+otError otCoapOptionIteratorGetOptionUintValue(otCoapOptionIterator *iterator, uint64_t *value)
+{
+	if (iterator->mCurrent != OT_COAP_OPTION_OBSERVE)
+	{
+		return OT_ERROR_INVALID_ARGS;
+	}
+	*value = iterator->mMessage->observe;
+	return OT_ERROR_NONE;
+}
+
+void otCoapMessageInit(otMessage *message, otCoapType type, otCoapCode code)
+{
+	message->type = type;
+	message->code = code;
+	message->initialized = true;
+}
+
+otError otCoapMessageSetToken(otMessage *message, const uint8_t *token, uint8_t token_length)
+{
+	if (token_length > sizeof(message->token))
+	{
+		return OT_ERROR_INVALID_ARGS;
+	}
+	memcpy(message->token, token, token_length);
+	message->token_length = token_length;
+	return OT_ERROR_NONE;
+}
+
+uint8_t otCoapMessageGetTokenLength(const otMessage *message)
+{
+	return message->token_length;
+}
+
+const uint8_t *otCoapMessageGetToken(const otMessage *message)
+{
+	return message->token;
+}
+
+otError otCoapMessageAppendObserveOption(otMessage *message, uint32_t observe)
+{
+	message->has_observe = true;
+	message->observe = observe;
+	return OT_ERROR_NONE;
+}
+
+otError otCoapSendRequest(otInstance *instance, otMessage *message, const otMessageInfo *message_info, void *handler,
+			  void *context)
+{
+	(void)instance;
+	(void)handler;
+	(void)context;
+	if (fake_send_request_error != OT_ERROR_NONE)
+	{
+		return fake_send_request_error;
+	}
+	fake_request_sent = *message;
+	fake_request_info = *message_info;
+	fake_requests_sent++;
+	return OT_ERROR_NONE;
+}
+
+void fake_request_set_observe(otMessage *request, uint32_t observe)
+{
+	request->has_observe = true;
+	request->observe = observe;
+}
+
+void fake_request_set_token(otMessage *request, const uint8_t *token, uint8_t length)
+{
+	memcpy(request->token, token, length);
+	request->token_length = length;
 }
 
 void otCoapSetDefaultHandler(otInstance *instance, otCoapRequestHandler handler, void *context)
@@ -925,6 +1016,10 @@ void fake_reset(void)
 	memset(&fake_response, 0, sizeof(fake_response));
 	memset(&fake_response_info, 0, sizeof(fake_response_info));
 	fake_responses_sent = 0;
+	memset(&fake_request_sent, 0, sizeof(fake_request_sent));
+	memset(&fake_request_info, 0, sizeof(fake_request_info));
+	fake_requests_sent = 0;
+	fake_send_request_error = OT_ERROR_NONE;
 	fake_messages_allocated = 0;
 	fake_messages_freed = 0;
 

@@ -32,4 +32,8 @@ uint8_t pump_get_duration(void);
 /* Sets the run time. Returns false (and keeps the old one) if 'seconds' is out of range. */
 bool pump_set_duration(uint8_t seconds);
 
+/* The pump's run time started with S1 since boot (s), for the fleet manager ('diag': button_s),
+ * which counts it in the plant's water tank. The runs started over CoAP aren't in it. */
+uint32_t pump_button_seconds(void);
+
 #endif // PUMP_H_

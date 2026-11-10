@@ -47,6 +47,7 @@ static uint32_t missing;
 /* Latest readings, written by the sampling work and read from any thread */
 static struct sensors_data latest;
 static struct k_spinlock latest_lock;
+static sensors_sampled_cb_t sampled_cb;
 
 enum
 {
@@ -242,6 +243,16 @@ static void sample(void)
 	data.samples = latest.samples + 1U;
 	latest = data;
 	k_spin_unlock(&latest_lock, key);
+
+	if (sampled_cb != NULL)
+	{
+		sampled_cb(&data);
+	}
+}
+
+void sensors_set_sampled_cb(sensors_sampled_cb_t cb)
+{
+	sampled_cb = cb;
 }
 
 static void on_sample_work(struct k_work *work)

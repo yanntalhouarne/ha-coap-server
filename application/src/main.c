@@ -6,7 +6,7 @@
  * Startup, and the glue between the CoAP resources, the hardware modules and OpenThread.
  *
  * Modules:
- *     - coap_resources: the CoAP API ('pumpdc', 'pump', 'data', 'info', 'ping', 'diag', 'log')
+ *     - coap_resources: the CoAP API ('pumpdc', 'pump', 'data', 'info', 'ping', 'diag', 'log', 'hist')
  *     - pump:           timed pump runs, from CoAP or the S1 button
  *     - sensors:        soil, battery and air readings, sampled periodically
  *     - buzzer:         beep patterns
@@ -18,6 +18,7 @@
  *     - device_settings: the settings that can change without a new firmware, in flash
  *     - hacoap_mgmt:    the 'hacoap' mcumgr group, to read and write them
  *     - diag:           restart and crash records, and the link to the parent, for 'diag'
+ *     - history:        the latest samples, for 'hist', and which ones to push to the fleet manager
  *     - srp:            service registration, so Home Assistant can discover the device
  *     - watchdog:       resets the SoC if the system work queue stalls
  */
@@ -36,6 +37,7 @@
 #include "device_settings.h"
 #include "diag.h"
 #include "hacoap_mgmt.h"
+#include "history.h"
 #include "joining.h"
 #include "log_buffer.h"
 #include "mcumgr_poll.h"
@@ -59,6 +61,9 @@ static char device_id[9];
 
 /* Set once the sensors sample periodically */
 static bool sampling;
+
+/* Set once the CoAP API is up: samples can be pushed */
+static bool coap_ready;
 
 /* Applies a setting: at boot (when it differs from its default), and after each change */
 static void on_setting_changed(enum device_setting id, int32_t value)
@@ -169,13 +174,58 @@ static size_t on_diag_get(char *payload, size_t size)
 
 	diag_link_read(openthread_get_default_instance(), &link);
 	return diag_format(payload, size, &link, srp_state(openthread_get_default_instance()), sensors_get().soil_mv,
-			   power_name(power_source()));
+			   power_name(power_source()), pump_button_seconds());
 }
 
-/* On USB power, poll fast: commands arrive quickly, and battery life doesn't matter */
+static size_t on_hist_get(uint32_t from, uint8_t *payload, size_t size, uint32_t *next)
+{
+	return history_read(from, device_settings_boots(), (uint32_t)(k_uptime_get() / MSEC_PER_SEC), payload, size, next);
+}
+
+/* After each sample (system work queue): kept for 'hist', and pushed to the fleet manager (when it
+ * observes 'hist') if it changed enough since the last one it was given. */
+static void on_sampled(const struct sensors_data *data)
+{
+	struct history_entry sample = {
+		.uptime_s = (uint32_t)(k_uptime_get() / MSEC_PER_SEC),
+		.soil = data->soil_moisture,
+		.battery = data->battery_soc,
+		.air = data->air_humidity,
+		.temperature = data->temperature,
+		.power = (uint8_t)power_source(),
+	};
+	struct openthread_context *context = openthread_get_default_context();
+	struct history_entry given;
+	uint32_t next;
+	int err;
+
+	history_add(&sample);
+	if (!IS_ENABLED(CONFIG_HACOAP_PUSH) || !coap_ready || (context == NULL))
+	{
+		return;
+	}
+	openthread_api_mutex_lock(context);
+	/* The last sample it was given: one that's gone (or none yet) counts as a change */
+	if (coap_resources_observed(&next) && (!history_get(next - 1U, &given) || history_push_wanted(&given, &sample)))
+	{
+		err = coap_resources_notify();
+		if (err != 0)
+		{
+			LOG_WRN("Could not push the sample (%d)", err);
+		}
+	}
+	openthread_api_mutex_unlock(context);
+}
+
+/* On USB power, poll fast: commands arrive quickly, and battery life doesn't matter. A sample
+ * now records the change (and pushes it to the fleet manager). */
 static void on_power_changed(enum power_source source)
 {
 	mcumgr_poll_set_usb_power(power_on_usb(source));
+	if (sampling)
+	{
+		sensors_sample_now();
+	}
 }
 
 #ifdef CONFIG_HACOAP_REMOTE_LOG
@@ -199,6 +249,7 @@ static const struct coap_resources_handlers coap_handlers = {
 #ifdef CONFIG_HACOAP_REMOTE_LOG
 	.log_get = on_log_get,
 #endif
+	.hist_get = on_hist_get,
 };
 
 /* Called after each successful SRP registration: announce the first one. */
@@ -400,6 +451,7 @@ int main(void)
 	probe(6);
 
 	snprintf(device_id, sizeof(device_id), "%x", (unsigned int)NRF_FICR->DEVICEID[0]);
+	sensors_set_sampled_cb(on_sampled);
 	sensors_start();
 	sampling = true;
 	mcumgr_poll_init();
@@ -413,6 +465,7 @@ int main(void)
 		LOG_ERR("Could not initialize OpenThread CoAP (error: %d)", ret);
 		status_led_error();
 	}
+	coap_ready = (ret == 0);
 	probe(7);
 
 	LOG_INF("Initialization done. Starting OpenThread...");

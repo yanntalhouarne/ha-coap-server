@@ -31,6 +31,9 @@
  * IPv6 packet of a few 6LoWPAN fragments */
 #define LOG_PAYLOAD_MAX_SIZE 512
 
+/* Maximum size of the 'hist' payload (see history.h): 54 samples */
+#define HIST_PAYLOAD_MAX_SIZE 512
+
 /* 'pump' PUT payloads */
 enum pump_command
 {
@@ -67,9 +70,27 @@ struct coap_resources_handlers
 	/* Writes the 'log' payload for a reader that has the log up to offset 'from', and
 	 * returns its length. NULL when the device keeps no log ('log' answers 4.04). */
 	size_t (*log_get)(uint32_t from, char *payload, size_t size);
+	/* Writes the 'hist' payload for a reader that has every sample before 'from'
+	 * (history_read()), sets '*next' to the sample after the last one written, and returns its
+	 * length. NULL: 'hist' answers 4.04. */
+	size_t (*hist_get)(uint32_t from, uint8_t *payload, size_t size, uint32_t *next);
 };
 
 /* Registers the resources and starts the CoAP server on COAP_PORT. 'handlers' must stay valid. */
 int coap_resources_init(const struct coap_resources_handlers *handlers);
+
+/* 'hist' can be observed (RFC 7641, CONFIG_HACOAP_PUSH): a GET with Observe 0 registers its
+ * sender (one at a time: the newest replaces the one before), until CONFIG_HACOAP_PUSH_LEASE_S
+ * after it registered; a GET with Observe 1 from it ends it. The fleet manager registers again at
+ * each refresh. */
+
+/* Whether someone observes 'hist': if so, sets '*next' to the first sample it wasn't given.
+ * Call with the OpenThread API lock held. */
+bool coap_resources_observed(uint32_t *next);
+
+/* Sends the observer of 'hist' the samples it wasn't given, in a non-confirmable notification
+ * (the same payload as a GET). Call with the OpenThread API lock held. Returns 0, -ENOTCONN
+ * without an observer, or another negative error. */
+int coap_resources_notify(void);
 
 #endif // COAP_RESOURCES_H_

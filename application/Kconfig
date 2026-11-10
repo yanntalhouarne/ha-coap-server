@@ -95,6 +95,55 @@ config HACOAP_REMOTE_LOG_BUFFER_SIZE
 	  opens (the log since boot, until it fills), and how much a reader
 	  can fall behind without missing lines.
 
+menu "Readings kept, and pushed"
+
+config HACOAP_HISTORY_SIZE
+	int "Samples kept for the 'hist' resource"
+	range 16 1024
+	default 192
+	help
+	  The latest sensor samples the device keeps in RAM (12 bytes each):
+	  the fleet manager reads the ones it doesn't have yet, so a border
+	  router or network that was down leaves no gap in its history, as
+	  long as it's back within this many samples (192: 48 hours at the
+	  default sampling period of 15 minutes). They're lost at a restart.
+
+config HACOAP_PUSH
+	bool "Push the samples that changed (CoAP Observe on 'hist')"
+	default y
+	help
+	  The fleet manager registers to observe 'hist' at each refresh. After
+	  a sample that changed enough since the last one it was given (its
+	  soil or battery by HACOAP_PUSH_SOIL_DELTA or HACOAP_PUSH_BATTERY_DELTA,
+	  or the power source: the device takes a sample when it changes), the
+	  device sends it the samples it doesn't have, in one non-confirmable
+	  message: a plant that needs water or a board plugged in shows within
+	  seconds instead of at the next refresh. A message only when something
+	  changed: about the cost of one more poll.
+
+config HACOAP_PUSH_SOIL_DELTA
+	int "Push when the soil moisture moved this much (%)"
+	depends on HACOAP_PUSH
+	range 1 100
+	default 5
+
+config HACOAP_PUSH_BATTERY_DELTA
+	int "Push when the battery moved this much (%)"
+	depends on HACOAP_PUSH
+	range 1 100
+	default 5
+
+config HACOAP_PUSH_LEASE_S
+	int "Stop pushing this long after the observer last registered (s)"
+	depends on HACOAP_PUSH
+	range 60 86400
+	default 7200
+	help
+	  The fleet manager registers again at each refresh (every 15 minutes
+	  by default). One that's gone stops getting messages after this.
+
+endmenu
+
 menu "Joining the network"
 
 config HACOAP_JOIN_RETRY_S

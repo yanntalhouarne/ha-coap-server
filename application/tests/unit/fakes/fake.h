@@ -155,6 +155,14 @@ static inline long atomic_get(const atomic_t *target)
 	return *target;
 }
 
+static inline long atomic_add(atomic_t *target, long value)
+{
+	long old = *target;
+
+	*target += value;
+	return old;
+}
+
 /* ---------------------------------------------------------------- devices and devicetree */
 
 struct device
@@ -348,6 +356,7 @@ typedef enum
 	OT_COAP_CODE_NOT_FOUND = 0x84,
 } otCoapCode;
 
+#define OT_COAP_OPTION_OBSERVE 6
 #define OT_COAP_OPTION_URI_QUERY 15
 
 #define OT_DEFAULT_COAP_PORT 5683
@@ -366,6 +375,10 @@ typedef struct otMessage
 	bool freed;
 	const char *queries[FAKE_MAX_QUERIES]; // Uri-Query options
 	int query_count;
+	bool has_observe;                      // an Observe option, with this value
+	uint32_t observe;
+	uint8_t token[8];
+	uint8_t token_length;
 } otMessage;
 
 typedef struct otCoapOption
@@ -379,6 +392,7 @@ typedef struct otCoapOptionIterator
 	const otMessage *mMessage;
 	otCoapOption mOption;
 	uint16_t mNextOptionOffset; // here, the index of the next query
+	uint16_t mCurrent;          // the option it's on (its number)
 } otCoapOptionIterator;
 
 typedef struct
@@ -420,6 +434,10 @@ extern otMessageInfo fake_response_info;
 extern int fake_responses_sent;
 extern int fake_messages_allocated;
 extern int fake_messages_freed;
+extern otMessage fake_request_sent;       // last request (or notification) sent with otCoapSendRequest()
+extern otMessageInfo fake_request_info;
+extern int fake_requests_sent;
+extern otError fake_send_request_error;
 
 otCoapType otCoapMessageGetType(const otMessage *message);
 otCoapCode otCoapMessageGetCode(const otMessage *message);
@@ -438,11 +456,22 @@ otError otCoapOptionIteratorGetOptionValue(otCoapOptionIterator *iterator, void 
 void otCoapSetDefaultHandler(otInstance *instance, otCoapRequestHandler handler, void *context);
 void otCoapAddResource(otInstance *instance, otCoapResource *resource);
 otError otCoapStart(otInstance *instance, uint16_t port);
+void otCoapMessageInit(otMessage *message, otCoapType type, otCoapCode code);
+otError otCoapMessageSetToken(otMessage *message, const uint8_t *token, uint8_t token_length);
+uint8_t otCoapMessageGetTokenLength(const otMessage *message);
+const uint8_t *otCoapMessageGetToken(const otMessage *message);
+otError otCoapMessageAppendObserveOption(otMessage *message, uint32_t observe);
+otError otCoapOptionIteratorGetOptionUintValue(otCoapOptionIterator *iterator, uint64_t *value);
+otError otCoapSendRequest(otInstance *instance, otMessage *message, const otMessageInfo *message_info, void *handler,
+			  void *context);
 
 /* Builds a request with an optional payload (NULL for none). */
 void fake_request_init(otMessage *request, otCoapType type, otCoapCode code, const char *payload);
 /* Adds a Uri-Query option ("from=12"). 'query' must stay valid. */
 void fake_request_add_query(otMessage *request, const char *query);
+/* Adds an Observe option, and a token */
+void fake_request_set_observe(otMessage *request, uint32_t observe);
+void fake_request_set_token(otMessage *request, const uint8_t *token, uint8_t length);
 
 /* Link */
 extern uint32_t fake_poll_period_ms; // last value passed to otLinkSetPollPeriod()

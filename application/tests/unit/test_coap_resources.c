@@ -27,6 +27,9 @@ static struct
 	int log_gets;
 	uint32_t log_from;
 	size_t log_size;
+	int hist_gets;
+	uint32_t hist_from;
+	uint32_t hist_next; // the next sample, as the history says
 } fake_app;
 
 static uint8_t app_pumpdc_get(void)
@@ -82,7 +85,16 @@ static size_t app_log_get(uint32_t from, char *payload, size_t size)
 	return (size_t)snprintf(payload, size, "0000002a %u\nline\n", (unsigned int)from);
 }
 
-/* A device built without HACOAP_REMOTE_LOG: no log_get */
+/* The 'hist' payload: "H<from>", and the next sample */
+static size_t app_hist_get(uint32_t from, uint8_t *payload, size_t size, uint32_t *next)
+{
+	fake_app.hist_gets++;
+	fake_app.hist_from = from;
+	*next = fake_app.hist_next;
+	return (size_t)snprintf((char *)payload, size, "H%u", (unsigned int)from);
+}
+
+/* A device built without HACOAP_REMOTE_LOG: no log_get (nor hist_get, to see 'hist' answer 4.04) */
 static const struct coap_resources_handlers handlers = {
 	.pumpdc_get = app_pumpdc_get,
 	.pumpdc_put = app_pumpdc_put,
@@ -104,6 +116,7 @@ static const struct coap_resources_handlers handlers_with_log = {
 	.ping_put = app_ping_put,
 	.diag_get = app_diag_get,
 	.log_get = app_log_get,
+	.hist_get = app_hist_get,
 };
 
 /* ---------------------------------------------------------------- helpers */
@@ -111,6 +124,7 @@ static const struct coap_resources_handlers handlers_with_log = {
 static void setup(void)
 {
 	memset(&fake_app, 0, sizeof(fake_app));
+	memset(&observer, 0, sizeof(observer));
 	fake_app.info = (struct coap_info){.fw_version = "abc1234", .hw_version = "v2.0", .device_id = "1a2b3c4d"};
 	CHECK_EQ(coap_resources_init(&handlers), 0);
 }
@@ -118,11 +132,16 @@ static void setup(void)
 static void setup_with_log(void)
 {
 	memset(&fake_app, 0, sizeof(fake_app));
+	memset(&observer, 0, sizeof(observer));
 	CHECK_EQ(coap_resources_init(&handlers_with_log), 0);
 }
 
 /* Uri-Query options for the next request() (NULL-terminated), or NULL */
 static const char *const *next_queries;
+/* An Observe option for the next request() (-1: none), and its sender's port (0: 5683) */
+static int next_observe = -1;
+static uint16_t next_peer_port;
+static const uint8_t TOKEN[] = {0x11, 0x22, 0x33, 0x44};
 
 /* Sends a request to the resource at 'uri', as OpenThread would. */
 static void request(const char *uri, otCoapType type, otCoapCode code, const char *payload)
@@ -133,12 +152,20 @@ static void request(const char *uri, otCoapType type, otCoapCode code, const cha
 	memset(&info, 0, sizeof(info));
 	memset(info.mSockAddr.m8, 0xfd, sizeof(info.mSockAddr.m8));
 	memset(info.mPeerAddr.m8, 0xab, sizeof(info.mPeerAddr.m8));
+	info.mPeerPort = (next_peer_port != 0U) ? next_peer_port : 5683U;
 	fake_request_init(&message, type, code, payload);
+	fake_request_set_token(&message, TOKEN, sizeof(TOKEN));
 	for (int i = 0; (next_queries != NULL) && (next_queries[i] != NULL); i++)
 	{
 		fake_request_add_query(&message, next_queries[i]);
 	}
+	if (next_observe >= 0)
+	{
+		fake_request_set_observe(&message, (uint32_t)next_observe);
+	}
 	next_queries = NULL;
+	next_observe = -1;
+	next_peer_port = 0U;
 
 	for (int i = 0; i < fake_coap_resource_count; i++)
 	{
@@ -170,7 +197,7 @@ static void check_response(otCoapType type, otCoapCode code, const void *payload
 
 static void test_init_registers_every_resource(void)
 {
-	static const char *const uris[] = {"pumpdc", "pump", "data", "info", "ping", "diag", "log"};
+	static const char *const uris[] = {"pumpdc", "pump", "data", "info", "ping", "diag", "log", "hist"};
 
 	setup();
 	CHECK_EQ(fake_coap_resource_count, ARRAY_SIZE(uris));
@@ -412,6 +439,120 @@ static void test_log_get_finds_the_offset_among_other_queries(void)
 	CHECK_EQ(fake_app.log_from, 0);
 }
 
+static void test_hist_without_a_history_answers_not_found(void)
+{
+	setup();
+	request("hist", CON, OT_COAP_CODE_GET, NULL);
+	check_response(ACK, OT_COAP_CODE_NOT_FOUND, NULL, 0);
+}
+
+static void test_hist_get_reads_from_the_query(void)
+{
+	static const char *const queries[] = {"from=12", NULL};
+	uint32_t next;
+
+	setup_with_log();
+	next_queries = queries;
+	request("hist", CON, OT_COAP_CODE_GET, NULL);
+	check_response(ACK, OT_COAP_CODE_CONTENT, "H12", 3);
+	CHECK_EQ(fake_app.hist_from, 12);
+	CHECK(!fake_response.has_observe);  // not observed: a plain answer
+	CHECK(!coap_resources_observed(&next));
+	CHECK_EQ(coap_resources_notify(), -ENOTCONN);
+	CHECK_EQ(fake_requests_sent, 0);
+}
+
+static void test_hist_observe_registers_then_notifies_the_new_samples(void)
+{
+	static const char *const queries[] = {"from=3", NULL};
+	uint32_t next = 0U;
+
+	setup_with_log();
+	fake_app.hist_next = 9;
+	next_queries = queries;
+	next_observe = 0;
+	request("hist", CON, OT_COAP_CODE_GET, NULL);
+	check_response(ACK, OT_COAP_CODE_CONTENT, "H3", 2);
+	CHECK(fake_response.has_observe);   // registered: the answer says so
+	CHECK(coap_resources_observed(&next));
+	CHECK_EQ(next, 9);                  // it has everything before 9
+
+	/* Two samples later: it's sent them, from 9 */
+	fake_app.hist_next = 11;
+	CHECK_EQ(coap_resources_notify(), 0);
+	CHECK_EQ(fake_requests_sent, 1);
+	CHECK_EQ(fake_request_sent.type, NON);
+	CHECK_EQ(fake_request_sent.code, OT_COAP_CODE_CONTENT);
+	CHECK_EQ(fake_request_sent.token_length, sizeof(TOKEN));
+	CHECK(memcmp(fake_request_sent.token, TOKEN, sizeof(TOKEN)) == 0);
+	CHECK(fake_request_sent.has_observe);
+	CHECK_EQ(fake_request_sent.observe, fake_response.observe + 1);  // newer than the registration's
+	CHECK(fake_request_sent.payload_marker);
+	CHECK_EQ(fake_request_sent.length, 2);
+	CHECK(memcmp(fake_request_sent.bytes, "H9", 2) == 0);
+	CHECK_EQ(fake_request_info.mPeerAddr.m8[0], 0xab);   // to the observer
+	CHECK_EQ(fake_request_info.mPeerPort, 5683);
+	CHECK(coap_resources_observed(&next));
+	CHECK_EQ(next, 11);
+	/* The next one is newer again */
+	CHECK_EQ(coap_resources_notify(), 0);
+	CHECK_EQ(fake_request_sent.observe, fake_response.observe + 2);
+	CHECK(memcmp(fake_request_sent.bytes, "H11", 3) == 0);
+}
+
+static void test_hist_observe_ends_after_its_lease(void)
+{
+	uint32_t next;
+
+	setup_with_log();
+	next_observe = 0;
+	request("hist", CON, OT_COAP_CODE_GET, NULL);
+	fake_uptime_ms += (int64_t)CONFIG_HACOAP_PUSH_LEASE_S * 1000;
+	CHECK(coap_resources_observed(&next));      // just in time
+	fake_uptime_ms += 1;
+	CHECK(!coap_resources_observed(&next));     // it didn't register again: gone
+	CHECK_EQ(coap_resources_notify(), -ENOTCONN);
+}
+
+static void test_hist_observe_1_from_the_observer_deregisters(void)
+{
+	uint32_t next;
+
+	setup_with_log();
+	next_observe = 0;
+	request("hist", CON, OT_COAP_CODE_GET, NULL);
+	fake_responses_sent = 0;
+	next_observe = 1;
+	next_peer_port = 40000;                      // someone else: no effect
+	request("hist", CON, OT_COAP_CODE_GET, NULL);
+	CHECK(coap_resources_observed(&next));
+	CHECK(!fake_response.has_observe);
+	request("hist", CON, OT_COAP_CODE_GET, NULL); // a plain GET from it: still observed
+	CHECK(coap_resources_observed(&next));
+	next_observe = 1;
+	request("hist", CON, OT_COAP_CODE_GET, NULL);
+	CHECK(!coap_resources_observed(&next));
+}
+
+static void test_a_notification_that_cant_be_sent_keeps_the_samples(void)
+{
+	uint32_t next;
+
+	setup_with_log();
+	fake_app.hist_next = 4;
+	next_observe = 0;
+	request("hist", CON, OT_COAP_CODE_GET, NULL);
+	fake_app.hist_next = 6;
+	fake_send_request_error = OT_ERROR_NO_BUFS;
+	CHECK_EQ(coap_resources_notify(), -EIO);
+	CHECK_EQ(fake_messages_freed, 1);
+	CHECK(coap_resources_observed(&next));
+	CHECK_EQ(next, 4);                           // sent with the next one
+	fake_send_request_error = OT_ERROR_NONE;
+	fake_coap_no_bufs = true;
+	CHECK_EQ(coap_resources_notify(), -ENOMEM);
+}
+
 int main(void)
 {
 	RUN_TEST(test_init_registers_every_resource);
@@ -436,5 +577,11 @@ int main(void)
 	RUN_TEST(test_log_get_reads_from_the_query_offset);
 	RUN_TEST(test_log_get_without_an_offset_reads_from_0);
 	RUN_TEST(test_log_get_finds_the_offset_among_other_queries);
+	RUN_TEST(test_hist_without_a_history_answers_not_found);
+	RUN_TEST(test_hist_get_reads_from_the_query);
+	RUN_TEST(test_hist_observe_registers_then_notifies_the_new_samples);
+	RUN_TEST(test_hist_observe_ends_after_its_lease);
+	RUN_TEST(test_hist_observe_1_from_the_observer_deregisters);
+	RUN_TEST(test_a_notification_that_cant_be_sent_keeps_the_samples);
 	return TEST_RESULT();
 }

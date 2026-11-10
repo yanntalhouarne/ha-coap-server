@@ -11,6 +11,9 @@
 #include "../../src/main.c"
 #undef main
 
+/* The samples' history is the real one: which samples are pushed depends on it */
+#include "../../src/history.c"
+
 /* ---------------------------------------------------------------- fake modules */
 
 static struct
@@ -52,6 +55,13 @@ static struct
 	int settings_init_call;
 	int diag_inits;
 	const struct coap_resources_handlers *coap;
+	sensors_sampled_cb_t sampled;
+	int samples_now;
+	uint32_t button_s;
+	uint32_t diag_button_s;
+	bool observed;        // someone observes 'hist'...
+	uint32_t observed_next; // ...and has every sample before this one
+	int notifies;
 	int calls;            // order of the init calls
 	int led_init_call;
 	int coap_init_call;
@@ -138,6 +148,43 @@ uint32_t sensors_init(void)
 
 void sensors_start(void)
 {
+}
+
+void sensors_set_sampled_cb(sensors_sampled_cb_t cb)
+{
+	fake_mod.sampled = cb;
+}
+
+void sensors_sample_now(void)
+{
+	fake_mod.samples_now++;
+}
+
+uint32_t pump_button_seconds(void)
+{
+	return fake_mod.button_s;
+}
+
+uint32_t device_settings_boots(void)
+{
+	return 7;
+}
+
+bool coap_resources_observed(uint32_t *next)
+{
+	if (fake_mod.observed)
+	{
+		*next = fake_mod.observed_next;
+	}
+	return fake_mod.observed;
+}
+
+int coap_resources_notify(void)
+{
+	CHECK_EQ(fake_ot_api_lock_depth, 1); // with OpenThread's lock held
+	fake_mod.notifies++;
+	fake_mod.observed_next = history_next(); // it was given them all
+	return 0;
 }
 
 struct sensors_data sensors_get(void)
@@ -248,8 +295,9 @@ void diag_link_read(otInstance *instance, struct diag_link *link)
 }
 
 size_t diag_format(char *payload, size_t size, const struct diag_link *link, const char *srp, int32_t soil_mv,
-		   const char *power)
+		   const char *power, uint32_t button_s)
 {
+	fake_mod.diag_button_s = button_s;
 	return (size_t)snprintf(payload, size, "srp=%s,rloc=%04x,soil_mv=%d,power=%s", srp, link->rloc16, (int)soil_mv, power);
 }
 
@@ -294,6 +342,8 @@ int coap_resources_init(const struct coap_resources_handlers *handlers)
 static void reset_module(void)
 {
 	memset(&fake_mod, 0, sizeof(fake_mod));
+	memset(ring, 0, sizeof(ring));
+	added = 0U;
 	fake_mod.pump_duration = CONFIG_HACOAP_PUMP_DEFAULT_DURATION;
 	fake_mod.led_state = STATUS_LED_OFF;
 }
@@ -434,6 +484,72 @@ static void test_diag_reports_the_link_and_the_soil_voltage(void)
 	fake_mod.power = POWER_CHARGING;
 	length = on_diag_get(payload, sizeof(payload));
 	CHECK(memcmp(payload, "srp=registered,rloc=5c01,soil_mv=1696,power=charging", length) == 0);
+
+	fake_mod.button_s = 6;                     // the pump's runs with S1, for the water tank
+	(void)on_diag_get(payload, sizeof(payload));
+	CHECK_EQ(fake_mod.diag_button_s, 6);
+}
+
+/* A sample of this soil moisture, taken now */
+static void sampled(uint8_t soil)
+{
+	struct sensors_data data = {.soil_moisture = soil, .battery_soc = 80, .air_humidity = 50, .temperature = 21};
+
+	fake_mod.sampled(&data);
+}
+
+static void test_samples_are_kept_for_hist(void)
+{
+	uint8_t payload[HIST_PAYLOAD_MAX_SIZE];
+	uint32_t next;
+	size_t length;
+
+	reset_module();
+	CHECK_EQ(firmware_main(), 0);
+	CHECK(fake_mod.sampled != NULL);           // set before the first sample
+	fake_uptime_ms = 900000;
+	fake_mod.power = POWER_CHARGING;
+	sampled(42);
+	CHECK_EQ(history_next(), 1);
+	CHECK_EQ(fake_mod.notifies, 0);            // no one observes
+	CHECK(fake_mod.coap->hist_get != NULL);
+	length = fake_mod.coap->hist_get(0, payload, sizeof(payload), &next);
+	CHECK_EQ(length, HISTORY_HEADER_SIZE + HISTORY_ENTRY_SIZE);
+	CHECK_EQ(payload[4], 7);                   // this boot
+	CHECK_EQ(payload[HISTORY_HEADER_SIZE + 4], 42);
+	CHECK_EQ(payload[HISTORY_HEADER_SIZE + 8], POWER_CHARGING);
+	CHECK_EQ(next, 1);
+}
+
+static void test_samples_that_changed_are_pushed(void)
+{
+	reset_module();
+	CHECK_EQ(firmware_main(), 0);
+	sampled(40);
+	fake_mod.observed = true;                  // the fleet manager registered, and has sample 0
+	fake_mod.observed_next = 1;
+	sampled(38);                               // 2 % drier than what it has: not worth a message
+	CHECK_EQ(fake_mod.notifies, 0);
+	sampled(40 - CONFIG_HACOAP_PUSH_SOIL_DELTA);
+	CHECK_EQ(fake_mod.notifies, 1);            // pushed (samples 1 and 2)
+	CHECK_EQ(fake_ot_api_lock_depth, 0);
+	sampled(40 - CONFIG_HACOAP_PUSH_SOIL_DELTA);
+	CHECK_EQ(fake_mod.notifies, 1);            // the same as the last one given
+	fake_mod.power = POWER_USB;                // plugged in
+	sampled(40 - CONFIG_HACOAP_PUSH_SOIL_DELTA);
+	CHECK_EQ(fake_mod.notifies, 2);
+	/* Registered before any sample it was given (or the last one given is gone): pushed */
+	fake_mod.observed_next = 0;
+	sampled(10);
+	CHECK_EQ(fake_mod.notifies, 3);
+}
+
+static void test_a_power_change_takes_a_sample(void)
+{
+	reset_module();
+	CHECK_EQ(firmware_main(), 0);
+	fake_mod.power_changed(POWER_CHARGING);
+	CHECK_EQ(fake_mod.samples_now, 1);         // the change is in the history, and pushed
 }
 
 static void test_usb_power_polls_faster(void)
@@ -558,6 +674,9 @@ int main(void)
 	RUN_TEST(test_settings_are_applied);
 	RUN_TEST(test_a_sample_period_from_flash_waits_for_the_sensors);
 	RUN_TEST(test_diag_reports_the_link_and_the_soil_voltage);
+	RUN_TEST(test_samples_are_kept_for_hist);
+	RUN_TEST(test_samples_that_changed_are_pushed);
+	RUN_TEST(test_a_power_change_takes_a_sample);
 	RUN_TEST(test_usb_power_polls_faster);
 	RUN_TEST(test_pump_put_only_acts_on_a_change);
 	RUN_TEST(test_data_sends_the_temperature_as_a_signed_byte);

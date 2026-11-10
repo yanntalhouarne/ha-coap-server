@@ -165,7 +165,8 @@ All resources are on UDP port 5683 at the device's IPv6 address. Payloads are ra
 | `pump` | GET, confirmable PUT | `'1'` start, `'0'` stop | 1 byte: 1 while the pump runs, else 0 |
 | `pumpdc` | GET, confirmable PUT | One ASCII digit: the pump run time in seconds (1 to `CONFIG_HACOAP_PUMP_MAX_DURATION`) | 1 byte: the run time in use. Out-of-range values keep the current one. Kept across resets (the board's `pump_s` setting). |
 | `ping` | PUT | `'1'` beep, `'0'` quiet | none (2.04 Changed) |
-| `diag` | GET | — | ASCII `key=value` pairs, comma-separated: `boots` (since its flash was erased), `up` (seconds), `reset` (why it last restarted: `power`, `pin`, `soft`, `watchdog`, `lockup`, `crash` or `other`), `fault` (after a crash: `<reason>@<address>`), `role`, `srp` (its name's registration: `registered`, `pending`, `failed` or `off`), and when attached `rloc` (its short address), `parent`, `rssi` and `last_rssi` (dBm), `lq` (0 to 3), then `soil_mv` (the soil sensor's output, -1 if not read) and `power` (`battery`, `usb`, `charging` or `charged`: see [Power](#power)). For example `boots=12,up=3600,reset=power,role=child,srp=registered,rloc=5c01,parent=5c00,rssi=-62,last_rssi=-60,lq=3,soil_mv=1696,power=battery`. Older firmware doesn't answer it. See [Restarts and crashes](#restarts-and-crashes). |
+| `diag` | GET | — | ASCII `key=value` pairs, comma-separated: `boots` (since its flash was erased), `up` (seconds), `reset` (why it last restarted: `power`, `pin`, `soft`, `watchdog`, `lockup`, `crash` or `other`), `fault` (after a crash: `<reason>@<address>`), `role`, `srp` (its name's registration: `registered`, `pending`, `failed` or `off`), and when attached `rloc` (its short address), `parent`, `rssi` and `last_rssi` (dBm), `lq` (0 to 3), then `soil_mv` (the soil sensor's output, -1 if not read), `power` (`battery`, `usb`, `charging` or `charged`: see [Power](#power)) and `button_s` (the pump's run time started with S1 since boot, in seconds: the fleet manager counts it in the plant's water tank). For example `boots=12,up=3600,reset=power,role=child,srp=registered,rloc=5c01,parent=5c00,rssi=-62,last_rssi=-60,lq=3,soil_mv=1696,power=battery,button_s=6`. Older firmware doesn't answer it. See [Restarts and crashes](#restarts-and-crashes). |
+| `hist` | GET, with the query `from=<n>`; Observe 0 registers, 1 deregisters | — | The samples from number `n` on (see [Readings kept, and pushed](#readings-kept-and-pushed)), little-endian: a 20-byte header (version 1, count, entry size 9, the boot count, the uptime now in s, the first sample's number, the next sample's number), then per sample its uptime (s, 4 bytes), soil %, battery %, air humidity %, temperature (°C, signed) and power (0 battery, 1 usb, 2 charging, 3 charged). At most 512 bytes (54 samples). Older firmware doesn't answer it. |
 | `log` | GET, with the query `from=<offset>` | — | ASCII `<boot id> <start>` and a line feed, then the log output from byte `start` (at most 512 bytes in all). Only with `CONFIG_HACOAP_REMOTE_LOG`; otherwise 4.04 Not Found. See [Logs](#logs). |
 
 `data` returns the latest readings without waiting on the sensors. They are sampled at boot and then every `CONFIG_HACOAP_SENSOR_SAMPLE_PERIOD_S` (900 s by default), so a reading can be up to one period old.
@@ -180,6 +181,12 @@ coap-client -m put -e 1 coap://[fd49:969:3c3c:1:88a2:4c28:69ec:34f7]/ping
 ```
 
 As a sleepy end device, the board picks up messages from its parent once per poll period (`CONFIG_OPENTHREAD_POLL_PERIOD`, 3 s), so responses can take up to 3 seconds. The integration waits 10 s for a reply, so this is within its limits. While mcumgr is in use, or someone reads `log`, the device polls every 100 ms instead (see [Keeping updates compatible](#keeping-updates-compatible)).
+
+### Readings kept, and pushed
+
+The board keeps its latest samples in RAM (`CONFIG_HACOAP_HISTORY_SIZE`, 192: 48 hours at the 15-minute sampling, 2.3 KB), each with its number since boot. The fleet manager reads the ones it doesn't have at each refresh (`hist?from=<the first it doesn't have>`), so a border router or network that was down leaves no gap in its charts, if it's back within those 48 hours. A restart starts the numbers again (the boot count in each answer tells), and loses the samples kept.
+
+The same request registers the fleet manager as the observer of `hist` (CoAP Observe, RFC 7641: one at a time, the newest registration replaces the one before, until `CONFIG_HACOAP_PUSH_LEASE_S`, 2 hours, after it; each refresh registers again). After a sample, if its soil or battery moved by `CONFIG_HACOAP_PUSH_SOIL_DELTA` or `CONFIG_HACOAP_PUSH_BATTERY_DELTA` (5 %) or more since the last sample the fleet manager was given, or its power source changed (the board takes a sample when it does), the board sends it the samples it doesn't have in one non-confirmable message: a plant that needs water, a board plugged in or unplugged show within seconds, not at the next refresh. Nothing is sent when nothing changed, so it costs about one message a day on a plant that dries slowly. `CONFIG_HACOAP_PUSH=n` turns it off (`hist` still answers). The code: `src/history.c` (the samples, and when to push), `handle_hist()` and `coap_resources_notify()` in `src/coap_resources.c`, `on_sampled()` in `src/main.c`. It adds about 3.8 KB of flash (the battery variant: 83.7 % of the slot; `usb-logging` with the log over the air: 98.9 %) and 3 KB of RAM.
 
 ### SRP registration
 How Home Assistant and the fleet manager find a board. A Thread board doesn't answer mDNS itself (multicast is costly on the mesh, and a sleepy board would miss most queries). Instead, once attached, it **registers** its name and service with the SRP server on the border router (Service Registration Protocol), in one unicast message, and the border router answers mDNS on the LAN for it.
@@ -224,6 +231,8 @@ The application's settings are Kconfig options, declared in `application/Kconfig
 | `CONFIG_HACOAP_USB_POLL_PERIOD_MS` | 500 | Thread poll period on USB power (ms), when shorter than the normal one. See [Power](#power). |
 | `CONFIG_HACOAP_POWER_CHECK_S` | 10 | How often the board checks whether it's on USB power, and charging (s) |
 | `CONFIG_HACOAP_REMOTE_LOG` / `CONFIG_HACOAP_REMOTE_LOG_BUFFER_SIZE` | n / 4096 | The log over the air (the `log` resource), and how much of it the board keeps (bytes). See [Logs](#logs). |
+| `CONFIG_HACOAP_HISTORY_SIZE` | 192 | Samples kept for `hist` (12 bytes of RAM each). See [Readings kept, and pushed](#readings-kept-and-pushed). |
+| `CONFIG_HACOAP_PUSH` / `CONFIG_HACOAP_PUSH_SOIL_DELTA` / `CONFIG_HACOAP_PUSH_BATTERY_DELTA` / `CONFIG_HACOAP_PUSH_LEASE_S` | y / 5 / 5 / 7200 | Push the samples that changed to the fleet manager, when the soil or the battery moved this much (%), until this long after it last registered (s) |
 | `CONFIG_HACOAP_PUMP_DEFAULT_DURATION` | 1 | Pump run time after boot (s) |
 | `CONFIG_HACOAP_PUMP_MAX_DURATION` | 9 | Longest run time `pumpdc` can set (s, at most 9) |
 | `CONFIG_HACOAP_SENSOR_SAMPLE_PERIOD_S` | 900 | Sensor sampling period (s). Shorter means fresher data and more power. |
@@ -367,6 +376,7 @@ Older versions of this repository had a Thread network key and network name in `
 | `src/pump.c` | Timed pump runs, from CoAP or the S1 button |
 | `src/joining.c` | Joining the Thread network again until it has one, and forgetting it (S1 at boot, or mcumgr) |
 | `src/sensors.c` | Soil, battery and air readings, sampled periodically and cached |
+| `src/history.c` | The latest samples, for `hist`, and which ones are worth pushing |
 | `src/buzzer.c` | Beep patterns |
 | `src/status_led.c` | Network and error states on the module's RGB LED (as short flashes), and the user LED |
 | `src/mcumgr_poll.c` | Faster Thread polling while mcumgr is in use, or the log is read |
