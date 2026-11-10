@@ -1147,6 +1147,26 @@ body.wall-mode .simple-top, body.wall-mode .simple-nav { display: none !importan
 .plants-banner:hover { color: var(--t-yellow); border-color: var(--t-yellow); }
 .plants-banner span:first-of-type { flex: 1; }
 .plant-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(10rem, 100%), 1fr)); gap: .75rem; padding-bottom: 1rem; }
+.plant-grid.today { display: block; }
+.plant-grid.today .simple-h:first-child { margin-top: 0; }
+.today-list li > a { flex: 1; min-width: 0; }
+.today-list .today-water .icon, .today-list .today-refill .icon { color: var(--t-cyan); }
+.today-list .today-charge .icon, .today-list .today-offline .icon { color: var(--t-yellow); }
+.today-done { display: flex; align-items: center; gap: .5rem; color: var(--t-text-secondary); }
+.today-done .icon { color: var(--t-green, var(--t-cyan)); }
+.plant-rows { display: flex; flex-direction: column; gap: .4rem; margin: 0; padding: 0 0 1rem; list-style: none; }
+.plant-row { display: grid; grid-template-columns: minmax(0, 1fr) 7rem 3rem; align-items: center; gap: .75rem; padding: .6rem .9rem;
+  border-radius: .75rem; background: var(--t-surface); border: 1px solid var(--t-border-subtle); color: var(--t-text); text-decoration: none; }
+.plant-row:hover { border-color: var(--t-brand); color: var(--t-text); }
+.plant-row.thirsty { border-color: var(--t-yellow); }
+.plant-row.offline { opacity: .65; }
+.plant-row-name { display: flex; flex-direction: column; min-width: 0; }
+.plant-row-name b, .plant-row-name span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.plant-row-name span { font-size: .75rem; color: var(--t-text-muted); }
+.plant-row-soil { color: var(--t-cyan); font-size: .85rem; }
+.plant-row.thirsty .plant-row-soil { color: var(--t-yellow); }
+.plant-row-soil .soil-bar { margin: .25rem 0 0; height: .35rem; }
+.plant-row-battery { font-size: .8rem; color: var(--t-text-secondary); text-align: right; white-space: nowrap; }
 .plant-card { display: flex; flex-direction: column; align-items: center; gap: .3rem; min-width: 0; padding: 1rem .6rem .9rem; border-radius: .9rem;
   background: var(--t-surface); border: 1px solid var(--t-border-subtle); color: var(--t-text); text-decoration: none; text-align: center;
   transition: border-color .15s; }

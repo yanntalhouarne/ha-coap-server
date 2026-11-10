@@ -107,7 +107,7 @@ def page(tmp_path_factory):
     def dump(tab):
         command = [browser, "--headless=new", "--disable-gpu", "--no-sandbox", "--no-first-run",
                    f"--user-data-dir={tmp / 'profile'}", "--virtual-time-budget=8000", "--dump-dom",
-                   f"http://127.0.0.1:{port}/#{tab}"]
+                   f"http://127.0.0.1:{port}/{tab if tab.startswith('?') else '#' + tab}"]  # ?...: an address with a query
         result = subprocess.run(command, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=90)
         return result.stdout
 
@@ -272,6 +272,13 @@ def test_simple_view(page):
     assert "basil" in dom and "simple-list" in dom and 'class="alert-dismiss"' in dom   # each one can be dismissed
     dom = page("more")
     assert "Advanced view" in dom and "Tokyo Night" in dom
+
+
+def test_the_today_list(page):
+    dom = page("?layout=today#plants")                               # the plants as the Today list
+    assert 'class="simple-list today-list"' in dom and "Water basil" in dom and "soil 18 %, under 30 %" in dom
+    assert 'class="plant-rows"' in dom and "plant-row thirsty" in dom
+    assert "plant-card" not in dom
 
 
 def test_simple_and_advanced_routes(page):

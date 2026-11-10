@@ -335,6 +335,9 @@ def wall(db, inventory, now=None):
                        "plant": device["plant"], "location": device["location"], "photo": device["photo"],
                        "soil_moisture": device["soil_moisture"], "water_target": device["water_target"],
                        "needs_water": device["needs_water"], "battery": device["battery"], "power": device["power"], "online": device["online"],
+                       "last_seen": device["last_seen"], "tank": device.get("tank"),
+                       "watering_missed": device.get("watering_missed", False),
+                       "waters_itself": bool((device.get("watering_rule") or {}).get("on")) and bool(device["water_target"]),
                        "water_forecast": water_forecast(readings, device["water_target"], now),
                        "battery_forecast": battery_forecast(readings)})
     soon = lambda p: (p["water_forecast"] or {}).get("days")  # noqa: E731

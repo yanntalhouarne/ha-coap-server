@@ -10,6 +10,8 @@ export const state = {
 // with every request instead of a sign-in, and the page only shows the plants
 export const LINK_KEY = new URLSearchParams(location.search).get('key') || '';
 export const linkMode = () => Boolean(LINK_KEY);
+// A view-only dashboard link (the app's status says): its plants to look at, no watering or naming
+export const linkView = () => Boolean(LINK_KEY && state.status && state.status.view_only);
 export const withKey = (url) => (LINK_KEY ? `${url}${url.includes('?') ? '&' : '?'}key=${encodeURIComponent(LINK_KEY)}` : url);
 if (LINK_KEY) document.documentElement.classList.add('link-mode');
 

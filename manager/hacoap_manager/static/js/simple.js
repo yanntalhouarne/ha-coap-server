@@ -2,7 +2,7 @@
 // settings, with tabs at the bottom; made for a phone first. Everything else is in the advanced
 // view, one link away.
 
-import { ago, api, h, linkMode, onUsb, pct, powerText, state, svg } from './core.js';
+import { ago, api, h, linkMode, linkView, onUsb, pct, powerText, state, svg } from './core.js';
 import { batteryRing } from './pages.js';
 import { linkMargin, waterIn } from './network.js';
 import { daysText, dismissAlert, dismissAllAlerts, notificationsOn, toggleNotifications } from './dashboard.js';
@@ -12,7 +12,19 @@ import { showPumping, startPumping, waitForBoard } from './motion.js';
 import { setTheme } from './themes.js';
 import { refillTank, tankBar, tankText } from './watering.js';
 
-const simple = { route: null, plants: [], plantId: null, fromWall: false, soon: null };
+const simple = { route: null, plants: [], plantId: null, fromWall: false, soon: null, openWater: false };
+
+// How the plants show: as cards, or as the Today list (what to do, then a row per plant). A
+// dashboard link's address can choose (&layout=today), else this browser's choice.
+const LAYOUT_KEY = 'hacoap.plants-layout';
+export function plantsLayout() {
+  const asked = new URLSearchParams(location.search).get('layout');
+  if (asked === 'today' || asked === 'cards') return asked;
+  try { return localStorage.getItem(LAYOUT_KEY) === 'today' ? 'today' : 'cards'; } catch (error) { return 'cards'; }
+}
+function setPlantsLayout(layout) {
+  try { localStorage.setItem(LAYOUT_KEY, layout); } catch (error) { /* private window: for this visit only */ }
+}
 
 const PUMP_SECONDS = [1, 2, 3, 4, 5, 6, 7, 8, 9];
 
@@ -72,6 +84,11 @@ function plantNote(p) {
 
 function renderPlants() {
   const plants = simple.plants;
+  if (plantsLayout() === 'today' && plants.length) {
+    renderToday(plants);
+    return;
+  }
+  document.getElementById('plant-grid').classList.remove('today');
   document.getElementById('plants-banner').replaceChildren(...plants.filter((p) => p.needs_water).map((p) =>
     h('a', { class: 'plants-banner', href: plantHref(p.device_id) }, icon('droplet'),
       h('span', {}, h('b', {}, title(p)), ' needs water'), h('span', { 'aria-hidden': 'true' }, '›'))));
@@ -84,6 +101,79 @@ function renderPlants() {
       h('div', { class: 'plant-card-note' }, plantNote(p))))
     : [h('div', { class: 'simple-empty' }, h('p', {}, 'No plants yet. Find your boards in the advanced view, then give each one a name and a plant.'),
       h('a', { class: 'btn btn-primary', href: '#devices' }, 'Find my boards'))]));
+}
+
+// ------------------------------------------------------------------ the Today list
+
+// What to do now, the most urgent first: [{icon, text, note, kind, action}]
+export function todayTasks(plants, now = Date.now() / 1000) {
+  const tasks = [];
+  const name = (p) => title(p);
+  for (const p of plants) {
+    if (p.needs_water && p.online) {
+      tasks.push({ rank: 0, kind: 'water', icon: 'droplets', plant: p, text: `Water ${name(p)}`,
+        note: `soil ${p.soil_moisture} %, under ${p.water_target} %${p.waters_itself ? ': it waters itself soon' : ''}` });
+    }
+    if (p.watering_missed) {
+      tasks.push({ rank: 1, kind: 'refill', icon: 'droplet', plant: p, text: `Check ${name(p)}'s water`,
+        note: "its soil didn't rise after its last waterings: is its tank empty, or the tube out of the pot?" });
+    } else if (p.tank && p.tank.low) {
+      tasks.push({ rank: 1, kind: 'refill', icon: 'droplet', plant: p, text: `Refill ${name(p)}'s tank`,
+        note: `about ${p.tank.percent} % full, ${p.tank.left_ml} ml left` });
+    }
+    if (!onUsb(p) && has(p.battery) && p.battery <= 20) {
+      tasks.push({ rank: 2, kind: 'charge', icon: 'battery-low', plant: p, text: `Charge ${name(p)}`, note: `battery at ${p.battery} %` });
+    }
+    if (!p.online) {
+      tasks.push({ rank: 3, kind: 'offline', icon: 'triangle-alert', plant: p, text: `Check ${name(p)}`,
+        note: p.last_seen ? `not answering since ${ago(p.last_seen)}` : 'never answered' });
+    }
+    if (!p.needs_water && p.online && p.water_forecast && has(p.water_forecast.days) && p.water_forecast.days <= 1) {
+      tasks.push({ rank: 4, kind: 'soon', icon: 'clock', plant: p, text: `${name(p)} needs water ${waterIn(p.water_forecast)}`,
+        note: `soil ${p.soil_moisture} %` });
+    }
+  }
+  return tasks.sort((a, b) => a.rank - b.rank);
+}
+
+function renderToday(plants) {
+  document.getElementById('plants-banner').replaceChildren();
+  const tasks = todayTasks(plants);
+  const view = linkView();
+  const action = (task) => {
+    const p = task.plant;
+    if (task.kind === 'water' && !view) {
+      return h('button', { class: 'btn btn-sm btn-primary', type: 'button', onclick: () => {
+        simple.openWater = true;  // its page, with How long? open
+        location.hash = plantHref(p.device_id);
+      } }, 'Water');
+    }
+    if (task.kind === 'refill' && p.tank && !view) {
+      return h('button', { class: 'btn btn-sm btn-outline-primary', type: 'button', onclick: async (e) => {
+        await refillTank(p, e.currentTarget);
+        await loadPlants();
+      } }, 'Refilled');
+    }
+    return null;
+  };
+  const grid = document.getElementById('plant-grid');
+  grid.classList.add('today');
+  grid.replaceChildren(
+    h('h2', { class: 'simple-h' }, 'Today'),
+    tasks.length
+      ? h('ul', { class: 'simple-list today-list' }, tasks.map((task) => h('li', { class: `today-${task.kind}` }, icon(task.icon),
+        h('a', { href: plantHref(task.plant.device_id) }, h('div', {}, task.text), h('div', { class: 'small text-body-secondary' }, task.note)),
+        action(task))))
+      : h('p', { class: 'today-done' }, icon('check'), ' Nothing to do today: every plant is fine.'),
+    h('h2', { class: 'simple-h' }, 'All plants'),
+    h('ul', { class: 'plant-rows' }, plants.map((p) => h('li', {},
+      h('a', { class: `plant-row${p.needs_water ? ' thirsty' : ''}${p.online ? '' : ' offline'}`, href: plantHref(p.device_id) },
+        h('div', { class: 'plant-row-name' }, h('b', {}, title(p)), h('span', {}, boardName(p) || plantNote(p))),
+        h('div', { class: 'plant-row-soil' }, h('span', {}, has(p.soil_moisture) ? `${p.soil_moisture} %` : '–'),
+          h('div', { class: 'soil-bar' }, h('i', { style: `width: ${has(p.soil_moisture) ? Math.max(0, Math.min(100, p.soil_moisture)) : 0}%` }),
+            p.water_target ? h('b', { style: `left: ${p.water_target}%` }) : null)),
+        h('span', { class: 'plant-row-battery', title: 'battery' }, has(p.battery)
+          ? [icon(p.power === 'charging' ? 'battery-charging' : p.battery <= 20 ? 'battery-low' : 'battery-medium'), ` ${p.battery} %`] : ''))))));
 }
 
 // ------------------------------------------------------------------ one plant
@@ -202,6 +292,10 @@ function renderPlant(details) {
     h('a', { class: 'plant-advanced', ...(linkMode() ? fullApp(`#device/${encodeURIComponent(id)}`) : { href: `#device/${encodeURIComponent(id)}` }) },
       'Advanced details: firmware, network, log ›'));
   showPumping();
+  if (simple.openWater) {
+    simple.openWater = false;
+    toggleWaterMenu(true);
+  }
 }
 
 // The plant's name (its plant field), from its page
@@ -254,11 +348,16 @@ function renderSimpleMore() {
     h('div', { class: 'd-flex flex-wrap gap-2 justify-content-end flex-grow-0' }, ...actions));
   const notifications = notificationsOn();
   const signOut = document.getElementById('sign-out');
+  const layout = plantsLayout();
+  const layoutRow = row('Plants as', layout === 'today' ? 'Today: what to do, then a row per plant' : 'Cards: a card per plant',
+    ...[['cards', 'Cards'], ['today', 'Today list']].map(([id, label]) => h('button', {
+      class: `btn btn-sm ${id === layout ? 'btn-primary' : 'btn-outline-secondary'}`, type: 'button', 'aria-pressed': String(id === layout),
+      onclick: () => { setPlantsLayout(id); renderSimpleMore(); } }, label)));
   if (linkMode()) {
     // A dashboard link: the plants only, so nothing that leads elsewhere
     document.getElementById('simple-more').replaceChildren(
       h('h2', { class: 'simple-h' }, 'View'),
-      h('ul', { class: 'simple-list' },
+      h('ul', { class: 'simple-list' }, layoutRow,
         row('The full app', 'Devices, network, updates, settings… In a new tab: sign in there once, it’s remembered',
           h('a', { class: 'btn btn-sm btn-outline-secondary', ...fullApp('#dashboard') }, 'Open')),
         row('Wall display', 'Every plant big, for a spare screen', h('a', { class: 'btn btn-sm btn-outline-secondary', href: '#wall' }, 'Open'))),
@@ -272,7 +371,7 @@ function renderSimpleMore() {
   }
   document.getElementById('simple-more').replaceChildren(
     h('h2', { class: 'simple-h' }, 'View'),
-    h('ul', { class: 'simple-list' },
+    h('ul', { class: 'simple-list' }, layoutRow,
       row('Simple or advanced', 'Advanced is the whole tool: devices, network, updates, builds, console…',
         h('a', { class: 'btn btn-sm btn-outline-secondary', href: '#dashboard' }, 'Advanced view')),
       row('Wall display', 'Every plant big, for a spare screen', h('a', { class: 'btn btn-sm btn-outline-secondary', href: '#wall' }, 'Open')),

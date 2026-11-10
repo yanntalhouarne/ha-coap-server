@@ -47,9 +47,10 @@ On a phone (over Remote Desktop, say) the layout narrows: the tabs show in rows 
 **Simple and advanced.** The app opens on its **simple view**, made for a phone: your plants and little else, with three tabs at the bottom.
 
 - **Plants:** a card per plant, each with a ring around its photo (or the logo) that fills with the battery (as on the wall display), its soil moisture and when it will need water. The ones that need water come first, with a banner naming them.
+  Or, with **Plants as: Today list** (Settings; the browser remembers it, and `&layout=today` in a dashboard link's address chooses it there): first **Today**, what to do, the most urgent first: water a plant (**Water** opens its page with How long? open), refill a tank or check one whose waterings missed (**Refilled**), charge a battery under 20 %, check a board that isn't answering, and the plants that need water within a day. Then **All plants**, a row each: its name, its soil as a bar with its target marked, and its battery.
 - **A plant** (tap its card): named by what you called it (its plant field), with the board's own name small under it, and **Rename**; its soil with the watering target, **Water now** (choose how long, 1 to 9 s, with its last run time marked, then confirm "Water ha-coap-9 for 5 seconds?") and **Beep**, its water tank when it has one (how full, with **Refilled**), its battery (and how long it lasts, or that it's charging), air and signal, and its soil over the last 7 days. **Advanced details** opens its full device page.
 - **Alerts:** the open alerts, with their count on the tab, and what happened lately.
-- **Settings:** the colour theme, notifications, the wall display and weekly summary, and the way to the advanced view.
+- **Settings:** the plants as cards or the Today list, the colour theme, notifications, the wall display and weekly summary, and the way to the advanced view.
 
 The **advanced view** is everything below: the tabs at the top, the status bar, every tool. **Simple | Advanced** at the top of the simple view and **simple view** at the top of the advanced one switch between them, and the browser remembers which you used last. A link to an advanced page (`#devices`, `#device/<id>`…) opens the advanced view; `#plants`, `#plant/<id>`, `#alerts` and `#more` open the simple one; `#home` opens the first page of the current one.
 
