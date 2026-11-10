@@ -1179,6 +1179,13 @@ body.wall-mode .simple-top, body.wall-mode .simple-nav { display: none !importan
 .soil-actions .btn { min-height: 3rem; border-radius: .75rem; display: inline-flex; align-items: center; justify-content: center; gap: .35rem; }
 .soil-actions .water { flex: 2; font-weight: 700; }
 .soil-actions .beep { flex: 1; }
+.soil-actions .water .icon:last-child { width: .9em; height: .9em; opacity: .8; }
+/* Water now: how long, under the buttons */
+.water-menu { margin-top: .6rem; padding: .7rem; border: 1px solid var(--t-border-subtle); border-radius: .75rem;
+  background: var(--t-surface-2); scroll-margin-bottom: 5.5rem; }
+.water-menu-title { font-size: .8rem; color: var(--t-text-muted); margin-bottom: .45rem; }
+.water-menu-choices { display: grid; grid-template-columns: repeat(auto-fill, minmax(3.2rem, 1fr)); gap: .4rem; }
+.water-menu-choices .btn { min-height: 2.75rem; border-radius: .6rem; font-weight: 600; }
 .plant-facts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .6rem; }
 .plant-fact { display: flex; flex-direction: column; gap: .1rem; min-width: 0; padding: .7rem; border-radius: .75rem;
   background: var(--t-surface); border: 1px solid var(--t-border-subtle); }

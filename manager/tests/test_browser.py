@@ -259,6 +259,7 @@ def test_simple_view(page):
     assert 'id="simple-alert-count"' in dom and "nav-badge" in dom
     dom = page("plant/1a2b3c4d")                                     # a plant: soil, Water now, facts, its chart
     assert "soil-card" in dom and "Water now" in dom and "plant-fact" in dom
+    assert "water-menu d-none" in dom and dom.count('role="menuitem"') == 9   # how long: 1 to 9 s, hidden until asked
     assert "Soil, last 7 days" in dom and 'href="#device/1a2b3c4d"' in dom
     dom = page("alerts")
     assert "basil" in dom and "simple-list" in dom

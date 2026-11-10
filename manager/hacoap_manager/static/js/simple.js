@@ -13,6 +13,7 @@ import { setTheme } from './themes.js';
 
 const simple = { route: null, plants: [], plantId: null, fromWall: false, soon: null };
 
+const PUMP_SECONDS = [1, 2, 3, 4, 5, 6, 7, 8, 9];  // the board's run time: one digit
 const icon = (name) => svg('svg', { class: 'icon', 'aria-hidden': 'true' }, svg('use', { href: `#i-${name}` }));
 const plantHref = (id) => `#plant/${encodeURIComponent(id)}`;
 const has = (v) => v !== null && v !== undefined;
@@ -43,8 +44,10 @@ export function refreshSimple(deviceId) {
   clearTimeout(simple.soon);
   simple.soon = setTimeout(() => {
     if (onPlants) loadPlants().catch(() => {});
-    // Not while a button waits for the board: drawing the page again would lose it
-    else if (!document.querySelector('#plant-page .waiting')) loadPlant(deviceId, simple.fromWall).catch(() => {});
+    // Not while a button waits for the board, or the watering menu is open: drawing the page again would lose it
+    else if (!document.querySelector('#plant-page .waiting, #plant-page .water-menu:not(.d-none)')) {
+      loadPlant(deviceId, simple.fromWall).catch(() => {});
+    }
   }, 2000);
 }
 
@@ -117,11 +120,37 @@ function renderPlant(details) {
     : device.needs_water ? `Needs water now${target ? ` (target ${target} %)` : ''}`
       : target ? (forecast && has(forecast.days) ? `Water ${waterIn(forecast)} (target ${target} %)` : `Waters under ${target} %`)
         : 'No watering target yet (set one in the advanced view)';
-  const pump = (e) => waitForBoard(e.currentTarget, async () => {
-    const result = await api('POST', devicePath(device, '/pump'), { on: true });
-    startPumping(id, result.duration || 1);
-    return result;
-  }, id);
+  // Water now: how long (1 to 9 s, the board's last run time marked), then a confirmation
+  const waterButton = h('button', { class: 'btn btn-primary water', type: 'button', 'aria-haspopup': 'menu',
+    'aria-expanded': 'false', onclick: () => toggleWaterMenu() }, icon('droplets'), ' Water now', icon('chevron-down'));
+  const waterMenu = h('div', { class: 'water-menu d-none', role: 'menu', 'aria-label': `How long to water ${name}` },
+    h('div', { class: 'water-menu-title' }, 'How long?'),
+    h('div', { class: 'water-menu-choices' }, PUMP_SECONDS.map((seconds) => h('button', {
+      type: 'button', role: 'menuitem', class: `btn ${seconds === device.pump_s ? 'btn-primary' : 'btn-outline-secondary'}`,
+      title: seconds === device.pump_s ? 'Its last run time' : null, onclick: () => water(seconds) }, `${seconds} s`))));
+  const closeOutside = (event) => { if (!waterMenu.contains(event.target) && !waterButton.contains(event.target)) toggleWaterMenu(false); };
+  const closeOnEscape = (event) => { if (event.key === 'Escape') { toggleWaterMenu(false); waterButton.focus(); } };
+  function toggleWaterMenu(open = waterMenu.classList.contains('d-none')) {
+    waterMenu.classList.toggle('d-none', !open);
+    waterButton.setAttribute('aria-expanded', String(open));
+    document.removeEventListener('click', closeOutside, true);
+    document.removeEventListener('keydown', closeOnEscape);
+    if (open) {
+      document.addEventListener('click', closeOutside, true);
+      document.addEventListener('keydown', closeOnEscape);
+      (waterMenu.querySelector('.btn-primary') || waterMenu.querySelector('button')).focus({ preventScroll: true });
+      waterMenu.scrollIntoView({ block: 'nearest', behavior: 'smooth' });  // above the bottom bar (scroll-margin)
+    }
+  }
+  function water(seconds) {
+    toggleWaterMenu(false);
+    if (!confirm(`Water ${name} for ${seconds} second${seconds === 1 ? '' : 's'}?`)) return;
+    waitForBoard(waterButton, async () => {
+      const result = await api('POST', devicePath(device, '/pump'), { seconds, on: true });
+      startPumping(id, result.duration || seconds);
+      return result;
+    }, id);
+  }
   const link = details.links && details.links.length ? details.links[details.links.length - 1] : null;
   const low = !onUsb(device) && has(device.battery) && device.battery <= 20;
   const fact = (label, value, note, cls = '') => h('div', { class: `plant-fact ${cls}` },
@@ -145,10 +174,10 @@ function renderPlant(details) {
         target ? h('b', { style: `left: ${target}%`, title: `water under ${target} %` }) : null),
       h('div', { class: 'soil-status' }, status),
       h('div', { class: 'soil-actions' },
-        h('button', { class: 'btn btn-primary water', type: 'button', onclick: pump },
-          icon('droplets'), ` Water now${device.pump_s ? ` · ${device.pump_s} s` : ''}`),
+        waterButton,
         h('button', { class: 'btn btn-outline-secondary beep', type: 'button', title: 'It beeps, so you can find it',
-          onclick: (e) => pingDevice(device, e.currentTarget) }, icon('bell-ring'), ' Beep'))),
+          onclick: (e) => pingDevice(device, e.currentTarget) }, icon('bell-ring'), ' Beep')),
+      waterMenu),
     h('section', { class: 'plant-facts' },
       fact('battery', pct(device.battery), onUsb(device) ? powerText(device) : has(device.battery) ? daysText(health.battery_forecast) : '', low ? 'bad' : ''),
       fact('air', has(device.temperature) ? `${device.temperature} °C` : '–', has(device.air_humidity) ? `${device.air_humidity} % humid` : ''),

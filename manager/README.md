@@ -47,7 +47,7 @@ On a phone (over Remote Desktop, say) the layout narrows: the tabs show in rows 
 **Simple and advanced.** The app opens on its **simple view**, made for a phone: your plants and little else, with three tabs at the bottom.
 
 - **Plants:** a card per plant, each with a ring around its photo (or the logo) that fills with the battery (as on the wall display), its soil moisture and when it will need water. The ones that need water come first, with a banner naming them.
-- **A plant** (tap its card): named by what you called it (its plant field), with the board's own name small under it, and **Rename**; its soil with the watering target, **Water now** and **Beep**, its battery (and how long it lasts, or that it's charging), air and signal, and its soil over the last 7 days. **Advanced details** opens its full device page.
+- **A plant** (tap its card): named by what you called it (its plant field), with the board's own name small under it, and **Rename**; its soil with the watering target, **Water now** (choose how long, 1 to 9 s, with its last run time marked, then confirm "Water ha-coap-9 for 5 seconds?") and **Beep**, its battery (and how long it lasts, or that it's charging), air and signal, and its soil over the last 7 days. **Advanced details** opens its full device page.
 - **Alerts:** the open alerts, with their count on the tab, and what happened lately.
 - **Settings:** the colour theme, notifications, the wall display and weekly summary, and the way to the advanced view.
 
