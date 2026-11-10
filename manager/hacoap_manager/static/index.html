@@ -1060,9 +1060,10 @@
             <p class="small text-body-secondary mb-2">By default only this computer opens the app (and SSH tunnels to
               it). Allowed here, your phone or another computer on the networks you choose (your home network,
               ZeroTier…) opens it too, after signing in with the password. Whoever signs in can update and flash your
-              boards, so choose a strong password. These settings only change on this computer.</p>
-            <div id="remote-local-only" class="small text-warning d-none">These settings only change on the computer
-              the app runs on (or through an SSH tunnel to it).</div>
+              boards, so choose a strong password. These settings only change on the computer the app runs on.</p>
+            <div id="remote-local-only" class="small text-warning d-none mb-2">You're on another device, so they're
+              read-only here. To change them, open the app on its computer, or through an SSH tunnel to it:
+              <code>ssh -N -L 8710:127.0.0.1:8710 hacoap</code>, then <code>http://localhost:8710</code>.</div>
             <form id="remote-form" class="row g-2">
               <div class="col-12">
                 <div class="form-check form-switch">
