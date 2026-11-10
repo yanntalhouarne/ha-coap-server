@@ -51,6 +51,15 @@ def find_nrfutil():
     return next((str(c) for c in candidates if c.is_file()), None)
 
 
+# What a build is signed with: your private key, or MCUboot's public development key (in the SDK),
+# for boards whose bootloader still has the development key
+SIGN_WITH = ("yours", "development")
+
+
+def development_key(repository):
+    return repository / "external" / "bootloader" / "mcuboot" / "root-ec-p256.pem"
+
+
 def signing_key(repository):
     """The private signing key the build will use, or None (development key)."""
     if os.environ.get("HACOAP_SIGNING_KEY"):
@@ -133,6 +142,7 @@ class BuildRunner:
         self.events = events
         self._command = command
         self.current = None      # the running build's record
+        self._sign_with = "yours"  # what the running build was asked to sign with
         self.log = collections.deque(maxlen=5000)
         self._process = None
         self._cancelled = False
@@ -150,7 +160,11 @@ class BuildRunner:
     def running(self):
         return self.current is not None and self.current["result"] == "running"
 
-    def start(self, profile_name, allow_development_key=False):
+    def start(self, profile_name, allow_development_key=False, sign_with="yours"):
+        """sign_with: "yours" (the private key; without one, the development key if allowed), or
+        "development" (MCUboot's development key, for boards whose bootloader still has it)."""
+        if sign_with not in SIGN_WITH:
+            raise BuildError(f"Sign with {' or '.join(SIGN_WITH)}")
         if self.running():
             raise BuildError("A build is already running")
         if self.other_busy():
@@ -158,7 +172,9 @@ class BuildRunner:
         failed = [c for c in self.checks() if c["required"] and not c["ok"]]
         if failed:
             raise BuildError(f"{failed[0]['name']}: {failed[0]['detail']}")
-        if signing_key(self.repository) is None and not allow_development_key:
+        if sign_with == "development" and not development_key(self.repository).is_file():
+            raise BuildError(f"MCUboot's development key isn't in the SDK ({development_key(self.repository)})")
+        if sign_with == "yours" and signing_key(self.repository) is None and not allow_development_key:
             raise BuildError("No private signing key: the image would be signed with the public development key. "
                              "Confirm to build anyway (for a board flashed with the development key).")
         profile = self.db.profile(profile_name)
@@ -179,6 +195,9 @@ class BuildRunner:
         loop = asyncio.get_running_loop()
         command = self._command(self.repository, profile["variant"])
         env = {**os.environ, "HACOAP_EXTRA_CONF": str(conf)}
+        self._sign_with = sign_with
+        if sign_with == "development":
+            env["HACOAP_SIGNING_KEY"] = str(development_key(self.repository))
         threading.Thread(target=self._run, args=(loop, command, env, profile), daemon=True).start()
         self._publish()
         return self.current
@@ -213,8 +232,11 @@ class BuildRunner:
 
     def _finish(self, code, profile):
         log = list(self.log)
-        signing = "private" if any("MCUboot signing key:" in l for l in log) else \
-            "development" if any("No private signing key" in l for l in log) else "unknown"
+        if self._sign_with == "development":
+            signing = "development"  # asked for: the log names a key file either way
+        else:
+            signing = "private" if any("MCUboot signing key:" in l for l in log) else \
+                "development" if any("No private signing key" in l for l in log) else "unknown"
         fields = {"finished": time.time(), "signing": signing, "log": "\n".join(log)}
         if self._cancelled:
             fields.update(result="cancelled", message="Cancelled")

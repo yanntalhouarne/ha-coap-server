@@ -163,6 +163,7 @@ def test_images_tab(page):
 def test_builds_tab(page):
     dom = page("builds")
     assert "Production" in dom and "Sensor sampling period" in dom
+    assert 'id="build-sign-with"' in dom and "the development key" in dom  # what to sign with
     assert "Set up this computer" in dom
     assert "Create my signing key" in dom and "Set my PSKd" in dom   # the fix buttons
     assert "SWD flashing tools" in dom and "J-Link software" in dom   # the optional checks

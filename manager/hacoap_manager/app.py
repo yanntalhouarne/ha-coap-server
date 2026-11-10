@@ -723,7 +723,8 @@ def create_app(services, background_tasks=True, on_quit=None, port=None):
     @app.post("/api/firmware-builds")
     async def start_build(body: dict):
         try:
-            return s.builds.start(str(body.get("profile", "")), bool(body.get("allow_development_key", False)))
+            return s.builds.start(str(body.get("profile", "")), bool(body.get("allow_development_key", False)),
+                                  str(body.get("sign_with", "yours")))
         except (BuildError, kconfig.KconfigError, OSError) as exc:
             raise _bad_request(exc)
 

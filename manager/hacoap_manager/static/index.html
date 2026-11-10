@@ -679,10 +679,17 @@
             <div class="d-flex align-items-center gap-2 mb-2">
               <button class="btn btn-success" id="build-start">Build with this profile</button>
               <button class="btn btn-outline-danger d-none" id="build-cancel">Cancel</button>
+              <label class="small text-body-secondary ms-2" for="build-sign-with">sign with</label>
+              <select class="form-select form-select-sm w-auto" id="build-sign-with">
+                <option value="yours" selected>your key</option>
+                <option value="development">the development key</option>
+              </select>
               <span id="build-status" class="small"></span>
             </div>
             <div class="form-text mb-2">Runs <code>scripts/build</code>, like a terminal would (about 2 minutes), into
-              the variant's usual build folder, then adds the image to the library.</div>
+              the variant's usual build folder, then adds the image to the library. A board takes an update signed
+              with the key its bootloader was made with: <b>your key</b> once its bootloader is yours, <b>the
+              development key</b> while it still has MCUboot's development bootloader.</div>
             <pre class="build-log" id="build-log"></pre>
           </div>
         </div>

@@ -23,7 +23,7 @@ FAKE_BUILD = textwrap.dedent("""
     variant, repository = sys.argv[1], sys.argv[2]
     conf = open(os.environ["HACOAP_EXTRA_CONF"]).read()
     print("Merged configuration", os.environ["HACOAP_EXTRA_CONF"])
-    key = os.path.join(repository, "application", "keys", "mcuboot-signing-key.pem")
+    key = os.environ.get("HACOAP_SIGNING_KEY") or os.path.join(repository, "application", "keys", "mcuboot-signing-key.pem")
     print("-- MCUboot signing key: " + key if os.path.exists(key) else "CMake Warning: No private signing key")
     time.sleep(float(os.environ.get("FAKE_BUILD_SLEEP", "0")))
     if os.environ.get("FAKE_BUILD_EXIT"):
@@ -157,6 +157,25 @@ async def test_development_key_needs_a_confirmation(runner):
     build = await asyncio.wait_for(runner.wait(), 30)
     assert (build["result"], build["signing"]) == ("done", "development")
     assert "DEVELOPMENT KEY" in runner.db.image(build["image_hash"])["notes"]
+
+
+async def test_signing_with_the_development_key(runner):
+    """For boards whose bootloader still has MCUboot's development key: chosen, with a private key there."""
+    with pytest.raises(BuildError, match="development key isn't in the SDK"):
+        runner.start("Production", sign_with="development")
+    dev_key = runner.repository / "external" / "bootloader" / "mcuboot" / "root-ec-p256.pem"
+    dev_key.parent.mkdir(parents=True)
+    dev_key.write_text("development key")
+    with pytest.raises(BuildError, match="Sign with"):
+        runner.start("Production", sign_with="someone else's")
+    runner.start("Production", sign_with="development")
+    build = await runner.wait()
+    assert (build["result"], build["signing"]) == ("done", "development")
+    assert any(f"MCUboot signing key: {dev_key}" in line for line in runner.log)  # the build was given it
+    assert "DEVELOPMENT KEY" in runner.images.db.images()[0]["notes"]  # and the image says so
+    # Your key again: as before
+    runner.start("Production")
+    assert (await runner.wait())["signing"] == "private"
 
 
 async def test_failed_build(runner, monkeypatch):

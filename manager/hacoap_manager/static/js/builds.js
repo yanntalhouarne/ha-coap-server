@@ -193,8 +193,11 @@ export function renderBuildStatus(build) {
 export async function startBuild(allowDevelopmentKey = false) {
   if (!builds.profile) return;
   try {
-    const build = await api('POST', '/api/firmware-builds', { profile: builds.profile.name, allow_development_key: allowDevelopmentKey },
-      { quiet: true });
+    const signWith = document.getElementById('build-sign-with').value;
+    if (signWith === 'development' && !allowDevelopmentKey && !confirm('Sign with MCUboot\'s public development key? '
+      + 'Only boards whose bootloader still has the development key take this image; anyone can sign one like it.')) return;
+    const build = await api('POST', '/api/firmware-builds', { profile: builds.profile.name,
+      allow_development_key: allowDevelopmentKey || signWith === 'development', sign_with: signWith }, { quiet: true });
     builds.buildId = build.id;
     document.getElementById('build-log').textContent = '';
     renderBuildStatus(build);
