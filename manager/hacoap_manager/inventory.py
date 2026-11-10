@@ -27,6 +27,9 @@ RESET_CAUSES = {
 # The ones worth an alert
 BAD_RESETS = ("watchdog", "lockup", "crash")
 
+# A board that stops answering triggers a new browse of the network, at most this often
+REDISCOVER_INTERVAL_S = 300
+
 
 def same_board(reported, device_id):
     """Whether the ID a board gives in 'info' is this device's. Firmware up to d98bac1 cut it to
@@ -58,6 +61,8 @@ class Inventory:
         self.events = events
         self._discover = discover
         self.refreshed = False  # every device asked at least once since the app started
+        self._rediscover_lock = asyncio.Lock()
+        self._last_rediscover = float("-inf")
         self.on_restart = None  # called with (device, cause, fault) after a restart that's a problem
 
     def _changed(self, device):
@@ -119,8 +124,30 @@ class Inventory:
             raise InventoryError(f"Unknown device {device_id}")
         return device
 
-    async def refresh(self, device_id):
-        """Reads 'info', 'data' and (newer firmware) 'diag' over CoAP."""
+    async def _found_again(self, device):
+        """A board that doesn't answer may have a new address (a new border router gives every
+        board one under its own prefix): browse the network again, once for all the boards that
+        stopped answering together and at most every REDISCOVER_INTERVAL_S. Returns its new
+        address, or None."""
+        if self._discover is None:
+            return None
+        async with self._rediscover_lock:
+            if time.monotonic() - self._last_rediscover >= REDISCOVER_INTERVAL_S:
+                self._last_rediscover = time.monotonic()
+                try:
+                    await self.discover()
+                except Exception:  # noqa: BLE001 - no mDNS here, or the network down: as before
+                    log.info("browsing the network again failed", exc_info=True)
+        address = (self.db.device(device["device_id"]) or {}).get("address")
+        if address and address != device["address"]:
+            self.db.add_activity(device["device_id"], "network",
+                                 f"Found at a new address: {address} (was {device['address']})")
+            return address
+        return None
+
+    async def refresh(self, device_id, rediscover=True):
+        """Reads 'info', 'data' and (newer firmware) 'diag' over CoAP. A board that doesn't
+        answer is looked for again on the network, and asked at its new address if it moved."""
         device = self._device(device_id)
         if not device["address"]:
             raise InventoryError(f"{device_id} has no network address")
@@ -136,6 +163,8 @@ class Inventory:
             if isinstance(answer, BaseException):
                 if not isinstance(answer, (coap.CoapError, TimeoutError, OSError)):
                     raise answer
+                if rediscover and await self._found_again(device):
+                    return await self.refresh(device_id, rediscover=False)
                 return self._changed(self.db.upsert_device(device_id, last_error=f"No answer: {answer}"))
         if not same_board(info.device_id, device_id):
             return self._changed(self.db.upsert_device(

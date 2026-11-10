@@ -72,7 +72,7 @@ The **advanced view** is everything below: the tabs at the top, the status bar, 
 - **Activity:** everything that happened, newest first: updates (and failed ones), alerts, parent changes, pump runs started from the app, board restarts, settings changed on a board, plant photos and builds, each linking to its device. **older** goes further back.
 - **Recent updates.**
 
-**Devices.** **Find devices** asks the network for every `ha-coap-*` device (the border router answers for them). Boards with newer firmware also say what they run (their TXT records), which fills in their firmware and hardware at once. You can also add one by its IPv6 address. Each device shows:
+**Devices.** **Find devices** asks the network for every `ha-coap-*` device (the border router answers for them). Boards with newer firmware also say what they run (their TXT records), which fills in their firmware and hardware at once. It also happens by itself when a board stops answering. A new border router gives every board a new address, so the app browses the network again: once for all the boards that went quiet together, at most every 5 minutes. It then asks a board that moved at its new address, and notes the change in its timeline. You can also add one by its IPv6 address. Each device shows:
 - its firmware (the git commit, from `info`)
 - the running image's version and hash, once read over mcumgr
 - its battery, soil and air readings

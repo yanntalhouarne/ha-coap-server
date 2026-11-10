@@ -90,6 +90,38 @@ async def test_add_refresh_ping_and_edit_a_device(client, services, start_sim):
     assert (await client.get("/api/devices")).json() == []
 
 
+async def test_a_board_that_moved_is_found_again(client, services, start_sim, found):
+    """A new border router gives every board a new address: a refresh that gets no answer
+    browses the network again (once for all the boards, and not again for a while)."""
+    server = await start_sim()
+    fast_settings(services.settings, server)
+    await client.post("/api/devices", json={"address": "127.0.0.1"}, headers=CHANGE)
+    services.db.upsert_device("1a2b3c4d", address="127.0.0.2")  # its old address: nothing answers there
+    services.db.upsert_device("5e6f7a8b", name="ha-coap-5e6f7a8b", address="127.0.0.3")  # gone for good
+    found.append(Found("ha-coap-1a2b3c4d", "1a2b3c4d", "127.0.0.1"))
+    calls = []
+    discover = services.inventory._discover
+
+    async def counting(timeout):
+        calls.append(timeout)
+        return await discover(timeout)
+
+    services.inventory._discover = counting
+
+    assert (await client.post("/api/refresh", headers=CHANGE)).status_code == 200
+    devices = {d["device_id"]: d for d in (await client.get("/api/devices")).json()}
+    assert (devices["1a2b3c4d"]["address"], devices["1a2b3c4d"]["online"], devices["1a2b3c4d"]["last_error"]) == \
+        ("127.0.0.1", True, "")
+    assert devices["5e6f7a8b"]["last_error"].startswith("No answer")
+    assert len(calls) == 1
+    timeline = (await client.get("/api/devices/1a2b3c4d/timeline")).json()
+    assert any("Found at a new address: 127.0.0.1 (was 127.0.0.2)" in str(entry) for entry in timeline)
+
+    # The board that's gone doesn't make every refresh browse the network
+    assert (await client.post("/api/devices/5e6f7a8b/refresh", headers=CHANGE)).json()["last_error"].startswith("No answer")
+    assert len(calls) == 1
+
+
 async def test_adding_an_unreachable_device_fails(client, services, start_sim):
     server = await start_sim(drop_coap_first=100)
     fast_settings(services.settings, server)
