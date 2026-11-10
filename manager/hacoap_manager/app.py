@@ -112,6 +112,7 @@ def create_services(data_dir, discover=discovery.discover):
     alerts = AlertService(db, inventory, settings, events)
     updates.on_failure = lambda job, target: alerts.update_failed(job.id, target.device_id, target.label, target.message)
     inventory.on_restart = alerts.restarted
+    inventory.on_pushed = lambda device: alerts.scan()  # a plant that needs water, a board unplugged: at once
     border_router = BorderRouterService(data_dir, settings, events)
     border_router.on_board_joined = inventory.discover  # a board that joined over the air: in the list
     return Services(data_dir, settings, db, events, inventory, images, updates, repository, builds, network,
@@ -209,6 +210,7 @@ def create_app(services, background_tasks=True, on_quit=None, port=None):
             task.cancel()
         if listener is not None:
             await listener.stop()
+        services.inventory.close()
         services.db.close()
 
     app = FastAPI(title="HA-CoAP Fleet Manager", version=__version__, lifespan=lifespan,

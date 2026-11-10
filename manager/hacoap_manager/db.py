@@ -47,7 +47,11 @@ CREATE TABLE IF NOT EXISTS devices (
     tank_ml       INTEGER,                    -- its water tank's size (ml), or NULL: not tracked
     tank_filled   REAL,                       -- when its tank was last refilled (NULL: since it was set)
     pump_ml_s     REAL,                       -- how much its pump moves per second (ml), or NULL: the default
-    watering      TEXT NOT NULL DEFAULT ''    -- its automatic watering rule (JSON, autowater.py), '' when never set
+    watering      TEXT NOT NULL DEFAULT '',   -- its automatic watering rule (JSON, autowater.py), '' when never set
+    hist_boot     INTEGER,                    -- 'hist': the boot its samples were read in...
+    hist_next     INTEGER,                    -- ...and the number of the first one not read yet
+    no_hist_fw    TEXT NOT NULL DEFAULT '',   -- the firmware that didn't answer 'hist' (not asked again)
+    button_s      INTEGER                     -- the pump's run time with its button since boot, as last reported ('diag')
 );
 CREATE TABLE IF NOT EXISTS images (
     hash     TEXT PRIMARY KEY,
@@ -156,7 +160,8 @@ DEVICE_FIELDS = ("name", "address", "serial_port", "fw_version", "hw_version", "
                  "soil_moisture", "battery", "air_humidity", "temperature", "last_seen", "last_error", "notes",
                  "tags", "location", "plant", "water_below", "photo", "boots", "reset_cause", "fault", "uptime_s",
                  "role", "rloc16", "parent_rloc16", "parent_rssi", "link_quality", "soil_mv", "diag_time",
-                 "no_diag_fw", "pump_s", "srp_state", "power", "tank_ml", "tank_filled", "pump_ml_s", "watering")
+                 "no_diag_fw", "pump_s", "srp_state", "power", "tank_ml", "tank_filled", "pump_ml_s", "watering",
+                 "hist_boot", "hist_next", "no_hist_fw", "button_s")
 
 # Columns added after the first version: (table, column, definition), added to older databases
 ADDED_COLUMNS = [
@@ -188,6 +193,10 @@ ADDED_COLUMNS = [
     ("devices", "tank_filled", "REAL"),
     ("devices", "pump_ml_s", "REAL"),
     ("devices", "watering", "TEXT NOT NULL DEFAULT ''"),
+    ("devices", "hist_boot", "INTEGER"),
+    ("devices", "hist_next", "INTEGER"),
+    ("devices", "no_hist_fw", "TEXT NOT NULL DEFAULT ''"),
+    ("devices", "button_s", "INTEGER"),
 ]
 
 
@@ -425,6 +434,17 @@ class Database:
     def network_events_for(self, device_id, limit=50):
         return self._query("SELECT * FROM network_events WHERE device_id = ? ORDER BY id DESC LIMIT ?",
                            (device_id, limit))
+
+    def last_reading_time(self, device_id):
+        rows = self._query("SELECT MAX(time) AS time FROM readings WHERE device_id = ?", (device_id,))
+        return rows[0]["time"] if rows else None
+
+    def add_samples(self, rows):
+        """Adds a board's samples at once: [(device_id, time, battery, soil, air, temperature, power)]."""
+        with self._lock:
+            self._conn.executemany("INSERT INTO readings (device_id, time, battery, soil_moisture, air_humidity, "
+                                   "temperature, power) VALUES (?, ?, ?, ?, ?, ?, ?)", rows)
+            self._conn.commit()
 
     def add_readings(self, rows):
         """Adds many readings at once: [(device_id, time, battery, soil, air, temperature)]."""

@@ -33,6 +33,7 @@ COAP_PORT, SMP_PORT = 15683, 11337
 DAY = 86400
 HISTORY_DAYS = 14
 UPDATED_DAYS_AGO = 7
+DEMO_SAMPLE_S = 300  # the boards sample this often (a board: every 15 minutes), and push what changed
 # name, plant, location, watering target (%), soil drying (% per day)
 PLANTS = [("basil", "basil", "kitchen", 40, 7.0), ("chili", "chili pepper", "balcony", 35, 5.0),
           ("fern", "boston fern", "bathroom", 50, 6.0), ("lemon tree", "lemon tree", "living room", 30, 3.5),
@@ -121,7 +122,7 @@ class Demo:
                 for attempt in range(10):
                     ports = tuple(p + 10 * attempt if p else 0 for p in self.ports)
                     try:
-                        self.servers.append(await simdevice.SimulatorServer(device, host, *ports).start())
+                        self.servers.append(await simdevice.SimulatorServer(device, host, *ports, sample_s=DEMO_SAMPLE_S).start())
                         self.ports = ports
                         break
                     except OSError:
@@ -129,7 +130,7 @@ class Demo:
                             raise
                 continue
             try:
-                self.servers.append(await simdevice.SimulatorServer(device, host, *self.ports).start())
+                self.servers.append(await simdevice.SimulatorServer(device, host, *self.ports, sample_s=DEMO_SAMPLE_S).start())
             except OSError:
                 break   # macOS without extra loopback addresses: fewer boards
         self.border = SimulatedBorderRouter("api", "127.0.0.1", 0, scenario([sv.host for sv in self.servers])).start()

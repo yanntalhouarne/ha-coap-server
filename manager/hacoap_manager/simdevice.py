@@ -44,6 +44,9 @@ RC_OK, RC_EUNKNOWN, RC_EINVAL, RC_ENOTSUP, RC_EBADSTATE = 0, 1, 3, 8, 6
 LOG_KEEP = 4096
 LOG_PAYLOAD_MAX = coap.LOG_PAYLOAD_MAX
 SIM_SAMPLE_S = 20      # the sensors are sampled every 15 min on a board; faster here
+HISTORY_SIZE = 192     # CONFIG_HACOAP_HISTORY_SIZE
+PUSH_SOIL_DELTA = 5    # CONFIG_HACOAP_PUSH_SOIL_DELTA
+PUSH_BATTERY_DELTA = 5  # CONFIG_HACOAP_PUSH_BATTERY_DELTA
 SRP_LEASE_S = 1800     # CONFIG_HACOAP_SRP_LEASE_S
 SRP_KEY_LEASE_S = 14 * 86400  # OpenThread's default: a name stays its key's this long
 SIM_FAST_POLL_S = 30   # CONFIG_HACOAP_MCUMGR_POLL_TIMEOUT_S
@@ -123,6 +126,8 @@ class SimulatedDevice:
     smp_requests: int = 0
     remote_log: bool = True          # the 'log' resource (firmware built with HACOAP_REMOTE_LOG)
     diag: bool = True                # the 'diag' resource and the 'hacoap' mcumgr group (newer firmware)
+    history: bool = True             # the 'hist' resource, observed (newer firmware)
+    button_s: int = 0                # the pump's run time started with its button since boot ('diag')
     rloc16: int = 0x5001             # its short address on the Thread network, reported in 'diag'
     parent_rloc16: int = 0x5000
     boots: int = 1
@@ -147,12 +152,17 @@ class SimulatedDevice:
     _booted: float = 0.0
     _last_sample: float = 0.0
     _last_log_read: float = 0.0
+    _samples: list = field(default_factory=list)  # ('hist') [(uptime_s, soil, battery, air, temperature, power)]
+    _samples_added: int = 0
+    _observer: dict = None          # who observes 'hist': {addr, token, next, sequence}
+    send: object = None             # sends a datagram from its CoAP port: send(data, addr) (SimulatorServer sets it)
 
     def __post_init__(self):
         if self.srp_server is None:
             self.srp_server = SRP_SERVER
         self._boot_log()
         self.srp_register()
+        self.sample()  # the firmware samples at boot
 
     # ------------------------------------------------------------ SRP (application/src/srp.c)
 
@@ -240,6 +250,7 @@ class SimulatedDevice:
             self.battery_start = level + hours * self.battery_drain_per_hour
             self.power = "battery"
             self.log("Power: battery")
+        self.sample()  # the firmware samples when its power changes
 
     @property
     def fw_version(self):
@@ -273,7 +284,10 @@ class SimulatedDevice:
         self.boots += 1
         self.reset_cause, self.fault = cause, fault
         self.samples = 1
+        self.button_s = 0
+        self._samples, self._samples_added, self._observer = [], 0, None
         self._boot_log()
+        self.sample()
         if register:
             self.srp_register()  # with the same key: its name again
 
@@ -303,7 +317,10 @@ class SimulatedDevice:
             text += f",fault={self.fault}"
         text += (f",role=child,srp={self.srp_state},rloc={self.rloc16:04x},parent={self.parent_rloc16:04x},"
                  f"rssi=-62,last_rssi=-60,lq=3")
-        return (text + f",soil_mv={self.soil_mv()},power={self.power}").encode()
+        text += f",soil_mv={self.soil_mv()},power={self.power}"
+        if self.history:
+            text += f",button_s={self.button_s}"  # with 'hist': the same firmware
+        return text.encode()
 
     def _settings_response(self):
         return {"settings": {name: [self.settings[name], *values] for name, values in SETTINGS.items()},
@@ -329,6 +346,50 @@ class SimulatedDevice:
         self.samples += 1
         self._sample_log()
         return {"samples": before}
+
+    # ------------------------------------------------------------ the samples ('hist', application/src/history.c)
+
+    def sample(self):
+        """Takes a sample (as the firmware does every period, at boot and when its power changes),
+        and pushes it to the observer if it changed enough since the last one it was given."""
+        soil, battery, air, temperature = self.readings()
+        power = coap.POWER_NAMES.index(self.power) if self.power in coap.POWER_NAMES else 0
+        entry = (int(time.time() - self._booted), soil, battery, air, temperature if temperature < 128 else temperature - 256, power)
+        self._samples = (self._samples + [entry])[-HISTORY_SIZE:]
+        self._samples_added += 1
+        if self._observer is not None and self.history:
+            given_seq = self._observer["next"] - 1
+            given = self._sample(given_seq)
+            if given is None or abs(entry[1] - given[1]) >= PUSH_SOIL_DELTA or abs(entry[2] - given[2]) >= PUSH_BATTERY_DELTA \
+                    or entry[5] != given[5]:
+                self.notify()
+        return entry
+
+    def _sample(self, seq):
+        oldest = self._samples_added - len(self._samples)
+        return self._samples[seq - oldest] if oldest <= seq < self._samples_added else None
+
+    def history_payload(self, from_seq, size=512):
+        """The 'hist' payload (application/include/history.h), and the number after its last sample."""
+        oldest = self._samples_added - len(self._samples)
+        start = oldest if from_seq < oldest or from_seq > self._samples_added else from_seq
+        count = min(self._samples_added - start, (size - coap.HISTORY_HEADER.size) // coap.HISTORY_ENTRY.size, 255)
+        payload = coap.HISTORY_HEADER.pack(1, count, coap.HISTORY_ENTRY.size, self.boots, int(time.time() - self._booted),
+                                           start, self._samples_added)
+        for seq in range(start, start + count):
+            payload += coap.HISTORY_ENTRY.pack(*self._sample(seq))
+        return payload, start + count
+
+    def notify(self):
+        """Sends the observer the samples it doesn't have (a non-confirmable notification)."""
+        observer = self._observer
+        if observer is None or self.send is None or self._rebooting():
+            return False
+        payload, observer["next"] = self.history_payload(observer["next"])
+        observer["sequence"] = (observer["sequence"] + 1) & 0xFFFFFF
+        self.send(coap.encode(coap.TYPE_NON, coap.CONTENT, (observer["sequence"] + 0x2000) & 0xFFFF, observer["token"],
+                              payload=payload, observe=observer["sequence"]), observer["addr"])
+        return True
 
     # ------------------------------------------------------------ the log over the air
 
@@ -484,7 +545,7 @@ class SimulatedDevice:
 
     # ------------------------------------------------------------ CoAP
 
-    def handle_coap(self, data):
+    def handle_coap(self, data, addr=None):
         if self._rebooting():
             return None
         if self.drop_coap_first > 0:
@@ -515,6 +576,19 @@ class SimulatedDevice:
             if not self.diag:
                 return None  # older firmware: no answer to an unknown resource
             return reply(coap.CONTENT, self.diag_payload())
+        if message.path == "hist" and message.code == coap.GET:
+            if not self.history:
+                return None  # older firmware: no answer to an unknown resource
+            from_seq = next((int(q[5:]) for q in message.query if q.startswith("from=") and q[5:].isdigit()), 0)
+            payload, read_up_to = self.history_payload(from_seq)
+            observe = None
+            if message.observe == 0 and addr is not None:
+                sequence = ((self._observer or {}).get("sequence", 0) + 1) & 0xFFFFFF
+                self._observer = {"addr": addr, "token": message.token, "next": read_up_to, "sequence": sequence}
+                observe = sequence
+            elif message.observe == 1 and self._observer is not None and self._observer["addr"] == addr:
+                self._observer = None
+            return coap.encode(reply_type, coap.CONTENT, message.message_id, message.token, payload=payload, observe=observe)
         if message.path == "log" and message.code == coap.GET:
             if not self.remote_log:
                 return reply(coap.NOT_FOUND)
@@ -544,6 +618,12 @@ class SimulatedDevice:
         # Like the firmware: no answer to a path it doesn't have, or a method a resource doesn't take
         return None
 
+
+    def press_button(self):
+        """S1: the pump runs for its run time (application/src/pump.c), counted in 'diag'."""
+        self.pump_running = True
+        self.button_s += self.pump_duration
+        asyncio.get_running_loop().call_later(self.pump_duration, self._pump_off)
 
     def _pump_off(self):
         self.pump_running = False
@@ -578,7 +658,7 @@ class _CoapProtocol(asyncio.DatagramProtocol):
         self.transport = transport
 
     def datagram_received(self, data, addr):
-        response = self.device.handle_coap(data)
+        response = self.device.handle_coap(data, addr)
         if response is not None:
             self.transport.sendto(response, addr)
 
@@ -586,11 +666,13 @@ class _CoapProtocol(asyncio.DatagramProtocol):
 class SimulatorServer:
     """Serves one SimulatedDevice on a host and two UDP ports (0: any free port)."""
 
-    def __init__(self, device, host="127.0.0.1", smp_port=0, coap_port=0):
+    def __init__(self, device, host="127.0.0.1", smp_port=0, coap_port=0, sample_s=None):
         self.device = device
         self.host = host
         self._requested = (smp_port, coap_port)
         self._transports = []
+        self.sample_s = sample_s  # it samples this often (None: only when asked, as in the tests)
+        self._sampling = None
         self.smp_port = None
         self.coap_port = None
 
@@ -600,11 +682,23 @@ class SimulatorServer:
         smp, _ = await loop.create_datagram_endpoint(lambda: _SmpProtocol(self.device), local_addr=(self.host, smp_port))
         cp, _ = await loop.create_datagram_endpoint(lambda: _CoapProtocol(self.device), local_addr=(self.host, coap_port))
         self._transports = [smp, cp]
+        self.device.send = cp.sendto  # its notifications ('hist' observed)
+        if self.sample_s:
+            self._sampling = asyncio.create_task(self._sample_every(self.sample_s))
         self.smp_port = smp.get_extra_info("sockname")[1]
         self.coap_port = cp.get_extra_info("sockname")[1]
         return self
 
+    async def _sample_every(self, period_s):
+        while True:
+            await asyncio.sleep(period_s)
+            if not self.device._rebooting():
+                self.device.sample()
+
     async def stop(self):
+        if self._sampling is not None:
+            self._sampling.cancel()
+            self._sampling = None
         for transport in self._transports:
             transport.close()
         self._transports = []

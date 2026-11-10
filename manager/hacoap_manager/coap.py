@@ -1,8 +1,10 @@
-"""A small CoAP client (RFC 7252) for the device's resources: 'info', 'data', 'ping', 'diag' and 'log'.
+"""A small CoAP client (RFC 7252) for the device's resources: 'info', 'data', 'ping', 'diag', 'log'
+and 'hist'.
 
 Only what the devices need: GET and PUT, confirmable requests with retransmission,
-piggybacked or separate responses. Timeouts are long because a sleepy device only
-receives a message when it polls its parent (every 3 s by default).
+piggybacked or separate responses, and observing 'hist' (RFC 7641: Observer). Timeouts are
+long because a sleepy device only receives a message when it polls its parent (every 3 s by
+default).
 """
 
 import asyncio
@@ -36,6 +38,8 @@ RESOURCES = [
     {"path": "diag", "methods": ["GET"], "about": "Restarts, crashes, the link to its parent, the soil sensor's output, its power (newer firmware)"},
     {"path": "log", "methods": ["GET"], "about": "Its log since the given offset (query from=<n>; firmware built with Log over the air)",
      "query": "from=0"},
+    {"path": "hist", "methods": ["GET"], "about": "Its latest samples from the given one on (query from=<n>; newer firmware), "
+     "kept while the network is down; observed, it sends the ones that changed", "query": "from=0"},
     {"path": "pump", "methods": ["GET", "PUT"], "about": "1 while the pump runs. PUT 1 runs it (for its run time), 0 stops it",
      "values": ["1", "0"]},
     {"path": "pumpdc", "methods": ["GET", "PUT"], "about": "The pump's run time in seconds. PUT one digit, 1 to 9: kept across restarts",
@@ -43,7 +47,7 @@ RESOURCES = [
     {"path": "ping", "methods": ["PUT"], "about": "Answers 2.04 Changed; 1 beeps, 0 doesn't. Confirmable or not",
      "values": ["1", "0"], "non": True},
 ]
-OPTION_URI_PATH, OPTION_URI_QUERY = 11, 15
+OPTION_OBSERVE, OPTION_URI_PATH, OPTION_URI_QUERY = 6, 11, 15
 
 ACK_TIMEOUT_S = 4.0  # longer than the device's poll period
 MAX_RETRANSMIT = 2
@@ -89,9 +93,17 @@ def _option(delta, value):
     return bytes([(delta_nibble << 4) | length_nibble]) + delta_ext + length_ext + value
 
 
-def encode(msg_type, code, message_id, token, path="", payload=b"", query=()):
+def _uint(value):
+    """An unsigned option value: the fewest bytes, none for 0."""
+    return value.to_bytes((value.bit_length() + 7) // 8, "big") if value else b""
+
+
+def encode(msg_type, code, message_id, token, path="", payload=b"", query=(), observe=None):
     data = bytes([0x40 | (msg_type << 4) | len(token), code]) + struct.pack(">H", message_id) + token
     last = 0
+    if observe is not None:
+        data += _option(OPTION_OBSERVE, _uint(observe))
+        last = OPTION_OBSERVE
     for segment in [s for s in path.split("/") if s]:
         data += _option(OPTION_URI_PATH - last, segment.encode())
         last = OPTION_URI_PATH
@@ -112,6 +124,7 @@ class Message:
     path: str
     payload: bytes
     query: tuple = ()
+    observe: int = None  # its Observe option, if it has one
 
 
 def decode(data):
@@ -129,6 +142,7 @@ def decode(data):
     number = 0
     segments = []
     query = []
+    observe = None
     payload = b""
     while i < len(data):
         if data[i] == 0xFF:
@@ -155,7 +169,9 @@ def decode(data):
             segments.append(value.decode(errors="replace"))
         elif number == OPTION_URI_QUERY:
             query.append(value.decode(errors="replace"))
-    return Message(msg_type, code, message_id, token, "/".join(segments), payload, tuple(query))
+        elif number == OPTION_OBSERVE:
+            observe = int.from_bytes(value, "big")
+    return Message(msg_type, code, message_id, token, "/".join(segments), payload, tuple(query), observe)
 
 
 class _Protocol(asyncio.DatagramProtocol):
@@ -327,6 +343,184 @@ async def get_log(host, offset=0, **kwargs):
     return parse_log(payload)
 
 
+# ---------------------------------------------------------------- the samples a board keeps ('hist')
+
+HISTORY_HEADER = struct.Struct("<BBHIIII")  # application/include/history.h: version, count, entry size, boot, uptime, first, next
+HISTORY_ENTRY = struct.Struct("<IBBBbB")    # uptime, soil, battery, air humidity, temperature, power
+POWER_NAMES = ("battery", "usb", "charging", "charged")  # enum power_source (application/include/power.h)
+
+
+class NoHistory(CoapError):
+    """The board keeps no samples (firmware without 'hist')."""
+
+
+@dataclass
+class Sample:
+    seq: int          # its number since the board's boot
+    uptime_s: int     # when, in seconds since its boot
+    soil_moisture: int
+    battery: int
+    air_humidity: int
+    temperature: int
+    power: str
+
+
+@dataclass
+class History:
+    boot: int         # the board's boot count: another one means a restart (the numbers start again)
+    uptime_s: int     # its uptime when it answered
+    first: int        # the number of the first sample here (later than asked: the ones between are gone)
+    next: int         # the number of its next sample: more to read when it's after the last one here
+    samples: list
+
+    @property
+    def read_up_to(self):
+        """The number after the last sample here: where to read from next."""
+        return self.first + len(self.samples)
+
+    def time_of(self, sample, received_at):
+        """A sample's time, from the board's uptime when it answered."""
+        return received_at - (self.uptime_s - sample.uptime_s)
+
+
+def parse_history(payload):
+    if len(payload) < HISTORY_HEADER.size:
+        raise CoapError(f"unexpected 'hist' payload: {payload[:30]!r}")
+    version, count, size, boot, uptime, first, next_seq = HISTORY_HEADER.unpack_from(payload)
+    if version < 1 or size < HISTORY_ENTRY.size or len(payload) < HISTORY_HEADER.size + count * size:
+        raise CoapError(f"unexpected 'hist' payload: {payload[:30]!r}")
+    samples = []
+    for i in range(count):
+        uptime_s, soil, battery, air, temperature, power = HISTORY_ENTRY.unpack_from(payload, HISTORY_HEADER.size + i * size)
+        samples.append(Sample(first + i, uptime_s, soil, battery, air, temperature,
+                              POWER_NAMES[power] if power < len(POWER_NAMES) else ""))
+    return History(boot, uptime, first, next_seq, samples)
+
+
+async def get_history(host, from_seq=0, **kwargs):
+    """The board's samples from number 'from_seq' on (as many as fit in one answer). Raises
+    NoHistory for firmware without 'hist' that says so, TimeoutError for one that doesn't answer."""
+    code, payload = await request(host, "hist", GET, query=(f"from={from_seq}",), **kwargs)
+    if code == NOT_FOUND:
+        raise NoHistory("this board's firmware keeps no samples")
+    if code != CONTENT:
+        raise CoapError(f"'hist' answered {code_name(code)}")
+    return parse_history(payload)
+
+
+class _ObserverProtocol(asyncio.DatagramProtocol):
+    def __init__(self, observer):
+        self.observer = observer
+        self.transport = None
+
+    def connection_made(self, transport):
+        self.transport = transport
+
+    def datagram_received(self, data, addr):
+        self.observer._received(self.transport, data, addr)
+
+    def error_received(self, exc):
+        pass  # a board out of reach: its registration times out
+
+
+class Observer:
+    """Observes 'hist' on the boards (RFC 7641) from one UDP socket per address family: a
+    registration is a confirmable GET with Observe 0 from it, and the board sends its new samples
+    back to it, to on_notification(host, payload). A board keeps only its newest registration,
+    until its lease ends (2 hours): register again before (each refresh does)."""
+
+    def __init__(self, on_notification):
+        self.on_notification = on_notification
+        self._endpoints = {}   # address family: transport
+        self._tokens = {}      # host: its token (the same at every registration)
+        self._hosts = {}       # token: host
+        self._pending = {}     # token: (message ID, future of the answer)
+        self._acknowledged = set()  # message IDs with an empty ACK: the answer comes on its own
+        self.notifications = 0
+
+    async def _endpoint(self, family):
+        if family not in self._endpoints:
+            loop = asyncio.get_running_loop()
+            local = ("::", 0) if family == socket.AF_INET6 else ("0.0.0.0", 0)
+            transport, _ = await loop.create_datagram_endpoint(lambda: _ObserverProtocol(self), local_addr=local, family=family)
+            self._endpoints[family] = transport
+        return self._endpoints[family]
+
+    def close(self):
+        for transport in self._endpoints.values():
+            transport.close()
+        self._endpoints = {}
+
+    async def register(self, host, path="hist", query=(), *, port=COAP_PORT, ack_timeout=ACK_TIMEOUT_S,
+                       max_retransmit=MAX_RETRANSMIT, timeout=None):
+        """Registers (GET with Observe 0) and returns (code, payload, observed) of the answer:
+        'observed' when the board took the registration (its answer has an Observe option).
+        Raises TimeoutError without an answer, CoapError on a reset."""
+        loop = asyncio.get_running_loop()
+        transport = await self._endpoint(socket.AF_INET6 if ":" in host else socket.AF_INET)
+        token = self._tokens.setdefault(host, os.urandom(8))
+        self._hosts[token] = host
+        message_id = random.randrange(0x10000)
+        data = encode(TYPE_CON, GET, message_id, token, path, query=query, observe=0)
+        future = loop.create_future()
+        self._pending[token] = (message_id, future)
+        if timeout is None:
+            timeout = ack_timeout * (2 ** (max_retransmit + 1) - 1)
+        deadline = loop.time() + timeout
+        wait = ack_timeout
+        try:
+            transport.sendto(data, (host, port))
+            for _ in range(max_retransmit + 1):
+                try:
+                    return await asyncio.wait_for(asyncio.shield(future), max(0.0, min(wait, deadline - loop.time())))
+                except asyncio.TimeoutError:
+                    if loop.time() >= deadline:
+                        break
+                    if message_id not in self._acknowledged:
+                        transport.sendto(data, (host, port))
+                    wait *= 2
+            remaining = deadline - loop.time()
+            if remaining > 0:
+                try:
+                    return await asyncio.wait_for(asyncio.shield(future), remaining)
+                except asyncio.TimeoutError:
+                    pass
+            raise TimeoutError(f"no CoAP response from {host} for '{path}'")
+        finally:
+            if self._pending.get(token, (None, None))[1] is future:
+                del self._pending[token]
+            self._acknowledged.discard(message_id)
+            if not future.done():
+                future.cancel()
+
+    def _received(self, transport, data, addr):
+        try:
+            message = decode(data)
+        except CoapError:
+            return
+        if message.type == TYPE_CON:
+            transport.sendto(encode(TYPE_ACK, 0, message.message_id, b""), addr)  # whatever it is
+        if message.type in (TYPE_ACK, TYPE_RST):
+            for token, (message_id, future) in list(self._pending.items()):
+                if message_id != message.message_id or future.done():
+                    continue
+                if message.type == TYPE_RST:
+                    future.set_exception(CoapError(f"{addr[0]} reset the request"))
+                elif message.code == 0:
+                    self._acknowledged.add(message_id)  # empty ACK: the answer comes separately
+                elif message.token == token:
+                    future.set_result((message.code, message.payload, message.observe is not None))
+                return
+        if message.code < 0x40:
+            return
+        pending = self._pending.get(message.token)
+        if pending is not None and not pending[1].done():
+            pending[1].set_result((message.code, message.payload, message.observe is not None))  # a separate answer
+        elif message.observe is not None and message.code == CONTENT and message.token in self._hosts:
+            self.notifications += 1
+            self.on_notification(self._hosts[message.token], message.payload)
+
+
 @dataclass
 class Diagnostics:
     """The 'diag' payload (application/include/diag.h)."""
@@ -343,6 +537,7 @@ class Diagnostics:
     link_quality: int | None
     soil_mv: int | None   # the soil sensor's latest output, or None when it wasn't read
     power: str = ""        # battery, usb, charging or charged ("" before this field)
+    button_s: int | None = None  # the pump's run time started with its button since boot (s; None before this field)
 
 
 def parse_diag(payload):
@@ -366,7 +561,8 @@ def parse_diag(payload):
     soil_mv = number("soil_mv")
     return Diagnostics(number("boots") or 0, number("up") or 0, fields["reset"], fields.get("fault", ""),
                        fields.get("role", ""), fields.get("srp", ""), hex16("rloc"), hex16("parent"), number("rssi"), number("last_rssi"),
-                       number("lq"), soil_mv if soil_mv is not None and soil_mv >= 0 else None, fields.get("power", ""))
+                       number("lq"), soil_mv if soil_mv is not None and soil_mv >= 0 else None, fields.get("power", ""),
+                       number("button_s"))
 
 
 async def get_diag(host, **kwargs):
@@ -397,6 +593,13 @@ def describe(path, code, payload):
             decoded = [["pump", "running" if payload[:1] == b"1" else "stopped"]]
         elif code == CONTENT and path == "pumpdc" and payload:
             decoded = [["run time", f"{payload[0] - 48 if 48 <= payload[0] <= 57 else payload[0]} s"]]
+        elif code == CONTENT and path == "hist":
+            history = parse_history(payload)
+            decoded = [["boot", str(history.boot)], ["samples here", f"{history.first} to {history.read_up_to - 1}"
+                        if history.samples else "none"], ["next sample", str(history.next)]]
+            decoded += [[f"#{s.seq}", f"{s.uptime_s} s after boot: soil {s.soil_moisture} %, battery {s.battery} %, "
+                         f"{s.air_humidity} % humid, {s.temperature} °C, {s.power}"] for s in history.samples[-12:]]
+            text = ""
         elif code == CONTENT and path == "log":
             chunk = parse_log(payload)
             decoded = [["boot", chunk.boot_id], ["from offset", str(chunk.start)],

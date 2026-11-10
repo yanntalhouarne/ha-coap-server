@@ -1,4 +1,8 @@
-"""The fleet inventory: finds devices, and keeps their status up to date over CoAP and mcumgr."""
+"""The fleet inventory: finds devices, and keeps their status up to date over CoAP and mcumgr.
+
+Newer firmware keeps its latest samples ('hist'): each refresh reads the ones the app doesn't have
+(after the network was down, they fill the gap) and registers to observe them, so a sample that
+changed (a plant watered, a board plugged in) arrives as it's taken (on_history)."""
 
 import asyncio
 import logging
@@ -29,6 +33,9 @@ BAD_RESETS = ("watchdog", "lockup", "crash")
 
 # A board that stops answering triggers a new browse of the network, at most this often
 REDISCOVER_INTERVAL_S = 300
+
+HISTORY_READS = 8      # answers read at most at a refresh (54 samples each: more than the board keeps)
+SAMPLE_MARGIN_S = 1    # a sample this close after the last reading kept is that one again (its time is to the second)
 
 
 def same_board(reported, device_id):
@@ -64,6 +71,8 @@ class Inventory:
         self._rediscover_lock = asyncio.Lock()
         self._last_rediscover = float("-inf")
         self.on_restart = None  # called with (device, cause, fault) after a restart that's a problem
+        self.on_pushed = None   # called with the device after it pushed new samples
+        self.observer = None    # observes the boards' 'hist' (coap.Observer), from the first refresh
 
     def _changed(self, device):
         self.events.publish("device", device=self.describe(device))
@@ -155,18 +164,100 @@ class Inventory:
             return address
         return None
 
+    def close(self):
+        if self.observer is not None:
+            self.observer.close()
+            self.observer = None
+
+    async def _observe_history(self, address, from_seq, options):
+        """Reads the board's samples from 'from_seq' on, and registers to be sent its new ones."""
+        if self.observer is None:
+            self.observer = coap.Observer(self.on_history)
+        code, payload, _ = await self.observer.register(address, "hist", (f"from={from_seq}",), **options)
+        if code == coap.NOT_FOUND:
+            raise coap.NoHistory("this board's firmware keeps no samples")
+        if code != coap.CONTENT:
+            raise coap.CoapError(f"'hist' answered {coap.code_name(code)}")
+        return coap.parse_history(payload)
+
+    def _store_samples(self, device_id, history, received_at):
+        """Keeps the samples the app doesn't have: in the boot it read last, those from the first
+        one it didn't read; else (the first read, or after a restart) those newer than its last
+        reading kept. Returns the newest sample, or None."""
+        known = self.db.device(device_id) or {}
+        same_boot = known.get("hist_boot") == history.boot and known.get("hist_next") is not None
+        last = None if same_boot else (self.db.last_reading_time(device_id) or 0)
+        rows = []
+        for sample in history.samples:
+            when = min(history.time_of(sample, received_at), received_at)
+            new = sample.seq >= known["hist_next"] if same_boot else when > last + SAMPLE_MARGIN_S
+            if new:
+                rows.append((device_id, when, sample.battery, sample.soil_moisture, sample.air_humidity,
+                             sample.temperature, sample.power))
+        if rows:
+            self.db.add_samples(rows)
+        self.db.upsert_device(device_id, hist_boot=history.boot, hist_next=history.read_up_to)
+        return history.samples[-1] if history.samples else None
+
+    async def _read_more_history(self, device, history, options):
+        """The rest of the samples, when there were more than fit in one answer (from its first,
+        after it restarted: the number asked was the boot before's)."""
+        received_at = time.time()
+        if history.boot != device["hist_boot"] and history.first > 0:
+            try:
+                history = await coap.get_history(device["address"], 0, **options)
+            except (coap.CoapError, TimeoutError, OSError):
+                pass  # what came, then
+            received_at = time.time()
+        for _ in range(HISTORY_READS):
+            self._store_samples(device["device_id"], history, received_at)
+            if history.read_up_to >= history.next or not history.samples:
+                return
+            try:
+                history = await coap.get_history(device["address"], history.read_up_to, **options)
+            except (coap.CoapError, TimeoutError, OSError):
+                return  # the rest at the next refresh
+            received_at = time.time()
+
+    def on_history(self, host, payload):
+        """A board pushed its new samples (it observed 'hist' changed): kept, and its readings now."""
+        device = next((d for d in self.db.devices() if d["address"] == host), None)
+        if device is None:
+            return
+        try:
+            history = coap.parse_history(payload)
+        except coap.CoapError:
+            return
+        newest = self._store_samples(device["device_id"], history, time.time())
+        if newest is None:
+            return
+        fields = dict(soil_moisture=newest.soil_moisture, battery=newest.battery, air_humidity=newest.air_humidity,
+                      temperature=newest.temperature, last_seen=time.time(), last_error="")
+        if newest.power:
+            if device["power"] and newest.power != device["power"] and newest.power in POWER_CHANGES:
+                self.db.add_activity(device["device_id"], "power", POWER_CHANGES[newest.power])
+            fields["power"] = newest.power
+        device = self._changed(self.db.upsert_device(device["device_id"], **fields))
+        if self.on_pushed is not None:
+            self.on_pushed(device)
+
     async def refresh(self, device_id, rediscover=True):
-        """Reads 'info', 'data' and (newer firmware) 'diag' over CoAP. A board that doesn't
-        answer is looked for again on the network, and asked at its new address if it moved."""
+        """Reads 'info', 'data' and (newer firmware) 'diag' and 'hist' over CoAP. A board that
+        doesn't answer is looked for again on the network, and asked at its new address if it moved."""
         device = self._device(device_id)
         if not device["address"]:
             raise InventoryError(f"{device_id} has no network address")
         options = self._coap_options()
-        # Firmware without 'diag' doesn't answer it: once seen, not asked again until an update.
+        # Firmware without 'diag' or 'hist' doesn't answer them: once seen, not asked again until an update.
         ask_diag = not device["no_diag_fw"] or device["no_diag_fw"] != device["fw_version"]
+        ask_hist = not device["no_hist_fw"] or device["no_hist_fw"] != device["fw_version"]
         requests = [coap.get_info(device["address"], **options), coap.get_data(device["address"], **options)]
         if ask_diag:
             requests.append(coap.get_diag(device["address"], **options))
+        if ask_hist:
+            # From the first sample it doesn't have (all of them after a restart: the board's numbers start again)
+            same_boot = device["hist_boot"] is not None and device["hist_boot"] == device["boots"]
+            requests.append(self._observe_history(device["address"], device["hist_next"] if same_boot else 0, options))
         answers = await asyncio.gather(*requests, return_exceptions=True)
         info, data = answers[:2]
         for answer in (info, data):
@@ -190,9 +281,18 @@ class Inventory:
                 fields["no_diag_fw"] = info.fw_version  # older firmware
             elif isinstance(diag, BaseException) and not isinstance(diag, OSError):
                 raise diag
-        # With its power then: readings on USB don't count in the battery's drain
-        self.db.add_reading(device_id, data.battery, data.soil_moisture, data.air_humidity, data.temperature,
-                            power=fields.get("power", ""))
+        history = answers[-1] if ask_hist else None
+        if isinstance(history, coap.History):
+            fields["no_hist_fw"] = ""
+            await self._read_more_history(device, history, options)  # its samples are its readings
+        else:
+            if ask_hist and isinstance(history, (TimeoutError, coap.CoapError)):
+                fields["no_hist_fw"] = info.fw_version  # older firmware
+            elif ask_hist and isinstance(history, BaseException) and not isinstance(history, OSError):
+                raise history
+            # With its power then: readings on USB don't count in the battery's drain
+            self.db.add_reading(device_id, data.battery, data.soil_moisture, data.air_humidity, data.temperature,
+                                power=fields.get("power", ""))
         return self._changed(self.db.upsert_device(device_id, **fields))
 
     def _diagnostics(self, device, diag):
@@ -208,11 +308,22 @@ class Inventory:
             self.db.add_activity(device["device_id"], "restart", message, when=now - diag.uptime_s)
             if diag.reset in BAD_RESETS and self.on_restart is not None:
                 self.on_restart(device, diag.reset, diag.fault)
-        if diag.power and device["power"] and diag.power != device["power"] and diag.power in POWER_CHANGES:
+        # Its power now, not as the refresh started: a sample it pushed meanwhile may have told already
+        power = (self.db.device(device["device_id"]) or device)["power"]
+        if diag.power and power and diag.power != power and diag.power in POWER_CHANGES:
             self.db.add_activity(device["device_id"], "power", POWER_CHANGES[diag.power])
-        return dict(boots=diag.boots, reset_cause=diag.reset, fault=diag.fault, uptime_s=diag.uptime_s,
-                    role=diag.role, srp_state=diag.srp, rloc16=diag.rloc16, parent_rloc16=diag.parent, parent_rssi=diag.rssi,
-                    link_quality=diag.link_quality, soil_mv=diag.soil_mv, diag_time=now, no_diag_fw="", power=diag.power)
+        fields = dict(boots=diag.boots, reset_cause=diag.reset, fault=diag.fault, uptime_s=diag.uptime_s,
+                      role=diag.role, srp_state=diag.srp, rloc16=diag.rloc16, parent_rloc16=diag.parent, parent_rssi=diag.rssi,
+                      link_quality=diag.link_quality, soil_mv=diag.soil_mv, diag_time=now, no_diag_fw="", power=diag.power)
+        if diag.button_s is not None:
+            # Its pump's runs with its button since the last answer (all of them since boot after a
+            # restart), for its water tank. Not known before the first answer.
+            restarted = previous is not None and diag.boots != previous
+            ran = diag.button_s if restarted else diag.button_s - (device["button_s"] or 0)
+            if device["button_s"] is not None and ran > 0:
+                self.db.add_activity(device["device_id"], "pump", f"Pump run with its button ({ran} s)")
+            fields["button_s"] = diag.button_s
+        return fields
 
     async def refresh_all(self, concurrency=4):
         semaphore = asyncio.Semaphore(concurrency)
