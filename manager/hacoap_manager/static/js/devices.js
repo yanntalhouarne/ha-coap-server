@@ -25,7 +25,15 @@ export async function loadDevices() {
   if (currentRoute().split('/')[0] === 'console') renderConsoleBoards();
 }
 
-export function deviceName(device) { return device.name || device.device_id; }
+// What a device is called: the name given to it (its plant field, set from the simple view or its
+// page), else the board's own name (ha-coap-<ID>), else its ID. The server does the same (naming.py).
+export function deviceName(device) { return (device.plant || '').trim() || device.name || device.device_id; }
+
+// The board's own name, when the device is called something else: shown next to it, so both can be found
+export function otherName(device) {
+  const own = device.name || device.device_id;
+  return own !== deviceName(device) ? own : '';
+}
 
 // Boards removed from the list, during the seconds their removal can be undone
 export const removing = new Set();
@@ -140,8 +148,7 @@ function deviceCard(device) {
         : svg('svg', { viewBox: '0 0 512 512', class: 'card-glyph' }, svg('use', { href: '#hacoap-glyph' }))),
     h('div', { class: 'card-main' },
       h('a', { class: 'card-name', href: `#device/${encodeURIComponent(id)}` }, deviceName(device)),
-      h('div', { class: 'card-sub' }, [device.plant && device.plant.toLowerCase() !== deviceName(device).toLowerCase() ? device.plant : null,
-        device.location].filter(Boolean).join(' · ') || '\u00a0'),
+      h('div', { class: 'card-sub' }, [otherName(device), device.location].filter(Boolean).join(' · ') || '\u00a0'),
       h('div', { class: 'card-stats' }, soilGauge(device.soil_moisture, device.water_target, 64, `card:${id}:soil`),
         h('div', { class: 'card-figures' },
           h('div', {}, h('span', { class: 'card-label' }, 'battery'), battery, powerIcon(device)),
@@ -562,7 +569,7 @@ export function labelCard(device) {
     svg('svg', { class: 'label-logo', viewBox: '0 0 512 512' }, svg('use', { href: '#hacoap-glyph' })),
     h('div', { class: 'label-text' },
       h('div', { class: 'label-name' }, deviceName(device)),
-      device.plant && device.plant.toLowerCase() !== deviceName(device).toLowerCase() ? h('div', { class: 'label-plant' }, device.plant) : null,
+      otherName(device) ? h('div', { class: 'label-plant' }, otherName(device)) : null,
       device.location ? h('div', { class: 'label-detail' }, device.location) : null,
       h('div', { class: 'label-id' }, `ID ${device.device_id}`)));
 }

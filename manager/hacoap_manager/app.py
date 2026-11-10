@@ -24,7 +24,7 @@ from fastapi.staticfiles import StaticFiles
 import re
 
 from . import (__version__, autostart, backup, coap, config, demo, discovery, feed, fleet, homeassistant, housekeeping,
-               kconfig, mcuboot, otctl, remote, report, serial_ports, signing, summary, swd)
+               kconfig, mcuboot, naming, otctl, remote, report, serial_ports, signing, summary, swd)
 from .alerts import AlertService
 from .appupdate import UpdateCheck
 from .borderrouter import BorderRouterService, BorderRouterSetupError
@@ -1172,7 +1172,7 @@ def create_app(services, background_tasks=True, on_quit=None, port=None):
         known = {d["device_id"]: d for d in s.db.devices()}
         for board in boards:
             device = known.get(board["device_id"])
-            board["name"] = (device["name"] or device["device_id"]) if device else ""
+            board["name"] = naming.display_name(device) if device else ""
         return {**about, "boards": boards}
 
     @app.post("/api/home-assistant/import")

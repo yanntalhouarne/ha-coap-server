@@ -13,6 +13,7 @@ import socket
 import time
 
 from . import coap, discovery
+from .naming import display_name
 from .mcumgr import DeviceLink, McumgrError
 from .otbr import BorderRouter, BorderRouterError
 from .otctl import CliBorderRouter
@@ -142,7 +143,7 @@ class Doctor:
 
     async def _time_device(self, device):
         """How fast a board answers CoAP and mcumgr, and an update's upload time from that."""
-        result = {"device_id": device["device_id"], "name": device["name"] or device["device_id"],
+        result = {"device_id": device["device_id"], "name": display_name(device),
                   "address": device["address"], "coap_ms": None, "mcumgr_first_ms": None, "mcumgr_ms": None,
                   "upload_s": None, "error": ""}
         options = {"port": self.settings.coap_port, "ack_timeout": self.settings.coap_timeout_s, "max_retransmit": 1}

@@ -5,6 +5,7 @@ updates and the network's parent changes."""
 import time
 
 from . import fleet
+from .naming import display_name
 
 DAY = 86400
 
@@ -33,7 +34,7 @@ def build(db, inventory, settings, days=7, end=None):
     for device in inventory.devices():
         device_id = device["device_id"]
         readings = db.readings_between(device_id, start, end)
-        name = device["name"] or device_id
+        name = display_name(device)
         soil = _span([r["soil_moisture"] for r in readings])
         runs = [a for a in activity if a["device_id"] == device_id and a["kind"] == "pump"]
         forecast = fleet.water_forecast(db.readings(device_id, since=end - 14 * DAY), device["water_target"], end)
@@ -46,7 +47,7 @@ def build(db, inventory, settings, days=7, end=None):
         batteries.append({"device_id": device_id, "name": name, "battery": battery,
                           "per_day": rate["per_day"] if rate else None,
                           "image_version": device["image_version"], "image_hash": device["image_hash"]})
-    names = {d["device_id"]: d["name"] or d["device_id"] for d in inventory.devices()}
+    names = {d["device_id"]: display_name(d) for d in inventory.devices()}
     updates = db.updates_between(start, end)
     return {
         "start": start, "end": end, "days": days,

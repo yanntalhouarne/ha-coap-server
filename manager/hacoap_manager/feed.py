@@ -3,6 +3,7 @@ parent changes, what the app did to a board (pump runs, settings) and its restar
 photos and builds."""
 
 from .alerts import NAME
+from .naming import display_name
 
 # Each source: (table, its time column, the columns it brings). Only these tables are read.
 SOURCES = {
@@ -31,7 +32,7 @@ def _text(kind, row, name):
 def build(db, inventory, photos, before=None, limit=30):
     """[{time, kind, text, device_id, name}], newest first, older than 'before' (a time; all if None)."""
     before = before or float("inf")
-    names = {d["device_id"]: d["name"] or d["device_id"] for d in inventory.devices()}
+    names = {d["device_id"]: display_name(d) for d in inventory.devices()}
     entries = []
     for kind, (table, column, columns) in SOURCES.items():
         for row in db.recent(table, column, columns, before, limit):
@@ -55,7 +56,7 @@ def device_timeline(db, device, photos, limit=300):
     kinds: update (and failed), restart, pump, settings, network (its parent, or its network
     forgotten), photo, alert."""
     device_id = device["device_id"]
-    name = device["name"] or device_id
+    name = display_name(device)
     entries = []
     for row in db.updates(device_id, limit=limit):
         if not row["finished"]:

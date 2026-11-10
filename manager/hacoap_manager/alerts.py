@@ -8,6 +8,7 @@ an alert follows a rename."""
 import time
 
 from . import fleet
+from .naming import display_name
 from .inventory import reset_text
 
 NAME = "{name}"
@@ -44,7 +45,7 @@ class AlertService:
         if NAME not in alert["message"]:
             return alert
         device = self.db.device(alert["device_id"]) if alert["device_id"] else None
-        name = (device and device["name"]) or alert["device_id"] or "A device"
+        name = display_name(device) or alert["device_id"] or "A device"
         return {**alert, "message": alert["message"].replace(NAME, name)}
 
     def scan(self):

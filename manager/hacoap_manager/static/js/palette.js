@@ -3,7 +3,7 @@
 import { TABS } from './tabs.js';
 import { checkAppUpdate, notificationsOn, toggleNotifications } from './dashboard.js';
 import { cycleTheme, setTheme, showShortcuts } from './themes.js';
-import { deviceName, runDoctor } from './devices.js';
+import { deviceName, otherName, runDoctor } from './devices.js';
 import { h, state } from './core.js';
 
 // ------------------------------------------------------------------ search (Ctrl+K)
@@ -23,7 +23,7 @@ export const download = (url) => () => { window.location.href = url; };
 export function paletteItems() {
   const items = TABS.map((tab, i) => ({ kind: 'tab', label: tab, hint: `key ${(i + 1) % 10}`, run: () => { location.hash = `#${tab}`; } }));
   for (const device of [...state.devices.values()].sort((a, b) => deviceName(a).localeCompare(deviceName(b)))) {
-    items.push({ kind: 'device', label: deviceName(device), hint: [device.plant, device.location, device.device_id].filter(Boolean).join(' · '),
+    items.push({ kind: 'device', label: deviceName(device), hint: [otherName(device), device.location, device.device_id].filter(Boolean).join(' · '),
       run: () => { location.hash = `#device/${encodeURIComponent(device.device_id)}`; } });
   }
   const action = (label, hint, run) => items.push({ kind: 'action', label, hint, run });

@@ -1048,6 +1048,8 @@ td.flip { display: table-cell; animation: flip-cell 1.4s ease-out; }
 .graph-swatch { width: 1.2rem; height: .5rem; }
 .graph-swatch line { stroke-width: 3; stroke-linecap: round; }
 .graph-key-value { color: var(--t-text-muted); font-size: .75rem; }
+.device-title-board { color: var(--t-text-muted); font-size: .55em; font-weight: 400; margin-left: .6rem; }
+.graph-key-board { color: var(--t-text-muted); font-size: .7rem; margin-left: .3rem; }
 .graph-legend-actions { margin-left: auto; }
 
 /* Nine tabs on one line while they fit: the key numbers go first, then the icons, as the window narrows */

@@ -5,7 +5,7 @@
 import { ago, api, busy, h, notify, onUsb, pct, photoUrl, powerText, state, svg, when } from './core.js';
 import { currentRoute } from './tabs.js';
 import { daysText } from './dashboard.js';
-import { deviceName, devicePath, pingDevice } from './devices.js';
+import { deviceName, devicePath, otherName, pingDevice } from './devices.js';
 import { startPumping, waitForBoard } from './motion.js';
 import { renderChannelScan, renderFloorplan } from './floorplan.js';
 import { renderNetFrame, renderNetworkEvents } from './netframe.js';
@@ -97,6 +97,9 @@ export function nodeShape(node, scale = 1, quality = undefined) {
 }
 
 export function nodeLabel(node) {
+  // A board: what it's called now (a renamed board shows its new name before the next reading)
+  const device = node.device_id && state.devices.get(node.device_id);
+  if (device) return deviceName(device);
   if (node.name) return node.name;
   if (node.border_router) return 'Border router';
   if (node.hostname && node.kind === 'router') return node.hostname;
@@ -488,7 +491,7 @@ export function showTip(id) {
   const hops = tree.hops.get(id);
   const badge = nodeBadge(node);
   const lines = device
-    ? [device.plant && device.plant.toLowerCase() !== deviceName(device).toLowerCase() ? device.plant : null,
+    ? [otherName(device) || null,
       `soil ${pct(device.soil_moisture)} · battery ${pct(device.battery)}${onUsb(device) ? ` (${powerText(device)})` : ''}`, badge ? badge.text : null]
     : [nodeStyle(node).label];
   if (way) lines.push(`to ${node.parent ? 'its parent' : 'the next router'}: ${linkStrength(way).text}`);
@@ -693,8 +696,7 @@ export function boardCard(device) {
     h('div', { class: 'net-stat-label' }, label), h('div', { class: 'net-stat-value' }, value), note);
   const card = h('div', { class: 'net-board' }, photo,
     h('div', { class: 'net-board-name' }, deviceName(device)),
-    device.plant && device.plant.toLowerCase() !== deviceName(device).toLowerCase()
-      ? h('div', { class: 'net-board-plant' }, device.plant) : null,
+    otherName(device) ? h('div', { class: 'net-board-plant' }, otherName(device)) : null,
     h('div', { class: 'text-body-secondary mb-2' }, h('span', { class: `online-dot ${device.online ? 'on' : 'off'}` }),
       device.online ? 'online' : 'offline', device.last_seen ? ` · read ${ago(device.last_seen)}` : ''),
     h('div', { class: 'net-stats' },

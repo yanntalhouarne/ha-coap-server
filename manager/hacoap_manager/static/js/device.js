@@ -3,7 +3,7 @@
 import { ago, api, busy, h, notify, onUsb, pct, photoUrl, powerText, shortHash, state, svg, when } from './core.js';
 import { daysText, renderDeviceDrain } from './dashboard.js';
 import { detailsTable, waterIn } from './network.js';
-import { deviceName, devicePath, deviceTags, pingDevice, refreshDevice, removeDevice, runDoctor, showSlots, soilGauge } from './devices.js';
+import { deviceName, devicePath, deviceTags, otherName, pingDevice, refreshDevice, removeDevice, runDoctor, showSlots, soilGauge } from './devices.js';
 import { lineChart } from './charts.js';
 import { prepareUpdate, statusClass } from './updates.js';
 import { renderBoardSettings, renderDeviceHealth } from './board.js';
@@ -55,7 +55,8 @@ export async function loadDevicePage(id) {
 export function renderDeviceStatus(device) {
   if (device.device_id !== devicePage.id) return;
   const forecast = devicePage.details && devicePage.details.health.battery_forecast;
-  document.getElementById('device-title').textContent = deviceName(device);
+  document.getElementById('device-title').replaceChildren(deviceName(device),
+    otherName(device) ? h('small', { class: 'device-title-board' }, otherName(device)) : '');
   document.getElementById('device-badges').replaceChildren(
     h('span', { class: `online-dot ${device.online ? 'on' : 'off'}` }), device.online ? 'online' : 'offline',
     ...deviceTags(device).map((t) => h('span', { class: 'tag ms-2' }, t)));

@@ -2,7 +2,7 @@
 // method, the resources that take it (or another path), a payload, and the answer decoded.
 
 import { api, busy, h, state } from './core.js';
-import { deviceName } from './devices.js';
+import { deviceName, otherName } from './devices.js';
 
 const OTHER = '__other__';
 const HISTORY_MAX = 30;
@@ -25,8 +25,8 @@ function renderBoards() {
   const previous = select.value || [...state.selected][0] || '';
   const devices = [...state.devices.values()].filter((d) => d.address)
     .sort((a, b) => deviceName(a).localeCompare(deviceName(b)));
-  // Its plant too, unless the board is already named after it
-  const plant = (d) => (d.plant && d.plant.toLowerCase() !== deviceName(d).toLowerCase() ? ` · ${d.plant}` : '');
+  // The board's own name too, when it's called something else
+  const plant = (d) => (otherName(d) ? ` · ${otherName(d)}` : '');
   select.replaceChildren(...(devices.length ? devices.map((d) => h('option', { value: d.device_id },
     `${deviceName(d)}${plant(d)}${d.online ? '' : ' (offline)'}`)) : [h('option', { value: '' }, 'No boards with an address')]));
   if (devices.some((d) => d.device_id === previous)) select.value = previous;

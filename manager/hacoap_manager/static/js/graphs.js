@@ -95,7 +95,9 @@ function renderGraph() {
       onfocus: () => highlight(s.name), onblur: () => highlight(null) },
     svg('svg', { class: 'graph-swatch', viewBox: '0 0 18 6', 'aria-hidden': 'true' },
       svg('line', { x1: 1, y1: 3, x2: 17, y2: 3, style: `stroke: ${s.color}`, 'stroke-dasharray': s.dashed ? '4 3' : null })),
-    h('span', { class: 'graph-key-name' }, s.name), h('span', { class: 'graph-key-value' }, latest(s)))),
+    h('span', { class: 'graph-key-name' }, s.name,
+      s.board && s.board !== s.name ? h('span', { class: 'graph-key-board' }, s.board.replace(/^ha-coap-/, '')) : null),
+    h('span', { class: 'graph-key-value' }, latest(s)))),
     inGroup.length ? h('span', { class: 'graph-legend-actions' },
       h('button', { type: 'button', class: 'btn btn-sm btn-link', onclick: () => {
         for (const s of inGroup) graph.hidden.delete(s.device_id);

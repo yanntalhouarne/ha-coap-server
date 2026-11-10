@@ -9,6 +9,7 @@ import zlib
 from pathlib import Path
 
 from .otbr import BorderRouter, BorderRouterError
+from .naming import board_name, display_name
 from .otctl import CliBorderRouter
 from .pictures import PictureError, picture_type
 
@@ -167,7 +168,8 @@ class NetworkService:
         for node_id, device in boards.items():
             node = nodes[node_id]
             node["device_id"] = device["device_id"]
-            node["name"] = device["name"] or device["device_id"]
+            node["name"] = display_name(device)
+            node["board"] = board_name(device)
             parent = nodes.get(node.get("parent"), {})
             if device["parent_rssi"] is None or device["parent_rloc16"] != parent.get("rloc16_hex"):
                 continue

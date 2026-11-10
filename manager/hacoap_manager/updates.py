@@ -23,6 +23,7 @@ import uuid
 from dataclasses import asdict, dataclass, field, fields
 
 from .mcumgr import DeviceLink, McumgrError
+from .naming import display_name
 
 log = logging.getLogger(__name__)
 
@@ -114,7 +115,7 @@ class UpdateManager:
             else:
                 raise UpdateError(f"Unknown transport {transport!r}")
             device = self.db.device(device_id) if device_id else None
-            label = (device["name"] if device and device["name"] else device_id) or f"USB {address}"
+            label = (display_name(device) if device else device_id) or f"USB {address}"
             job_targets.append(Target(device_id, transport, address, label=label))
 
         job = UpdateJob(uuid.uuid4().hex[:12], image_hash, image["version"], job_targets, stop_on_failure,

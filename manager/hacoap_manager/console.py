@@ -12,6 +12,7 @@ import re
 import threading
 
 from . import coap
+from .naming import display_name
 
 KEEP_LINES = 2000
 ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")  # colour codes in Zephyr's log output
@@ -69,7 +70,7 @@ class SerialConsole:
         if not device["address"]:
             raise ConsoleError("This device has no network address yet")
         self.close()
-        self.source, self.device_id, self.device_name = "air", device["device_id"], device["name"] or device["device_id"]
+        self.source, self.device_id, self.device_name = "air", device["device_id"], display_name(device)
         self._loop = asyncio.get_running_loop()
         self.lines.clear()
         self._task = self._loop.create_task(self._poll(device["address"], coap_options))

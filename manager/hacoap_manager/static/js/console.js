@@ -1,7 +1,7 @@
 // The Console tab: what a board prints, on a USB serial port or (its log) over the air.
 
 import { api, busy, h, notify, state } from './core.js';
-import { deviceName } from './devices.js';
+import { deviceName, otherName } from './devices.js';
 import { renderActivity } from './live.js';
 
 // ------------------------------------------------------------------ console
@@ -37,7 +37,7 @@ export function renderConsoleBoards() {
   const devices = [...state.devices.values()].filter((d) => d.address)
     .sort((a, b) => deviceName(a).localeCompare(deviceName(b)));
   boards.replaceChildren(...(devices.length ? devices.map((d) => h('option', { value: d.device_id },
-    `${deviceName(d)}${d.plant && d.plant !== deviceName(d) ? ` – ${d.plant}` : ''}`))
+    `${deviceName(d)}${otherName(d) ? ` – ${otherName(d)}` : ''}`))
     : [h('option', { value: '' }, 'No boards with an address')]));
   if (chosen && devices.some((d) => d.device_id === chosen)) {
     boards.value = chosen;

@@ -4,6 +4,8 @@ water, and the dashboard."""
 import re
 import time
 
+from .naming import display_name, names
+
 DAY = 86400
 FORECAST_WINDOW_DAYS = 14   # battery readings used for the forecast
 LOW_BATTERY = 20            # %
@@ -127,7 +129,7 @@ def drain_by_image(db, inventory, now=None):
                 "image_hash": period["image_hash"],
                 "version": period["version"] or images.get(period["image_hash"], {}).get("version") or "",
                 "release": bool(release and release["hash"] == period["image_hash"]), "devices": []})
-            group["devices"].append({"device_id": device["device_id"], "name": device["name"] or device["device_id"],
+            group["devices"].append({"device_id": device["device_id"], **names(device),
                                      "per_day": period["rate"]["per_day"], "days": period["rate"]["days"]})
     for group in groups.values():
         rates = sorted(d["per_day"] for d in group["devices"])
@@ -279,7 +281,7 @@ def wall(db, inventory, now=None):
     plants = []
     for device in inventory.devices():
         readings = db.readings(device["device_id"], since=now - FORECAST_WINDOW_DAYS * DAY)
-        plants.append({"device_id": device["device_id"], "name": device["name"] or device["device_id"],
+        plants.append({"device_id": device["device_id"], **names(device),
                        "plant": device["plant"], "location": device["location"], "photo": device["photo"],
                        "soil_moisture": device["soil_moisture"], "water_target": device["water_target"],
                        "needs_water": device["needs_water"], "battery": device["battery"], "power": device["power"], "online": device["online"],
@@ -313,10 +315,10 @@ def dashboard(db, inventory, topology):
     images = {i["hash"]: i for i in db.images()}
     by_image = {}
     outdated, unknown, low, offline, dry, soon = [], [], [], [], [], []
-    names = {d["device_id"]: d["name"] or d["device_id"] for d in devices}
+    names_of = {d["device_id"]: display_name(d) for d in devices}
     for device in devices:
         health = device_health(db, device, release)
-        entry = {"device_id": device["device_id"], "name": device["name"] or device["device_id"],
+        entry = {"device_id": device["device_id"], **names(device),
                  "battery": device["battery"], "last_seen": device["last_seen"], "online": device["online"],
                  "image_version": device["image_version"], "image_hash": device["image_hash"],
                  "battery_forecast": health["battery_forecast"], "tags": device["tags"], "plant": device["plant"],
@@ -357,8 +359,8 @@ def dashboard(db, inventory, topology):
         "needs_water": dry,
         "water_soon": soon,
         "weak_links": weak_links(topology)[:10],
-        "recent_updates": [{**u, "name": names.get(u["device_id"], u["device_id"])} for u in db.updates(limit=8)],
-        "restarts": restarts(db, names),
+        "recent_updates": [{**u, "name": names_of.get(u["device_id"], u["device_id"])} for u in db.updates(limit=8)],
+        "restarts": restarts(db, names_of),
         "network_read": topology.get("fetched") if topology else None,
         "trends": trends(db, inventory),
     }
@@ -398,7 +400,7 @@ def graph(db, inventory, metric, days, device_ids=None):
             points = [(r["time"], r[key]) for r in rows if r[key] is not None]
         else:
             points = [(r["time"], r[metric]) for r in db.readings(device["device_id"], since) if r[metric] is not None]
-        result.append({"device_id": device["device_id"], "name": device["name"] or device["device_id"],
+        result.append({"device_id": device["device_id"], **names(device),
                        "plant": device["plant"], "tags": device["tags"],
                        "points": [list(p) for p in downsample(points)]})
     return result

@@ -19,8 +19,10 @@ const has = (v) => v !== null && v !== undefined;
 
 // What a plant is called: the name given to it (its plant field), big; the board's own name
 // (often ha-coap-<ID>) small under it, when it's another one
-const title = (p) => p.plant || p.name || p.device_id;
-const boardName = (p) => (p.name || p.device_id) !== title(p) ? (p.name || p.device_id) : '';
+// The name given to it, and the board's own one (the wall's list has it as 'board'; a device, as 'name')
+const title = (p) => (p.plant || '').trim() || p.name || p.device_id;
+const own = (p) => p.board || p.name || p.device_id;
+const boardName = (p) => (own(p) !== title(p) ? own(p) : '');
 
 // A simple route was shown: draw it
 export async function loadSimple(route, rest, fromWall) {
