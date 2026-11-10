@@ -13,7 +13,11 @@ import { setTheme } from './themes.js';
 
 const simple = { route: null, plants: [], plantId: null, fromWall: false, soon: null };
 
-const PUMP_SECONDS = [1, 2, 3, 4, 5, 6, 7, 8, 9];  // the board's run time: one digit
+const PUMP_SECONDS = [1, 2, 3, 4, 5, 6, 7, 8, 9];
+
+// Opened with a dashboard link: the rest of the app opens outside the dashboard (a new tab, or the
+// browser from a phone app), at its address without the key, where signing in works and sticks
+const fullApp = (route) => ({ href: `${location.origin}/${route}`, target: '_blank', rel: 'noopener' });  // the board's run time: one digit
 const icon = (name) => svg('svg', { class: 'icon', 'aria-hidden': 'true' }, svg('use', { href: `#i-${name}` }));
 const plantHref = (id) => `#plant/${encodeURIComponent(id)}`;
 const has = (v) => v !== null && v !== undefined;
@@ -184,7 +188,8 @@ function renderPlant(details) {
       fact('signal', signalWord(link), device.last_seen ? `heard ${ago(device.last_seen)}` : '')),
     h('section', { class: 'plant-chart' }, lineChart('Soil, last 7 days', points, { unit: ' %', min: 0, max: 100, color: 'var(--t-cyan)',
       overlays: target ? [{ name: 'target', color: 'var(--t-text-muted)', points: span }] : [], name })),
-    h('a', { class: 'plant-advanced', href: `#device/${encodeURIComponent(id)}` }, 'Advanced details: firmware, network, log ›'));
+    h('a', { class: 'plant-advanced', ...(linkMode() ? fullApp(`#device/${encodeURIComponent(id)}`) : { href: `#device/${encodeURIComponent(id)}` }) },
+      'Advanced details: firmware, network, log ›'));
   showPumping();
 }
 
@@ -239,6 +244,8 @@ function renderSimpleMore() {
     document.getElementById('simple-more').replaceChildren(
       h('h2', { class: 'simple-h' }, 'View'),
       h('ul', { class: 'simple-list' },
+        row('The full app', 'Devices, network, updates, settings… In a new tab: sign in there once, it’s remembered',
+          h('a', { class: 'btn btn-sm btn-outline-secondary', ...fullApp('#dashboard') }, 'Open')),
         row('Wall display', 'Every plant big, for a spare screen', h('a', { class: 'btn btn-sm btn-outline-secondary', href: '#wall' }, 'Open'))),
       h('h2', { class: 'simple-h' }, 'Colours'),
       h('div', { class: 'theme-pick' }, themes.map((t) => h('button', {
