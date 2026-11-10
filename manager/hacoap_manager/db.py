@@ -46,7 +46,8 @@ CREATE TABLE IF NOT EXISTS devices (
     power         TEXT NOT NULL DEFAULT '',   -- battery, usb, charging or charged ('diag'), '' when not reported
     tank_ml       INTEGER,                    -- its water tank's size (ml), or NULL: not tracked
     tank_filled   REAL,                       -- when its tank was last refilled (NULL: since it was set)
-    pump_ml_s     REAL                        -- how much its pump moves per second (ml), or NULL: the default
+    pump_ml_s     REAL,                       -- how much its pump moves per second (ml), or NULL: the default
+    watering      TEXT NOT NULL DEFAULT ''    -- its automatic watering rule (JSON, autowater.py), '' when never set
 );
 CREATE TABLE IF NOT EXISTS images (
     hash     TEXT PRIMARY KEY,
@@ -155,7 +156,7 @@ DEVICE_FIELDS = ("name", "address", "serial_port", "fw_version", "hw_version", "
                  "soil_moisture", "battery", "air_humidity", "temperature", "last_seen", "last_error", "notes",
                  "tags", "location", "plant", "water_below", "photo", "boots", "reset_cause", "fault", "uptime_s",
                  "role", "rloc16", "parent_rloc16", "parent_rssi", "link_quality", "soil_mv", "diag_time",
-                 "no_diag_fw", "pump_s", "srp_state", "power", "tank_ml", "tank_filled", "pump_ml_s")
+                 "no_diag_fw", "pump_s", "srp_state", "power", "tank_ml", "tank_filled", "pump_ml_s", "watering")
 
 # Columns added after the first version: (table, column, definition), added to older databases
 ADDED_COLUMNS = [
@@ -186,6 +187,7 @@ ADDED_COLUMNS = [
     ("devices", "tank_ml", "INTEGER"),
     ("devices", "tank_filled", "REAL"),
     ("devices", "pump_ml_s", "REAL"),
+    ("devices", "watering", "TEXT NOT NULL DEFAULT ''"),
 ]
 
 

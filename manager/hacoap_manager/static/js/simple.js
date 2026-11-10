@@ -125,6 +125,8 @@ function renderPlant(details) {
     : device.needs_water ? `Needs water now${target ? ` (target ${target} %)` : ''}`
       : target ? (forecast && has(forecast.days) ? `Water ${waterIn(forecast)} (target ${target} %)` : `Waters under ${target} %`)
         : 'No watering target yet (set one in the advanced view)';
+  const selfWatering = device.watering_rule && device.watering_rule.on && target
+    ? ` · it waters itself (up to ${device.watering_rule.max_per_day} times a day)` : '';
   // Water now: how long (1 to 9 s, the board's last run time marked), then a confirmation
   const waterButton = h('button', { class: 'btn btn-primary water', type: 'button', 'aria-haspopup': 'menu',
     'aria-expanded': 'false', onclick: () => toggleWaterMenu() }, icon('droplets'), ' Water now', icon('chevron-down'));
@@ -177,7 +179,7 @@ function renderPlant(details) {
         h('span', { class: 'small text-body-secondary' }, 'soil moisture')),
       h('div', { class: 'soil-bar' }, h('i', { style: `width: ${has(soil) ? Math.max(0, Math.min(100, soil)) : 0}%` }),
         target ? h('b', { style: `left: ${target}%`, title: `water under ${target} %` }) : null),
-      h('div', { class: 'soil-status' }, status),
+      h('div', { class: 'soil-status' }, status + selfWatering),
       h('div', { class: 'soil-actions' },
         waterButton,
         h('button', { class: 'btn btn-outline-secondary beep', type: 'button', title: 'It beeps, so you can find it',

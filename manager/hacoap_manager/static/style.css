@@ -1203,6 +1203,8 @@ body.wall-mode .simple-top, body.wall-mode .simple-nav { display: none !importan
 .tank-bar.low i { background: var(--t-yellow); }
 .tank-level .soil-bar { color: var(--t-cyan); }
 .tank-missed { margin: 0; font-size: .85rem; color: var(--t-yellow); }
+.rule-number { width: 4.5rem; }
+.rule-line { line-height: 2.4; }
 .plant-facts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .6rem; }
 .plant-fact { display: flex; flex-direction: column; gap: .1rem; min-width: 0; padding: .7rem; border-radius: .75rem;
   background: var(--t-surface); border: 1px solid var(--t-border-subtle); }

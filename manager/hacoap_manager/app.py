@@ -12,6 +12,7 @@ import asyncio
 import contextlib
 import hashlib
 import ipaddress
+import json
 import logging
 import time
 from dataclasses import dataclass
@@ -26,6 +27,8 @@ import re
 from . import (__version__, autostart, backup, coap, config, demo, discovery, feed, fleet, homeassistant, housekeeping,
                kconfig, mcuboot, naming, otctl, remote, report, serial_ports, signing, summary, swd)
 from .alerts import AlertService
+from .autowater import AutoWatering, RuleError, checked_rule, rule_of
+from .autowater import watch as autowater_watch
 from .appupdate import UpdateCheck
 from .borderrouter import BorderRouterService, BorderRouterSetupError
 from .builds import VARIANTS, BuildError, BuildRunner
@@ -83,6 +86,7 @@ class Services:
     demo: bool = False    # this app is the demo (simulated boards, a throwaway data folder)
     remote: "remote.RemoteAccess" = None  # other devices (off unless chosen)
     border_router: BorderRouterService = None  # the border router in Docker here
+    autowater: AutoWatering = None  # the automatic watering rules
 
 
 def create_services(data_dir, discover=discovery.discover):
@@ -113,7 +117,7 @@ def create_services(data_dir, discover=discovery.discover):
                     SerialConsole(events), setup, alerts, signing.SigningCheck(repository, data_dir),
                     PhotoStore(data_dir), UpdateCheck(), Doctor(db, settings, discover),
                     homeassistant.TokenStore(data_dir), remote=remote.RemoteAccess(data_dir),
-                    border_router=border_router)
+                    border_router=border_router, autowater=AutoWatering(db, inventory, events, alerts, updates))
 
 
 def _host_name(host_header):
@@ -194,7 +198,8 @@ def create_app(services, background_tasks=True, on_quit=None, port=None):
         tasks = []
         if background_tasks:
             tasks = [asyncio.create_task(_auto_refresh(services)), asyncio.create_task(_auto_backup(services)),
-                     asyncio.create_task(_auto_alerts(services)), asyncio.create_task(_watch_border_router(services))]
+                     asyncio.create_task(_auto_alerts(services)), asyncio.create_task(_watch_border_router(services)),
+                     asyncio.create_task(autowater_watch(services.autowater))]
             if port and services.remote is not None:
                 listener = remote.RemoteListener(app, port)
                 tasks.append(asyncio.create_task(follow_remote_access()))
@@ -307,6 +312,11 @@ def create_app(services, background_tasks=True, on_quit=None, port=None):
                     raise _bad_request(what) from None
                 if fields[name] is not None and not low <= fields[name] <= high:
                     raise _bad_request(what)
+        if "watering" in body:
+            try:
+                fields["watering"] = json.dumps(checked_rule(body["watering"], rule_of(s.db.device(device_id))))
+            except RuleError as exc:
+                raise _bad_request(exc)
         if "tank_ml" in fields and fields["tank_ml"] and not s.db.device(device_id)["tank_ml"]:
             fields["tank_filled"] = time.time()  # a tank just set up: full from now
         if "tags" in body:
@@ -520,7 +530,8 @@ def create_app(services, background_tasks=True, on_quit=None, port=None):
         since = time.time() - max(1, min(days, 365)) * 86400
         target = fleet.water_target(device, s.settings)
         effect_since = time.time() - 90 * 86400
-        return {"device": s.inventory.describe(device),
+        described = s.inventory.describe(device)
+        return {"device": described, "autowater": s.autowater.explain(described),
                 "health": {**fleet.device_health(s.db, device, s.db.release_image(), target=target),
                            "pump_effect": fleet.pump_effect(s.db.readings(device_id, effect_since),
                                                             s.db.activity(device_id, effect_since))},

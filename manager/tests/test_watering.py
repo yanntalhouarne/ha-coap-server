@@ -6,9 +6,11 @@ import time
 import httpx
 import pytest
 
-from hacoap_manager import fleet
+from hacoap_manager import autowater, fleet
 from hacoap_manager.app import create_app, create_services
 from hacoap_manager.config import Settings
+
+from conftest import fast_settings
 
 CHANGE = {"X-HACoap": "1"}
 HOUR = 3600
@@ -106,3 +108,81 @@ async def test_waterings_that_missed_raise_an_alert(client, services):
     assert (await client.get("/api/devices")).json()[0]["watering_missed"] is False
     services.alerts.scan()
     assert not [a for a in services.db.open_alerts() if a["key"] == "missed:aa"]
+
+
+# ---------------------------------------------------------------- automatic watering
+
+NOON_UTC = 1_762_776_000  # 2025-11-10 12:00 UTC
+RULE = {"on": True, "max_per_day": 2, "from_hour": 7, "to_hour": 21, "wait_h": 3, "seconds": None, "tz": "",
+        "utc_offset_min": 0}
+
+
+def thirsty(**fields):
+    import json
+    rule = {**RULE, **fields.pop("rule", {})}
+    return {"device_id": "aa", "watering": json.dumps(rule), "water_target": 30, "online": True, "soil_moisture": 20,
+            "watering_missed": False, "tank": None, "pump_s": 3, **fields}
+
+
+def test_the_rule_decides():
+    decide = autowater.decide
+    assert decide(thirsty(), [], NOON_UTC) == {"water": True, "why": "Waters now: soil 20 % under 30 %"}
+    assert decide(thirsty(rule={"on": False}), [], NOON_UTC)["why"] == "Off"
+    assert "No watering target" in decide(thirsty(water_target=None), [], NOON_UTC)["why"]
+    assert "isn't answering" in decide(thirsty(online=False), [], NOON_UTC)["why"]
+    assert "update" in decide(thirsty(), [], NOON_UTC, busy=True)["why"]
+    assert decide(thirsty(watering_missed=True), [], NOON_UTC)["why"].startswith("Paused")
+    assert "isn't under 30 %" in decide(thirsty(soil_moisture=35), [], NOON_UTC)["why"]
+    # Its hours, in its owner's time: noon UTC is 22:00 at UTC+10, past 21:00
+    assert decide(thirsty(rule={"utc_offset_min": 600}), [], NOON_UTC)["why"].startswith("Waits until 07:00")
+    assert decide(thirsty(rule={"from_hour": 20, "to_hour": 6}), [], NOON_UTC)["water"] is False   # nights only
+    assert decide(thirsty(rule={"from_hour": 20, "to_hour": 6}), [], NOON_UTC + 10 * HOUR)["water"] is True  # 22:00
+    # How often: twice today already (automatic ones), or the last watering too recent (any kind)
+    two = [(NOON_UTC - 5 * HOUR, 3, True), (NOON_UTC - 4 * HOUR, 3, True)]
+    assert decide(thirsty(), two, NOON_UTC)["why"] == "Done for today: 2 of 2 waterings"
+    by_hand = [(NOON_UTC - HOUR, 3, False)]
+    assert "more minutes" in decide(thirsty(), by_hand, NOON_UTC)["why"]
+    assert decide(thirsty(), [(NOON_UTC - 13 * HOUR, 3, True)] * 3, NOON_UTC)["water"] is True  # yesterday's don't count
+    # Its tank: enough for one more run (3 s x 20 ml/s)?
+    tank = {"left_ml": 50, "flow_ml_s": 20}
+    assert "tank" in decide(thirsty(tank=tank), [], NOON_UTC)["why"]
+    assert decide(thirsty(tank={**tank, "left_ml": 61}), [], NOON_UTC)["water"] is True
+
+
+def test_rules_from_the_page():
+    rule = autowater.checked_rule({"on": "yes", "max_per_day": "3", "wait_h": "1.5", "seconds": "4", "tz": "Europe/Paris"},
+                                  autowater.DEFAULTS)
+    assert (rule["on"], rule["max_per_day"], rule["wait_h"], rule["seconds"], rule["tz"]) == (True, 3, 1.5, 4, "Europe/Paris")
+    assert autowater.checked_rule({"seconds": ""}, rule)["seconds"] is None   # the board's own run time
+    for bad in ({"max_per_day": 0}, {"from_hour": 24}, {"seconds": 12}, {"wait_h": "soon"}, {"from_hour": 8, "to_hour": 8}, "on"):
+        with pytest.raises(autowater.RuleError):
+            autowater.checked_rule(bad, autowater.DEFAULTS)
+    assert autowater.rule_of({"watering": "not json"}) == autowater.DEFAULTS
+
+
+async def test_it_waters_a_thirsty_plant(client, services, start_sim):
+    server = await start_sim()
+    fast_settings(services.settings, server)
+    await client.post("/api/devices", json={"address": "127.0.0.1"}, headers=CHANGE)
+    services.db.upsert_device("1a2b3c4d", soil_moisture=12, water_below=30, last_seen=time.time())
+    watering = {"on": True, "from_hour": 0, "to_hour": 24, "max_per_day": 1, "seconds": 2}
+    response = await client.patch("/api/devices/1a2b3c4d", json={"watering": watering}, headers=CHANGE)
+    assert response.status_code == 200 and response.json()["watering_rule"]["on"] is True
+    assert (await client.patch("/api/devices/1a2b3c4d", json={"watering": {"seconds": 99}}, headers=CHANGE)).status_code == 400
+
+    details = (await client.get("/api/devices/1a2b3c4d/details")).json()
+    assert details["autowater"]["water"] is True
+    assert await services.autowater.run_once() == ["1a2b3c4d"]
+    assert server.device.pump_running and server.device.pump_duration == 2
+    runs = services.db.recent_activity("1a2b3c4d", "pump", 5)
+    assert len(runs) == 1 and runs[0]["message"] == "Watered automatically: soil 12 % under 30 % (2 s)"
+    # Not again: once a day at most (and 3 hours apart)
+    assert await services.autowater.run_once() == []
+    assert (await client.get("/api/devices/1a2b3c4d/details")).json()["autowater"]["why"].startswith("Done for today")
+
+    # A board that doesn't answer: tried again later, not every minute
+    services.db.upsert_device("1a2b3c4d", watering="")
+    services.db.upsert_device("5e6f7a8b", name="mint", address="127.0.0.9", soil_moisture=5, water_below=30,
+                              last_seen=time.time(), watering='{"on": true, "from_hour": 0, "to_hour": 24}')
+    assert await services.autowater.run_once() == []
+    assert "5e6f7a8b" in services.autowater._failed

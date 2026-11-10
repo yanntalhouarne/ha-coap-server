@@ -4,7 +4,7 @@ import asyncio
 import logging
 import time
 
-from . import coap, discovery, fleet
+from . import autowater, coap, discovery, fleet
 from .mcumgr import DeviceLink, McumgrError
 
 log = logging.getLogger(__name__)
@@ -75,14 +75,16 @@ class Inventory:
         now = time.time()
         seen = device.get("last_seen")
         online = seen is not None and now - seen < self.settings.online_minutes * 60
-        since = device.get("tank_filled") or 0  # a refill starts again: the runs before don't count
+        # Since its tank was refilled (the runs before don't count), else the last 30 days
+        since = (device.get("tank_filled") or 0) if device.get("tank_ml") else now - 30 * 86400
         runs = fleet.pump_runs(self.db.activity_kind_since(device["device_id"], "pump", since))
         first = runs[-fleet.NO_RISE_RUNS][0] if len(runs) >= fleet.NO_RISE_RUNS else None
         missed = first is not None and fleet.watering_missed(
             self.db.readings(device["device_id"], since=first - 86400), runs, now)
         return {**device, "online": online, "water_target": fleet.water_target(device, self.settings),
                 "needs_water": fleet.needs_water(device, self.settings),
-                "tank": fleet.tank_state(device, runs, self.settings), "watering_missed": missed}
+                "tank": fleet.tank_state(device, runs, self.settings), "watering_missed": missed,
+                "watering_rule": autowater.rule_of(device)}
 
     def devices(self):
         return [self.describe(d) for d in self.db.devices()]
