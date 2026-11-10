@@ -194,7 +194,7 @@ def create_app(services, background_tasks=True, on_quit=None, port=None):
         tasks = []
         if background_tasks:
             tasks = [asyncio.create_task(_auto_refresh(services)), asyncio.create_task(_auto_backup(services)),
-                     asyncio.create_task(_auto_alerts(services))]
+                     asyncio.create_task(_auto_alerts(services)), asyncio.create_task(_watch_border_router(services))]
             if port and services.remote is not None:
                 listener = remote.RemoteListener(app, port)
                 tasks.append(asyncio.create_task(follow_remote_access()))
@@ -1470,6 +1470,19 @@ async def _auto_alerts(services):
             services.alerts.scan()
         except Exception:  # noqa: BLE001
             log.exception("alerts")
+
+
+async def _watch_border_router(services, period_s=60):
+    """Checks the border router every minute, for its alerts (alerts.check_border_router)."""
+    while True:
+        await asyncio.sleep(period_s)
+        settings = services.settings
+        try:
+            problems = await asyncio.to_thread(services.border_router.health, settings.border_router_container.strip(),
+                                               settings.border_router_url.strip())
+            services.alerts.check_border_router(problems)
+        except Exception:  # noqa: BLE001 - try again next time
+            log.exception("border router check")
 
 
 async def _auto_backup(services):

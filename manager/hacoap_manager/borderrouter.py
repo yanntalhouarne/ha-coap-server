@@ -31,7 +31,7 @@ from dataclasses import asdict, dataclass, fields
 from pathlib import Path
 
 from . import config as app_config
-from .otbr import BorderRouterError
+from .otbr import BorderRouter, BorderRouterError, _get
 from .otctl import CliBorderRouter, parse_table
 
 log = logging.getLogger(__name__)
@@ -304,6 +304,56 @@ class BorderRouterService:
         result["config"] = self.config.public()  # with the network's settings just kept
         result["newest"] = self._newest_state()  # as last asked (newest() asks Docker Hub)
         return result
+
+    def health(self, container, rest_url=""):
+        """What's wrong with the border router now, for the alerts: {key: message}, empty when
+        it's fine or nothing is set. In Docker here ('container'): the container, its radio
+        dongle and its Thread role, in a few docker calls; elsewhere ('rest_url', such as a Pi):
+        whether its REST API answers, and its role. Nothing while a job (an update, a restart)
+        is changing it. Never raises."""
+        if self.job is not None and self.job.get("state") == "running":
+            return {}
+        if container:
+            return self._container_health(container)
+        if rest_url:
+            return self._rest_health(rest_url)
+        return {}
+
+    def _container_health(self, container):
+        try:
+            self.docker("version", "--format", "{{.Server.Version}}", timeout=15)
+        except BorderRouterSetupError as exc:
+            return {"br-docker": f"The border router can't be checked: Docker doesn't answer ({exc})"}
+        info = self._inspect("inspect", container)
+        if info is None:
+            return {"br-missing": f"The border router's container ({container}) is gone: set it up again "
+                                  f"in the Border router tab"}
+        state = info.get("State", {})
+        if not state.get("Running"):
+            return {"br-stopped": f"The border router ({container}) isn't running ({state.get('Status') or 'stopped'}): "
+                                  f"the boards can't be reached. Restart it in the Border router tab"}
+        rcp = self.config.rcp_device if self.config.container == container else ""
+        if rcp and not Path(rcp).exists():
+            return {"br-radio": f"The border router's radio dongle isn't plugged in (or not seen): {Path(rcp).name}"}
+        cli = CliBorderRouter(container, run=lambda args: self.docker("exec", container, "ot-ctl", *args, timeout=30))
+        try:
+            role = cli._value("state")
+        except (BorderRouterError, BorderRouterSetupError) as exc:
+            return {"br-cli": f"The border router ({container}) doesn't answer: {exc}"}
+        if role not in READY_ROLES + ("child",):
+            return {"br-thread": f"The border router isn't on the Thread network (it says: {role or 'nothing'})"}
+        return {}
+
+    @staticmethod
+    def _rest_health(url):
+        try:
+            info = BorderRouter(url, timeout=10).node_info() or {}
+        except BorderRouterError:
+            return {"br-unreachable": f"The border router at {url} doesn't answer: is it on, and on the network?"}
+        role = str(_get(info, "state", default="") or "").lower()
+        if role and role not in READY_ROLES + ("child",):
+            return {"br-thread": f"The border router isn't on the Thread network (it says: {role})"}
+        return {}
 
     def _thread_status(self):
         cli = self.cli()

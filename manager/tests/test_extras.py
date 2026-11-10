@@ -187,6 +187,32 @@ async def test_a_dismissed_alert_stays_quiet_while_it_lasts(client, services):
         assert (await client.post("/api/alerts/dismiss", json=bad, headers=CHANGE)).status_code == 400
 
 
+async def test_border_router_and_network_alerts(client, services):
+    alerts = services.alerts
+    alerts.check_border_router({"br-stopped": "The border router (otbr) isn't running"})
+    assert services.db.open_alerts() == []           # once: maybe a restart
+    alerts.check_border_router({"br-stopped": "The border router (otbr) isn't running"})
+    raised = services.db.open_alerts()
+    assert [(a["kind"], a["key"]) for a in raised] == [("border-router", "br-stopped")]
+    alerts.check_border_router({})
+    assert services.db.open_alerts() == []           # back: cleared
+    alerts.check_border_router({"br-radio": "unplugged"})
+    alerts.check_border_router({})                   # gone before the second check: never raised
+    assert services.db.open_alerts() == []
+
+    # Every board silent at once: one alert about the network
+    old = time.time() - 86400
+    services.db.upsert_device("aa", name="basil", address="fd11::1", last_seen=old)
+    services.db.upsert_device("bb", name="mint", address="fd11::2", last_seen=old)
+    services.inventory.refreshed = True
+    alerts.scan()
+    kinds = {a["key"]: a for a in services.db.open_alerts()}
+    assert "None of the 2 boards answer" in kinds["network:silent"]["message"]
+    services.db.upsert_device("bb", last_seen=time.time())
+    alerts.scan()
+    assert "network:silent" not in {a["key"] for a in services.db.open_alerts()}
+
+
 def test_alerts_dismissed_before_the_upgrade_dont_stay_quiet(tmp_path):
     import sqlite3
     from hacoap_manager.db import Database

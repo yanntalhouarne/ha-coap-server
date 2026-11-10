@@ -205,6 +205,34 @@ def test_a_container_made_by_hand_is_adopted(tmp_path):
     assert json.loads((tmp_path / "border-router.json").read_text())["dataset"] == DATASET
 
 
+def test_health(tmp_path):
+    docker = FakeDocker()
+    service = service_with(tmp_path, docker)
+    service.status()                                 # adopts the container: its radio is RCP
+    assert set(service.health("otbr")) == {"br-radio"}   # no such dongle on this computer
+    dongle = tmp_path / "dongle"
+    dongle.write_text("")
+    service.config.rcp_device = str(dongle)
+    assert service.health("otbr") == {}              # all well
+    assert service.health("", "") == {}              # nothing set: nothing to check
+    docker.volume_dataset = ""                       # it lost its network
+    assert "disabled" in service.health("otbr")["br-thread"]
+    docker.volume_dataset = DATASET
+    docker.container["running"] = False
+    assert "isn't running" in service.health("otbr")["br-stopped"]
+    service.job = {"action": "restart", "state": "running"}
+    assert service.health("otbr") == {}              # an update or a restart is on it: not now
+    service.job = None
+    docker.container = None
+    assert set(service.health("otbr")) == {"br-missing"}
+
+    def missing(args, timeout=60):
+        raise BorderRouterSetupError("Docker isn't installed here: run scripts/install-server.sh")
+    assert set(service_with(tmp_path, missing).health("otbr")) == {"br-docker"}
+    # Elsewhere (a Pi): its REST API
+    assert set(service.health("", "http://127.0.0.1:1")) == {"br-unreachable"}
+
+
 def test_no_docker(tmp_path):
     def missing(args, timeout=60):
         raise BorderRouterSetupError("Docker isn't installed here: run scripts/install-server.sh")

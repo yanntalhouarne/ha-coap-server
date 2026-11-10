@@ -244,7 +244,8 @@ export function renderAlerts() {
   document.getElementById('dash-alerts').replaceChildren(count
     ? h('ul', { class: 'list-unstyled mb-0 alerts-list' }, state.alerts.map((a) => h('li', { class: `alert-${a.kind}` },
       h('span', { class: 'small text-body-secondary text-nowrap' }, ago(a.raised)),
-      a.device_id ? h('a', { href: `#device/${encodeURIComponent(a.device_id)}` }, a.message) : h('span', {}, a.message),
+      a.device_id ? h('a', { href: `#device/${encodeURIComponent(a.device_id)}` }, a.message)
+        : a.kind === 'border-router' ? h('a', { href: '#border-router' }, a.message) : h('span', {}, a.message),
       h('button', { class: 'btn-close ms-auto', title: 'Dismiss', 'aria-label': 'Dismiss',
         onclick: () => dismissAlert(a) }))))
     : h('p', { class: 'text-body-secondary mb-0' }, 'Nothing needs attention.'));

@@ -1,6 +1,8 @@
 """Alerts: a device that stopped answering, a low battery, a plant that needs water, a failed
-update, a board that crashed (or was restarted by its watchdog). They're raised when the condition starts and cleared when it ends (or dismissed), and
-each new one is sent to the page, which can show it as a browser notification.
+update, a board that crashed (or was restarted by its watchdog), the border router down (or its
+radio unplugged, or off the Thread network), and every board silent at once. They're raised when
+the condition starts and cleared when it ends (or dismissed), and each new one is sent to the
+page, which can show it as a browser notification.
 
 Messages are stored with a {name} placeholder, filled in with the device's name when read, so
 an alert follows a rename."""
@@ -23,11 +25,30 @@ class AlertService:
         self.inventory = inventory
         self.settings = settings
         self.events = events
+        self.border_router = {}  # its problems now ({key: message}), as check_border_router() last found
+        self._seen_once = {}     # problems found once: an alert only if they're still there next time
+
+    def check_border_router(self, problems):
+        """The border router's problems now (BorderRouterService.health(), every minute). One is an
+        alert from the second check in a row that finds it: a restart doesn't raise any."""
+        confirmed = {key: message for key, message in problems.items() if key in self._seen_once}
+        self._seen_once = dict(problems)
+        if confirmed != self.border_router:
+            self.border_router = confirmed
+            self.scan()
 
     def conditions(self):
         """What's wrong now: {key: (kind, device_id, message)}."""
         found = {}
-        for device in self.inventory.devices():
+        devices = self.inventory.devices()
+        for key, message in self.border_router.items():
+            found[key] = ("border-router", "", message)
+        # Every board silent together: the network, not the boards (a single board's is its own alert)
+        known = [d for d in devices if d["address"] and d["last_seen"] is not None]
+        if self.inventory.refreshed and len(known) >= 2 and not any(d["online"] for d in known):
+            found["network:silent"] = ("network", "", f"None of the {len(known)} boards answer: the border router "
+                                                      f"or the Thread network is probably down")
+        for device in devices:
             device_id = device["device_id"]
             # Only once the app has asked every device: at start, the last answers are old.
             if self.inventory.refreshed and not device["online"] and device["last_seen"] is not None:

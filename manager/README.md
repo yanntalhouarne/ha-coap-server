@@ -216,6 +216,8 @@ While a device is being updated, it polls its parent every 100 ms instead of eve
 - a plant needs water (soil under its target)
 - an update fails
 - a board restarted because of a crash, its watchdog or a CPU lockup (from boards whose firmware reports it)
+- the border router is down: its container stopped or is gone, its radio dongle is unplugged, it's off the Thread network, or (one elsewhere, such as a Pi) its REST API doesn't answer. Checked every minute; it takes two checks in a row, so a restart doesn't raise one. Nothing is checked while the app updates or restarts it
+- none of the boards answer (two or more): the border router or the Thread network is probably down
 
 An alert clears by itself when the condition ends; a failed update's or a restart's stays until dismissed. Dismiss one with its ✕ (on the dashboard, or on the simple view's Alerts tab, which also has **Dismiss all**), with a few seconds to undo it. A dismissed dry plant, low battery or silent board isn't raised again while that lasts; the next time it happens, it is. Alerts show on the dashboard and in the status bar. **Notify me** (dashboard) or **Turn on** (Settings) also pops them up as browser notifications while the page is open, even in a background tab.
 
