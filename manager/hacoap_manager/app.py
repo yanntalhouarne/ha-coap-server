@@ -99,11 +99,13 @@ def create_services(data_dir, discover=discovery.discover):
     alerts = AlertService(db, inventory, settings, events)
     updates.on_failure = lambda job, target: alerts.update_failed(job.id, target.device_id, target.label, target.message)
     inventory.on_restart = alerts.restarted
+    border_router = BorderRouterService(data_dir, settings, events)
+    border_router.on_board_joined = inventory.discover  # a board that joined over the air: in the list
     return Services(data_dir, settings, db, events, inventory, images, updates, repository, builds, network,
                     SerialConsole(events), setup, alerts, signing.SigningCheck(repository, data_dir),
                     PhotoStore(data_dir), UpdateCheck(), Doctor(db, settings, discover),
                     homeassistant.TokenStore(data_dir), remote=remote.RemoteAccess(data_dir),
-                    border_router=BorderRouterService(data_dir, settings, events))
+                    border_router=border_router)
 
 
 def _host_name(host_header):
@@ -1050,6 +1052,29 @@ def create_app(services, background_tasks=True, on_quit=None, port=None):
         try:
             return s.border_router.setup(str(body.get("rcp_device", "")), str(body.get("infra_if", "")))
         except BorderRouterSetupError as exc:
+            raise _border_router_error(exc)
+
+    @app.post("/api/border-router/commission")
+    async def border_router_commission(body: dict):
+        """Lets boards with the PSKd join for a few minutes (the PSKd isn't kept)."""
+        try:
+            return s.border_router.commission(str(body.get("pskd", "")), int(body.get("minutes", 10)),
+                                              str(body.get("eui64", "") or "*"))
+        except (BorderRouterSetupError, ValueError) as exc:
+            raise _border_router_error(exc)
+
+    @app.post("/api/border-router/commission/stop")
+    async def border_router_commission_stop():
+        try:
+            return s.border_router.stop_commissioning()
+        except BorderRouterSetupError as exc:
+            raise _border_router_error(exc)
+
+    @app.post("/api/border-router/channel")
+    async def border_router_channel(body: dict):
+        try:
+            return s.border_router.change_channel(int(body.get("channel", 0)), int(body.get("delay_s", 300)))
+        except (BorderRouterSetupError, ValueError) as exc:
             raise _border_router_error(exc)
 
     @app.post("/api/border-router/{action}")

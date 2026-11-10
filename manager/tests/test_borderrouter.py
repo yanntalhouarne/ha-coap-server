@@ -1,6 +1,7 @@
 """The Border router tab's service: a fake `docker` (containers, images, ot-ctl inside) stands in
 for the real one. The network's settings here are made up (never a real network key)."""
 
+import asyncio
 import io
 import json
 import zipfile
@@ -10,7 +11,8 @@ import pytest
 
 from hacoap_manager import backup, config
 from hacoap_manager.app import create_app, create_services
-from hacoap_manager.borderrouter import LATEST, BorderRouterService, BorderRouterSetupError, decode_dataset
+from hacoap_manager.borderrouter import (LATEST, BorderRouterService, BorderRouterSetupError, dataset_tlvs, decode_dataset,
+                                         pending_dataset)
 from hacoap_manager.events import EventBus
 
 CHANGE = {"X-HACoap": "1"}
@@ -39,12 +41,20 @@ class FakeDocker:
     """Docker with one border router container; ot-ctl answers like a border router on DATASET's
     network, unless its image is BAD (it never becomes a router)."""
 
-    def __init__(self, container=True, latest=NEW, volume_dataset=DATASET):
+    def __init__(self, container=True, latest=NEW, volume_dataset=DATASET, strict_leader=False):
         self.latest_pulled = OLD
         self.latest_remote = latest
         self.volume_dataset = volume_dataset  # what the border router's own data holds
         self.container = self._container(OLD, "eth0", RCP) if container else None
         self.calls = []
+        self.commissioner = "disabled"
+        self.joiners = []                     # (eui64, pskd, seconds)
+        self.hosts = ["ha-coap-1a2b3c4d"]     # registered with SRP
+        self.joins_after = None               # a board joins this many host listings after a joiner is added
+        self.strict_leader = strict_leader    # takes a pending dataset only with the commissioner's session
+        self.pending = ""
+        self.switch_after = None              # the network switches after this many channel readings
+        self.channel = 15
 
     @staticmethod
     def _container(image, infra, device):
@@ -111,7 +121,44 @@ class FakeDocker:
             return "Done\n"
         if role == "disabled":
             return "Error 13: InvalidState\n"
-        answers = {("networkname",): "test-net", ("channel",): "15", ("panid",): "0x1234", ("extpanid",): "dead00beef00cafe",
+        # The commissioner, and boards joining
+        if args == ["commissioner", "start"]:
+            self.commissioner = "active"
+            return "Done\n"
+        if args == ["commissioner", "stop"]:
+            self.commissioner = "disabled"
+            return "Done\n"
+        if args == ["commissioner", "state"]:
+            return f"{self.commissioner}\nDone\n"
+        if args == ["commissioner", "sessionid"]:
+            return "4660\nDone\n"
+        if args[:3] == ["commissioner", "joiner", "add"]:
+            self.joiners.append(tuple(args[3:]))
+            return "Done\n"
+        if args == ["srp", "server", "host"]:
+            if self.joins_after is not None and self.joiners:
+                self.joins_after -= 1
+                if self.joins_after == 0:
+                    self.hosts.append("ha-coap-feedbeef")
+            return "".join(f"{h}.default.service.arpa.\n    deleted: false\n" for h in self.hosts) + "Done\n"
+        # A channel change: a pending dataset sent to the leader, then the switch
+        if args[:4] == ["dataset", "mgmtsetcommand", "pending", "-x"]:
+            with_session = "0b021234" in args[4]
+            if not self.strict_leader or with_session:
+                self.pending = args[4].replace("0b021234", "")
+                self.switch_after = 2
+            return "Done\n"
+        if args == ["dataset", "pending", "-x"]:
+            return f"{self.pending}\nDone\n" if self.pending else "Error 23: NotFound\n"
+        if args == ["channel"]:
+            if self.switch_after is not None:
+                self.switch_after -= 1
+                if self.switch_after <= 0:
+                    tlvs = dict(dataset_tlvs(self.pending))
+                    self.channel = int.from_bytes(tlvs[0][1:], "big")
+                    self.pending, self.switch_after = "", None
+            return f"{self.channel}\nDone\n"
+        answers = {("networkname",): "test-net", ("panid",): "0x1234", ("extpanid",): "dead00beef00cafe",
                    ("version",): "OPENTHREAD/333f6d9; POSIX", ("rcp", "version"): "OPENTHREAD/d9abe3071; Zephyr",
                    ("br", "omrprefix"): "Local: fd2a:83c:28ba:1::/64\nFavored: fd2a:83c:28ba:1::/64 prf:low",
                    ("leaderdata",): "Partition ID: 825447412\nLeader Router ID: 62",
@@ -122,7 +169,7 @@ class FakeDocker:
 
 def service_with(tmp_path, docker):
     service = BorderRouterService(tmp_path, config.Settings(), EventBus(), run=docker)
-    service.ready_timeout, service.poll_s = 0.3, 0.01
+    service.ready_timeout, service.poll_s, service.leader_wait_s = 0.3, 0.01, 0.2
     return service
 
 
@@ -264,6 +311,100 @@ async def test_network_settings(tmp_path):
     assert saved["source"] == "saved" and saved["values"]["network_name"] == "other-net"
 
 
+async def test_boards_join_over_the_air(tmp_path):
+    docker = FakeDocker()
+    docker.joins_after = 2
+    service = service_with(tmp_path, docker)
+    joined = []
+
+    async def discover():
+        joined.append("discovered")
+    service.on_board_joined = discover
+    for wrong in ("J01NU", "j01nuO", "ABC DEF", "X" * 33):
+        with pytest.raises(BorderRouterSetupError, match="PSKd"):
+            service.commission(wrong)
+    with pytest.raises(BorderRouterSetupError, match="EUI-64"):
+        service.commission("J01NU5", eui64="12:34")
+    with pytest.raises(BorderRouterSetupError, match="minutes"):
+        service.commission("J01NU5", minutes=60)
+
+    service.commission("j01nu5", minutes=5)  # capitals or not
+    for _ in range(200):
+        await asyncio.sleep(0.01)
+        if "ha-coap-feedbeef" in docker.hosts and joined:
+            break
+    assert docker.joiners == [("*", "J01NU5", "300")]
+    assert docker.commissioner == "active"
+    service.stop_commissioning()
+    job = await finished(service)
+    assert job["state"] == "done" and "1 board joined (ha-coap-feedbeef)" in job["message"]
+    assert joined == ["discovered"]                  # added to the app
+    assert docker.commissioner == "disabled"         # stopped at the end
+    assert "J01NU5" not in json.dumps(job)           # the PSKd isn't kept anywhere
+    assert "J01NU5" not in (tmp_path / "border-router.json").read_text() if (tmp_path / "border-router.json").exists() else True
+    with pytest.raises(BorderRouterSetupError):
+        service.stop_commissioning()
+
+
+async def test_only_one_board(tmp_path):
+    docker = FakeDocker()
+    service = service_with(tmp_path, docker)
+    service.commission("J01NU5", minutes=5, eui64="F4CE365FBC183EFA")
+    await asyncio.sleep(0.05)
+    service.stop_commissioning()
+    job = await finished(service)
+    assert docker.joiners == [("f4ce365fbc183efa", "J01NU5", "300")] and "no board joined" in job["message"]
+
+
+def test_the_pending_dataset():
+    pending = pending_dataset(DATASET, 20, 300, now=1794282000)
+    before, after = dict(dataset_tlvs(DATASET)), dict(dataset_tlvs(pending))
+    assert int.from_bytes(after[0][1:], "big") == 20                        # the new channel
+    assert int.from_bytes(after[14][:6], "big") == int.from_bytes(before[14][:6], "big") + 1  # newer
+    assert int.from_bytes(after[51][:6], "big") == 1794282000              # pending timestamp
+    assert int.from_bytes(after[52], "big") == 300000                      # the delay, in ms
+    for kind in (1, 2, 3, 5, 7, 12, 53):                                    # the rest as it is
+        assert after[kind] == before[kind]
+    # Asked again: still one pending timestamp and one delay
+    again = dict(dataset_tlvs(pending_dataset(pending, 21, 120, now=1794282100)))
+    assert int.from_bytes(again[52], "big") == 120000 and len(dataset_tlvs(pending_dataset(pending, 21, 120))) == len(after)
+
+
+@pytest.mark.parametrize("strict", [False, True])
+async def test_moving_to_another_channel(tmp_path, strict):
+    docker = FakeDocker(strict_leader=strict)
+    service = service_with(tmp_path, docker)
+    with pytest.raises(BorderRouterSetupError, match="11 to 26"):
+        service.change_channel(27)
+    with pytest.raises(BorderRouterSetupError, match="delay"):
+        service.change_channel(20, delay_s=30)
+    service.change_channel(20, delay_s=120)
+    job = await finished(service)
+    assert job["state"] == "done", job
+    assert docker.channel == 20 and "on channel 20" in job["message"]
+    steps = " ".join(step["message"] for step in job["steps"])
+    assert "from channel 15 to 20 in 2 minutes" in steps
+    assert ("asking again as the network's commissioner" in steps) == strict
+    assert docker.commissioner == "disabled"
+
+
+async def test_a_change_the_leader_refuses(tmp_path):
+    docker = FakeDocker(strict_leader=True)
+    service = service_with(tmp_path, docker)
+    docker._ot_ctl = (lambda original: lambda args: "Error 13: InvalidState\n"
+                      if args == ["commissioner", "sessionid"] else original(args))(docker._ot_ctl)
+    service.change_channel(20, delay_s=120)
+    job = await finished(service)
+    assert job["state"] == "failed" and "stays on channel 15" in job["message"]
+    assert docker.channel == 15
+
+
+async def test_already_on_that_channel(tmp_path):
+    service = service_with(tmp_path, FakeDocker())
+    service.change_channel(15, delay_s=120)
+    assert "already on channel 15" in (await finished(service))["message"]
+
+
 def test_logs(tmp_path):
     service = service_with(tmp_path, FakeDocker())
     assert len(service.logs()) == 2
@@ -311,4 +452,34 @@ async def test_api(tmp_path):
         assert (await client.get("/api/border-router")).json()["config"]["image"] == NEW
         candidates = (await client.get("/api/border-router/candidates")).json()
         assert set(candidates) == {"radios", "interfaces", "config"}
+    services.db.close()
+
+
+async def test_api_joining_and_channel(tmp_path):
+    services = create_services(tmp_path, discover=None)
+    docker = FakeDocker()
+    services.border_router._run = docker
+    br = services.border_router
+    br.ready_timeout, br.poll_s, br.leader_wait_s = 0.3, 0.01, 0.2
+    app = create_app(services, background_tasks=False)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://127.0.0.1:8710") as client:
+        assert (await client.post("/api/border-router/commission", json={"pskd": "bad"}, headers=CHANGE)).status_code == 400
+        assert (await client.post("/api/border-router/commission/stop", headers=CHANGE)).status_code == 400
+        job = (await client.post("/api/border-router/commission", json={"pskd": "J01NU5", "minutes": 5},
+                                 headers=CHANGE)).json()
+        assert job["action"] == "commission" and "J01NU5" not in json.dumps(job)
+        assert (await client.post("/api/border-router/channel", json={"channel": 20}, headers=CHANGE)).status_code == 409
+        await asyncio.sleep(0.05)
+        assert (await client.get("/api/border-router")).json()["thread"]["commissioner"] == "active"
+        assert (await client.post("/api/border-router/commission/stop", headers=CHANGE)).status_code == 200
+        await br._task
+        assert (await client.post("/api/border-router/channel", json={"channel": 99}, headers=CHANGE)).status_code == 400
+        assert (await client.post("/api/border-router/channel", json={"channel": "x"}, headers=CHANGE)).status_code == 400
+        assert (await client.post("/api/border-router/channel", json={"channel": 20, "delay_s": 120},
+                                  headers=CHANGE)).status_code == 200
+        await asyncio.sleep(0.02)
+        pending = (await client.get("/api/border-router")).json()["thread"]["pending"]
+        assert pending is None or pending == {"channel": 20, "delay_s": 120}
+        await br._task
+        assert br.job["state"] == "done" and docker.channel == 20
     services.db.close()

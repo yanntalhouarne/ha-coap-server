@@ -4,7 +4,7 @@
 
 import { api, busy, h, notify, when } from './core.js';
 
-const br = { status: null, network: null, revealed: null, reloadTimer: null };
+const br = { status: null, network: null, revealed: null, reloadTimer: null, scan: null };
 const $ = (id) => document.getElementById(id);
 
 // Disabled while it works (busy() would put back only the text: these buttons have an icon)
@@ -21,6 +21,7 @@ export async function loadBorderRouter() {
     api('GET', '/api/border-router', undefined, { quiet: true }),
     loadNetworkSettings(),
     loadCandidates(),
+    loadScan(),
   ]);
   br.status = status;
   renderStatus();
@@ -85,6 +86,9 @@ function renderStatus() {
         row('Border routing', thread.border_routing),
         row('Routers · its children', `${thread.routers} · ${thread.children}`),
         row('Leader', thread.leader_router_id ? `router ${thread.leader_router_id} (partition ${thread.partition_id})` : ''),
+        row('Moving to channel', thread.pending ? `${thread.pending.channel}${thread.pending.delay_s !== null
+          ? `, in ${Math.max(0, Math.round(thread.pending.delay_s / 60))} min` : ''} (every device has it)` : ''),
+        row('Commissioner', thread.commissioner && thread.commissioner !== 'disabled' ? thread.commissioner : ''),
         row('Radio firmware', thread.rcp_version),
         row('Border router', thread.version),
       ] : row('Thread', s.thread?.error || 'not answering yet'),
@@ -99,15 +103,26 @@ function renderStatus() {
     ].flat(2)));  // label and value pairs (h() flattens one level)
   }
   const busyJob = s.job && s.job.state === 'running';
-  for (const id of ['br-restart', 'br-update', 'br-rollback', 'br-setup-button']) $(id).disabled = busyJob || !s.docker.ok;
+  const onNetwork = Boolean(thread && ['router', 'leader', 'child'].includes(thread.state));
+  for (const id of ['br-restart', 'br-update', 'br-rollback', 'br-setup-button', 'br-join-start', 'br-channel-move']) {
+    $(id).disabled = busyJob || !s.docker.ok;
+  }
   $('br-restart').disabled ||= !s.container;
   $('br-update').disabled ||= !s.container;
+  $('br-join-start').disabled ||= !onNetwork;
+  $('br-channel-move').disabled ||= !onNetwork || Boolean(thread.pending);
+  $('br-join-stop').classList.toggle('d-none', !(busyJob && s.job.action === 'commission'));
+  renderChannelChoices(thread);
+  // A long job (boards joining, a channel change on its way): read again now and then
+  clearTimeout(br.pollTimer);
+  if (busyJob || (thread && thread.pending)) br.pollTimer = setTimeout(borderRouterChanged, 15000);
   $('br-rollback').classList.toggle('d-none', !s.config.previous_image);
   $('br-setup-button').textContent = s.container ? 'Start it again with these' : 'Start the border router';
   renderJob(s.job);
 }
 
-const JOB_NAMES = { setup: 'Setting up', restart: 'Restarting', update: 'Updating', rollback: 'Going back', import: 'Joining a network' };
+const JOB_NAMES = { setup: 'Setting up', restart: 'Restarting', update: 'Updating', rollback: 'Going back',
+  import: 'Joining a network', commission: 'Letting boards join', channel: 'Moving to another channel' };
 
 function renderJob(job) {
   const box = $('br-job');
@@ -216,6 +231,70 @@ $('br-setup').addEventListener('submit', (event) => {
     + '(its data is kept), and it\'s off the network for a minute or two. Continue?')) return;
   busy(event.submitter, async () => {
     br.status = { ...br.status, job: await api('POST', '/api/border-router/setup', body) };
+    renderStatus();
+  });
+});
+
+// ------------------------------------------------------------------ adding boards over the air
+
+$('br-join').addEventListener('submit', (event) => {
+  event.preventDefault();
+  const pskd = $('br-pskd').value.trim().toUpperCase();
+  if (!/^[0-9A-HJ-NPR-Y]{6,32}$/.test(pskd)) {
+    notify('The PSKd is 6 to 32 digits and capital letters, without I, O, Q and Z: the one in local.conf.', 'warning');
+    return;
+  }
+  const body = { pskd, minutes: Number($('br-join-minutes').value), eui64: $('br-join-eui64').value.trim().toLowerCase() };
+  during(event.submitter, async () => {
+    br.status = { ...br.status, job: await api('POST', '/api/border-router/commission', body) };
+    $('br-pskd').value = '';  // not kept in the page either
+    renderStatus();
+  });
+});
+
+$('br-join-stop').addEventListener('click', (event) => during(event.currentTarget, async () => {
+  await api('POST', '/api/border-router/commission/stop');
+}));
+
+// ------------------------------------------------------------------ moving to another channel
+
+// The noise per channel, from the Network tab's last channel scan (if any)
+async function loadScan() {
+  const network = await api('GET', '/api/network', undefined, { quiet: true }).catch(() => null);
+  br.scan = network && network.channel_scan;
+  renderChannelChoices(br.status && br.status.thread && !br.status.thread.error ? br.status.thread : null);
+}
+
+function renderChannelChoices(thread) {
+  const select = $('br-channel-new');
+  const current = thread ? Number(thread.channel) : null;
+  const scan = br.scan && br.scan.channels ? new Map(br.scan.channels.map((c) => [c.channel, c])) : new Map();
+  const quiet = br.scan && br.scan.channels
+    ? [...br.scan.channels].sort((a, b) => a.max_rssi - b.max_rssi).slice(0, 3).map((c) => c.channel) : [];
+  const previous = Number(select.value) || null;
+  const options = [];
+  for (let channel = 11; channel <= 26; channel += 1) {
+    const noise = scan.get(channel);
+    const label = `${channel}${channel === current ? ' (now)' : ''}${noise ? ` · noise up to ${noise.max_rssi} dBm` : ''}`
+      + `${quiet.includes(channel) ? ' · quiet' : ''}`;
+    options.push(h('option', { value: channel, disabled: channel === current }, label));
+  }
+  select.replaceChildren(...options);
+  const fallback = quiet.find((c) => c !== current) || (current === 25 ? 20 : 25);
+  select.value = previous && previous !== current ? previous : fallback;
+  $('br-channel-scan-hint').replaceChildren(...(br.scan
+    ? [`The noise per channel is from the channel scan of ${new Date(br.scan.time * 1000).toLocaleDateString()}.`]
+    : ['To see which channels are quiet: ', h('b', {}, 'Scan'), ' on the ', h('a', { href: '#network' }, 'Network tab'), ' first.']));
+}
+
+$('br-channel').addEventListener('submit', (event) => {
+  event.preventDefault();
+  const channel = Number($('br-channel-new').value);
+  const delay = Number($('br-channel-delay').value);
+  if (!confirm(`Move the whole Thread network to channel ${channel} in ${delay / 60} minutes? Every device gets it first, `
+    + 'then they all switch together. A board that\'s off now finds the network again by itself later.')) return;
+  during(event.submitter, async () => {
+    br.status = { ...br.status, job: await api('POST', '/api/border-router/channel', { channel, delay_s: delay }) };
     renderStatus();
   });
 });

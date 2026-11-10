@@ -138,6 +138,9 @@ def test_border_router_tab(page):
     assert "00112233445566778899aabbccddeeff" not in dom
     assert "no parent" in dom                                                   # its log
     assert "Start it again with these" in dom and "Co-Processor" in dom         # set up: the radio found
+    assert "Let boards join" in dom and 'type="password"' in dom                # adding boards: the PSKd hidden
+    assert "16 · noise up to" in dom or ">16<" in dom or "16</option>" in dom   # the channels to move to
+    assert "15 (now)" in dom
 
 
 def test_tree_view(page):

@@ -257,7 +257,8 @@ export function renderChannelScan(scan) {
     h('p', { class: 'mb-1' }, scan.current_channel ? `Your network uses channel ${scan.current_channel}` +
       (current ? ` (noise up to ${current.max_rssi} dBm).` : '.') : ''),
     h('p', { class: 'mb-1' }, `Quietest: ${quiet.join(', ')}. Taller bars are noisier; Wi-Fi channels 1, 6 and 11 cover Thread channels 11–14, 16–19 and 21–24.`),
-    h('p', { class: 'text-body-secondary mb-0' }, `Scanned ${ago(scan.time)}. Changing the channel is done on the border router, and moves the whole network.`));
+    h('p', { class: 'text-body-secondary mb-0' }, `Scanned ${ago(scan.time)}. Changing the channel moves the whole network: `,
+      h('a', { href: '#border-router' }, 'the Border router tab'), ' does it (with the border router in Docker here).'));
 }
 
 document.getElementById('channel-scan').addEventListener('click', (event) => busy(event.target, async () => {

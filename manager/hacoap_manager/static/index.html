@@ -784,6 +784,67 @@
             <div class="br-job mt-3 d-none" id="br-job" aria-live="polite"></div>
           </div>
         </div>
+        <div class="row g-4 mb-4">
+          <div class="col-md-6">
+            <div class="card h-100">
+              <div class="card-header">Add boards over the air</div>
+              <div class="card-body">
+                <form id="br-join" class="row g-2">
+                  <div class="col-8">
+                    <label class="form-label small mb-1" for="br-pskd">PSKd</label>
+                    <input class="form-control form-control-sm font-monospace" id="br-pskd" type="password"
+                      autocomplete="off" spellcheck="false" maxlength="32" placeholder="as in local.conf">
+                  </div>
+                  <div class="col-4">
+                    <label class="form-label small mb-1" for="br-join-minutes">For</label>
+                    <select class="form-select form-select-sm" id="br-join-minutes">
+                      <option value="5">5 min</option><option value="10" selected>10 min</option><option value="30">30 min</option>
+                    </select>
+                  </div>
+                  <div class="col-12">
+                    <label class="form-label small mb-1" for="br-join-eui64">Only this board (EUI-64)</label>
+                    <input class="form-control form-control-sm font-monospace" id="br-join-eui64" autocomplete="off"
+                      spellcheck="false" maxlength="16" placeholder="any board with the PSKd">
+                  </div>
+                  <div class="col-12 d-flex gap-2">
+                    <button class="btn btn-sm btn-primary" type="submit" id="br-join-start">Let boards join</button>
+                    <button class="btn btn-sm btn-outline-secondary d-none" type="button" id="br-join-stop">Stop</button>
+                  </div>
+                  <div class="col-12 form-text">The PSKd is the one in the firmware's <code>application/local.conf</code>
+                    (<code>CONFIG_OPENTHREAD_JOINER_PSKD</code>); it isn't kept here. Then power on the new board: it
+                    tries to join every 30 s for 10 minutes, then every 2 minutes. A board on another network:
+                    <b>Forget its network</b> on its page first. Boards that join are added to the app.</div>
+                </form>
+              </div>
+            </div>
+          </div>
+          <div class="col-md-6">
+            <div class="card h-100">
+              <div class="card-header">Channel</div>
+              <div class="card-body">
+                <form id="br-channel" class="row g-2">
+                  <div class="col-7">
+                    <label class="form-label small mb-1" for="br-channel-new">Move the network to</label>
+                    <select class="form-select form-select-sm" id="br-channel-new"></select>
+                  </div>
+                  <div class="col-5">
+                    <label class="form-label small mb-1" for="br-channel-delay">In</label>
+                    <select class="form-select form-select-sm" id="br-channel-delay">
+                      <option value="120">2 min</option><option value="300" selected>5 min</option><option value="600">10 min</option>
+                    </select>
+                  </div>
+                  <div class="col-12">
+                    <button class="btn btn-sm btn-outline-danger" type="submit" id="br-channel-move">Move the network</button>
+                  </div>
+                  <div class="col-12 form-text" id="br-channel-about">Every device gets the new channel first, then they
+                    all switch together after the delay: the leader, the border router and your boards. A board that's
+                    off finds the network again by itself when it's back, which can take a while.
+                    <span id="br-channel-scan-hint"></span></div>
+                </form>
+              </div>
+            </div>
+          </div>
+        </div>
         <div class="card">
           <div class="card-header d-flex align-items-center gap-3">Log
             <div class="form-check form-switch ms-auto mb-0">
