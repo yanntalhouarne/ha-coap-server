@@ -84,21 +84,33 @@ if [ -z "$INFRA_IF" ]; then
     echo "No default route: connect this machine to your home network first." >&2
     exit 1
 fi
-NETPLAN=0
-[ -d /etc/netplan ] && command -v netplan > /dev/null && NETPLAN=1
+NETPLAN=0  # netplan is in /usr/sbin, which isn't on a user's PATH
+[ -d /etc/netplan ] && { command -v netplan || [ -x /usr/sbin/netplan ]; } > /dev/null && NETPLAN=1
+# Who handles router advertisements: systemd-networkd (netplan's, or on its own) and NetworkManager
+# do it themselves; otherwise the kernel does
+RA_BY_KERNEL=1
+if [ "$NETPLAN" = 1 ] || systemctl is-active -q systemd-networkd 2> /dev/null || systemctl is-active -q NetworkManager 2> /dev/null; then
+    RA_BY_KERNEL=0
+fi
 {
     echo "# The Thread border router (Docker, see the app's Border router tab) routes between the"
     echo "# Thread network and $INFRA_IF. Written by scripts/install-server.sh."
     echo "net.ipv6.conf.all.forwarding = 1"
     echo "net.ipv4.ip_forward = 1"
-    # Where the kernel itself handles router advertisements (not systemd-networkd or NetworkManager,
-    # which do it on their own): keep accepting them with forwarding on, with their routes
-    if [ "$NETPLAN" = 0 ] && ! systemctl is-active -q NetworkManager 2> /dev/null; then
+    # Where the kernel handles router advertisements: keep accepting them with forwarding on
+    if [ "$RA_BY_KERNEL" = 1 ]; then
         echo "net.ipv6.conf.$INFRA_IF.accept_ra = 2"
         echo "net.ipv6.conf.$INFRA_IF.accept_ra_rt_info_max_plen = 64"
     fi
 } | sudo tee /etc/sysctl.d/60-otbr.conf > /dev/null
 sudo /usr/sbin/sysctl -q --system
+if [ "$RA_BY_KERNEL" = 0 ]; then
+    # Not the kernel's job here (an earlier run of this script may have given it): one handler only
+    sudo /usr/sbin/sysctl -q -w "net.ipv6.conf.$INFRA_IF.accept_ra=0"
+    if [ "$NETPLAN" = 0 ] && systemctl is-active -q systemd-networkd 2> /dev/null; then
+        note "systemd-networkd without netplan: set IPv6AcceptRA=yes for $INFRA_IF in its .network file"
+    fi
+fi
 if [ "$NETPLAN" = 1 ]; then
     # systemd-networkd stops accepting router advertisements once forwarding is on, unless told to
     case "$INFRA_IF" in wl*) SECTION=wifis ;; *) SECTION=ethernets ;; esac
