@@ -337,7 +337,7 @@ Then add the line of `~/.ssh/hacoap-server.pub` to the server's `~/.ssh/authoriz
 
 ### Using it
 - **A shell on the server:** `ssh hacoap` (or `ssh hacoap-lan` at home).
-- **The app's page:** run `ssh -N -L 8710:127.0.0.1:8710 hacoap`, then open `http://localhost:8710`. Through the tunnel, the page counts as the server itself, so there's no sign-in. You can also allow other devices (Settings → **Other devices**, with ZeroTier ticked) and open `http://10.243.120.130:8710` with the password.
+- **The app's page:** run `ssh -N -L 8710:127.0.0.1:8710 hacoap` and leave it running (it holds the tunnel open, so it doesn't return until Ctrl+C), then open `http://localhost:8710` on the same computer. If the app runs on that computer too, it already has port 8710: use another, such as `-L 8711:127.0.0.1:8710` and `http://localhost:8711`. Through the tunnel, the page counts as the server itself, so there's no sign-in. You can also allow other devices (Settings → **Other devices**, with ZeroTier ticked) and open `http://10.243.120.130:8710` with the password.
 - **VS Code:** install the **Remote - SSH** extension. Then, from the command palette (F1):
   1. Run **Remote-SSH: Connect to Host…** and choose `hacoap`.
   2. Open the folder `/home/hacoap/ha-coap-server`.
