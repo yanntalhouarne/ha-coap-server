@@ -143,9 +143,10 @@ class NetworkService:
 
     def _name_boards(self, topology):
         """Names the nodes that are boards in the inventory: by their IPv6 address, else by the
-        short address the board itself reported in 'diag' lately (an older border router gives
-        no addresses for children). A board's own measure of its parent fills in a link the
-        border router gave no signal for."""
+        short address the board itself reported in 'diag' lately (the border router has no
+        addresses for another router's children, nor an older one for any). Such a board gets the
+        address the app reaches it at (ipv6_from_app). A board's own measure of its parent fills
+        in a link the border router gave no signal for."""
         devices = self.db.devices()
         by_address = {d["address"].lower(): d for d in devices if d["address"]}
         recent = time.time() - BOARD_REPORT_FRESH_S
@@ -170,6 +171,9 @@ class NetworkService:
             node["device_id"] = device["device_id"]
             node["name"] = display_name(device)
             node["board"] = board_name(device)
+            if not node.get("ipv6") and device["address"]:
+                node["ipv6"] = [device["address"]]
+                node["ipv6_from_app"] = True
             parent = nodes.get(node.get("parent"), {})
             if device["parent_rssi"] is None or device["parent_rloc16"] != parent.get("rloc16_hex"):
                 continue

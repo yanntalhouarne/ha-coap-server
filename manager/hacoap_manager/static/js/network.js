@@ -673,7 +673,10 @@ export function showNodeDetails(node, reveal = false) {
       ['Parent', node.parent && nodes.get(String(node.parent)) ? nodeLabel(nodes.get(String(node.parent))) : ''],
       ['Child timeout', node.timeout ? `${node.timeout} s` : ''],
       ['Host name', node.hostname],
-      ['IPv6', (node.ipv6 || []).join(', ')],
+      ['IPv6', node.ipv6_from_app
+        ? h('span', {}, node.ipv6.join(', '), h('div', { class: 'small text-body-secondary' },
+          "The address the app reaches it at: its router doesn't tell the border router its children's addresses."))
+        : (node.ipv6 || []).join(', ')],
     ]),
     links.length ? h('div', { class: 'mt-2' }, h('b', {}, 'Links'), h('ul', { class: 'list-unstyled net-links mb-0' }, links)) : null,
   ].filter(Boolean));  // replaceChildren would write out a null

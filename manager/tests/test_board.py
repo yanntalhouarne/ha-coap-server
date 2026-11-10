@@ -242,12 +242,14 @@ def legacy_topology():
 
 
 def test_a_board_is_named_by_its_short_address(services):
-    services.db.upsert_device("1a2b3c4d", name="basil", rloc16="0x5c01", parent_rloc16="0x5c00", parent_rssi=-70,
-                              link_quality=2, diag_time=time.time())
+    services.db.upsert_device("1a2b3c4d", name="basil", address="fd2a:83c:28ba:1::9", rloc16="0x5c01",
+                              parent_rloc16="0x5c00", parent_rssi=-70, link_quality=2, diag_time=time.time())
     topology = legacy_topology()
     services.network._name_boards(topology)
     child = topology["nodes"][1]
     assert (child["device_id"], child["name"], child["named_by"]) == ("1a2b3c4d", "basil", "rloc16")
+    # Its router gave no addresses: the one the app reaches it at, marked as such
+    assert child["ipv6"] == ["fd2a:83c:28ba:1::9"] and child["ipv6_from_app"] is True
     link = topology["links"][0]
     assert (link["average_rssi"], link["link_quality_in"], link["from_board"]) == (-70, 2, True)
 
@@ -267,6 +269,7 @@ def test_a_border_router_measure_wins(services):
     topology["links"][0]["link_margin"] = 30
     services.network._name_boards(topology)
     assert topology["nodes"][1]["device_id"] == "1a2b3c4d" and "named_by" not in topology["nodes"][1]
+    assert topology["nodes"][1]["ipv6"] == ["fd11::1"] and "ipv6_from_app" not in topology["nodes"][1]  # its own
     assert topology["links"][0]["average_rssi"] is None and "from_board" not in topology["links"][0]
 
 
