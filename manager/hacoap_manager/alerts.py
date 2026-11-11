@@ -1,7 +1,7 @@
 """Alerts: a device that stopped answering, a low battery, a plant that needs water, a failed
 update, a board that crashed (or was restarted by its watchdog), the border router down (or its
 radio unplugged, or off the Thread network), every board silent at once, a board whose link
-stays weak for hours, and one that keeps changing routers. They're raised when
+stays weak for hours, one that keeps changing routers, and one that answers but stopped sampling. They're raised when
 the condition starts and cleared when it ends (or dismissed), and each new one is sent to the
 page, which can show it as a browser notification.
 
@@ -23,6 +23,7 @@ WEAK_HOURS = 3        # a board's link weak in every network reading of the last
 WEAK_READINGS = 3     # ...from this many readings
 SWITCHES = 3          # a board that changed routers this many times in the last day: an alert
 SWITCH_HOURS = 24
+NOT_SAMPLING_S = 2 * 3600  # a board that answers but took no sample for this long: an alert
 
 
 def weak_link(samples):
@@ -94,6 +95,14 @@ class AlertService:
                 found[f"weak-link:{device_id}"] = ("network", device_id,
                                                    f"{NAME}'s link to its router has been weak for {WEAK_HOURS} hours: "
                                                    f"move it closer to a router, or add a router between them")
+            last_sample = device.get("last_sample")
+            if device["online"] and last_sample and now - last_sample > NOT_SAMPLING_S:
+                # Its readings are its last sample's, over and over (the Boot probe firmware of Nov 2026
+                # left boards sampling every 5.6 hours)
+                found[f"sampling:{device_id}"] = ("sampling", device_id,
+                                                  f"{NAME} answers but hasn't taken a sample for over "
+                                                  f"{NOT_SAMPLING_S // 3600} hours: its readings don't change. Is its "
+                                                  f"sampling period too long (its page, Settings on the board)?")
             if switches.get(device_id, 0) >= SWITCHES:
                 found[f"switching:{device_id}"] = ("network", device_id,
                                                    f"{NAME} changed routers {switches[device_id]} times in a day: it's "

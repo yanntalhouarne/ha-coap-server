@@ -277,6 +277,23 @@ def test_weak_links_and_boards_that_keep_switching(services):
     assert {a["key"] for a in services.db.open_alerts()} == {"switching:5e6f7a8b"}
 
 
+def test_a_board_that_stopped_sampling(services):
+    """It answers, but its newest sample is over 2 hours old: its readings don't change."""
+    now = time.time()
+    services.db.upsert_device("1a2b3c4d", name="ha-coap-1a2b3c4d", plant="basil", address="fd11::1", last_seen=now,
+                              last_sample=now - 5.6 * 3600)
+    services.db.upsert_device("5e6f7a8b", name="ha-coap-5e6f7a8b", address="fd11::2", last_seen=now,
+                              last_sample=now - 900)
+    services.db.upsert_device("9c0d1e2f", name="ha-coap-9c0d1e2f", address="fd11::3", last_seen=now)  # older firmware
+    raised = {a["key"]: a["message"] for a in services.alerts.scan()}
+    assert set(raised) == {"sampling:1a2b3c4d"}
+    assert raised["sampling:1a2b3c4d"].startswith("basil answers but hasn't taken a sample for over 2 hours")
+    # Sampling again: cleared
+    services.db.upsert_device("1a2b3c4d", last_sample=now)
+    services.alerts.scan()
+    assert services.db.open_alerts() == []
+
+
 def test_alerts_dismissed_before_the_upgrade_dont_stay_quiet(tmp_path):
     import sqlite3
     from hacoap_manager.db import Database

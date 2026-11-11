@@ -201,7 +201,10 @@ class Inventory:
                              sample.temperature, sample.power))
         if rows:
             self.db.add_samples(rows)
-        self.db.upsert_device(device_id, hist_boot=history.boot, hist_next=history.read_up_to)
+        fields = {"hist_boot": history.boot, "hist_next": history.read_up_to}
+        if history.samples:  # when it last sampled: one that stopped is an alert (alerts.NOT_SAMPLING_S)
+            fields["last_sample"] = min(history.time_of(history.samples[-1], received_at), received_at)
+        self.db.upsert_device(device_id, **fields)
         return history.samples[-1] if history.samples else None
 
     async def _read_more_history(self, device, history, options):

@@ -90,8 +90,11 @@ async def test_the_gap_fills_in_after_the_network_was_down(client, services, sta
     assert soils(services)[before:] == [40, 35, 30]   # each one, in order
     times = [r["time"] for r in services.db.readings("1a2b3c4d")]
     assert times == sorted(times)
+    # When it last sampled: its newest sample's time (for the alert when a board stops sampling)
+    assert services.db.device("1a2b3c4d")["last_sample"] == times[-1]
     await refresh(client)
     assert len(soils(services)) == before + 3        # not twice
+    assert services.db.device("1a2b3c4d")["last_sample"] == times[-1]  # no new sample: as it was
 
 
 async def test_a_sample_that_changed_is_pushed(client, services, start_sim):
