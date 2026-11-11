@@ -154,8 +154,9 @@ async def test_cancel_skips_devices_not_started(fleet, start_sim):
     while job.targets[0].status != "running":
         await asyncio.sleep(0.01)
     fleet.updates.cancel(job.id)
+    assert job.as_dict()["cancelling"] is True   # the page shows it at once: the rest won't start
     job = await asyncio.wait_for(fleet.updates.wait(job.id), 60)
-    assert job.state == "cancelled"
+    assert job.state == "cancelled" and job.as_dict()["cancelling"] is False
     assert job.targets[0].status == "updated"  # the one in progress finishes
     assert job.targets[1].status == "cancelled"
 

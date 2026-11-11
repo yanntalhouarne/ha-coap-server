@@ -112,11 +112,20 @@ document.getElementById('update-form').addEventListener('submit', (event) => {
     + 'Use it for boards whose first start after a restart fails (the watchdog resets them, then they start cleanly), '
     + 'with an image known to run. Go on?')) return;
   busy(event.submitter, async () => {
-    const job = await api('POST', '/api/updates', {
+    const body = {
       image_hash: imageHash, targets, stop_on_failure: document.getElementById('stop-on-failure').checked,
       staged: document.getElementById('staged').checked, allow_unverified: refused,
       ignore_battery: document.getElementById('ignore-battery').checked, permanent,
-    });
+    };
+    let job;
+    try {
+      job = await api('POST', '/api/updates', body, { quiet: true });
+    } catch (error) {
+      // Boards with a development-key bootloader, and an image signed with your key: say so first
+      if (!/signed with the development key/.test(error.message)) { notify(error.message, 'danger'); return; }
+      if (!confirm(`${error.message}\n\nUpdate anyway?`)) return;
+      job = await api('POST', '/api/updates', { ...body, allow_key_change: true });
+    }
     state.jobs.set(job.id, job);
     renderJobs();
   });
@@ -244,26 +253,57 @@ const elapsed = (t) => {
   return seconds < 90 ? `${Math.round(seconds)} s` : `${Math.round(seconds / 60)} min`;
 };
 
+// A job's header: its image, its state, and its buttons. Redrawn only when its state changes: the
+// progress (at every 1 % of an upload) redraws its body, so a button isn't replaced while it's
+// being clicked (a click whose button was replaced between press and release is lost).
+function jobHeader(job) {
+  const cancelling = job.cancelling;
+  return h('div', { class: 'card-header d-flex align-items-center gap-2' },
+    h('span', {}, `Image v${job.image_version} · ${shortHash(job.image_hash)}`),
+    h('span', { class: `badge text-bg-${statusClass[job.state] || 'secondary'}` }, job.state),
+    h('span', { class: 'small text-body-secondary' }, when(job.created)),
+    job.state === 'paused' && !cancelling ? h('span', { class: 'ms-auto small text-warning' }, 'Check the first device, then:') : null,
+    job.state === 'paused' && !cancelling ? h('button', { class: 'btn btn-sm btn-success', type: 'button',
+      onclick: (e) => busy(e.currentTarget, () => api('POST', `/api/updates/${job.id}/continue`)) }, 'Continue with the rest') : null,
+    ['running', 'paused'].includes(job.state) ? h('button', {
+      class: `btn btn-sm btn-outline-danger${job.state === 'running' || cancelling ? ' ms-auto' : ''}`, type: 'button',
+      disabled: cancelling ? true : null,
+      title: cancelling ? 'The board being updated finishes; the ones after it won\u2019t start' : null,
+      onclick: (e) => busy(e.currentTarget, async () => {
+        const updated = await api('POST', `/api/updates/${job.id}/cancel`);
+        state.jobs.set(updated.id, updated);
+        renderJobs();
+        notify('Cancelling: the board being updated finishes, the ones after it won\u2019t start', 'info', 5000);
+      }) }, cancelling ? 'Cancelling\u2026' : 'Cancel the rest') : null);
+}
+
 export function renderJobs() {
   const container = document.getElementById('jobs');
   const jobs = [...state.jobs.values()].sort((a, b) => b.created - a.created);
   if (!jobs.length) return;
-  container.replaceChildren(...jobs.map((job) => h('div', { class: 'card mb-3 job' },
-    h('div', { class: 'card-header d-flex align-items-center gap-2' },
-      h('span', {}, `Image v${job.image_version} · ${shortHash(job.image_hash)}`),
-      h('span', { class: `badge text-bg-${statusClass[job.state] || 'secondary'}` }, job.state),
-      h('span', { class: 'small text-body-secondary' }, when(job.created)),
-      job.state === 'paused' ? h('span', { class: 'ms-auto small text-warning' }, 'Check the first device, then:') : null,
-      job.state === 'paused' ? h('button', { class: 'btn btn-sm btn-success',
-        onclick: () => api('POST', `/api/updates/${job.id}/continue`).catch(() => {}) }, 'Continue with the rest') : null,
-      ['running', 'paused'].includes(job.state) ? h('button', { class: `btn btn-sm btn-outline-danger${job.state === 'running' ? ' ms-auto' : ''}`,
-        onclick: () => api('POST', `/api/updates/${job.id}/cancel`).catch(() => {}) }, 'Cancel the rest') : null),
-    h('div', { class: 'card-body job-targets' }, job.targets.map((t) => h('div', { class: `job-target ${t.status}` },
+  const cards = jobs.map((job) => {
+    const head = `${job.state}|${job.cancelling ? 1 : 0}`;
+    let card = [...container.children].find((c) => c.dataset.id === job.id);
+    if (!card || card.dataset.head !== head) {
+      card = h('div', { class: 'card mb-3 job', 'data-id': job.id, 'data-head': head }, jobHeader(job),
+        h('div', { class: 'card-body job-targets' }));
+    }
+    card.querySelector('.job-targets').replaceChildren(...jobTargets(job));
+    return card;
+  });
+  // Only when the cards themselves changed: moving a card being clicked would lose the click too
+  if (cards.length !== container.children.length || cards.some((card, i) => container.children[i] !== card)) {
+    container.replaceChildren(...cards);
+  }
+}
+
+function jobTargets(job) {
+  return job.targets.map((t) => h('div', { class: `job-target ${t.status}` },
       h('div', { class: 'job-who' }, h('b', {}, t.label),
         h('div', { class: 'small text-body-secondary' }, `${t.transport === 'serial' ? 'USB' : 'over the air'}${t.started ? ` · ${elapsed(t)}` : ''}`)),
       targetTimeline(job, t),
       h('div', { class: 'job-result' }, h('span', { class: `badge text-bg-${statusClass[t.status] || 'secondary'}` }, t.status),
-        t.message ? h('div', { class: t.status === 'failed' ? 'error-text small' : 'small text-body-secondary' }, t.message) : null)))))));
+        t.message ? h('div', { class: t.status === 'failed' ? 'error-text small' : 'small text-body-secondary' }, t.message) : null)));
 }
 
 export async function loadJobs() {

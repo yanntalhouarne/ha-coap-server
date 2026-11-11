@@ -65,6 +65,7 @@ class UpdateJob:
     def as_dict(self):
         data = {f.name: getattr(self, f.name) for f in fields(self) if f.name not in ("cancel_requested", "resume")}
         data["targets"] = [asdict(t) for t in self.targets]
+        data["cancelling"] = self.cancel_requested and self.state in ("running", "paused")  # the page says so
         return data
 
 

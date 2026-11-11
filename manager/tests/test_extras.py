@@ -20,7 +20,7 @@ from hacoap_manager.images import find_repository
 from hacoap_manager.signing import SigningCheck
 from hacoap_manager.simborder import SimulatedBorderRouter, scenario
 
-from conftest import NEW_HASH, NEW_IMAGE, fast_settings
+from conftest import NEW_HASH, NEW_IMAGE, OLD_HASH, fast_settings
 
 CHANGE = {"X-HACoap": "1"}
 PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 64
@@ -99,6 +99,30 @@ async def test_updates_refuse_images_boards_wont_boot(client, services):
     response = await client.post("/api/updates", json={"image_hash": NEW_HASH, "targets": [{"device_id": "aa"}]},
                                  headers=CHANGE)
     assert response.status_code == 400 and "Not signed" in response.json()["detail"]
+
+
+async def test_an_image_signed_with_your_key_for_boards_on_the_development_key(client, services, monkeypatch):
+    """A board running a development-key image most likely has a development-key bootloader: an image
+    signed with your key would be refused on it (MCUboot reverts the update). Said first, unless told."""
+    await client.post("/api/images", content=NEW_IMAGE, headers=CHANGE)
+    services.db.add_image(OLD_HASH, "1.0.0", "app_update.bin", 1000, "the one they run")
+    signers = {NEW_HASH: "yours", OLD_HASH: "development"}
+    monkeypatch.setattr(services.signing, "check", lambda image_hash, read, key=None: {
+        "signer": signers.get(image_hash, "unknown"), "detail": ""})
+    services.db.upsert_device("aa", name="basil", address="127.0.0.1", image_hash=OLD_HASH)
+    started = []
+    monkeypatch.setattr(services.updates, "start", lambda *args, **kwargs: started.append(args) or type(
+        "Job", (), {"as_dict": lambda self: {"id": "j"}})())
+    body = {"image_hash": NEW_HASH, "targets": [{"device_id": "aa"}]}
+    response = await client.post("/api/updates", json=body, headers=CHANGE)
+    assert response.status_code == 409 and response.json()["detail"].startswith(
+        "basil runs an image signed with the development key, so its bootloader")
+    assert not started
+    assert (await client.post("/api/updates", json={**body, "allow_key_change": True}, headers=CHANGE)).status_code == 200
+    # A board on an image signed with your key: no question
+    signers[OLD_HASH] = "yours"
+    assert (await client.post("/api/updates", json=body, headers=CHANGE)).status_code == 200
+    assert len(started) == 2
 
 
 # ---------------------------------------------------------------- battery check

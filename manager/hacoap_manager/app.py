@@ -1008,6 +1008,20 @@ def create_app(services, background_tasks=True, on_quit=None, port=None):
 
     # ------------------------------------------------------------ updates
 
+    def _development_boards(image_hash, targets):
+        """The boards (names) that run an image signed with the development key, when this image
+        is signed with your key: their bootloader most likely still has the development key, and
+        would refuse it (MCUboot reverts the update on every one of them)."""
+        if s.db.image(image_hash) is None or _signature(image_hash, None)["signer"] != "yours":
+            return []
+        names = []
+        for target in targets:
+            device = s.db.device(str(target.get("device_id", ""))) if isinstance(target, dict) else None
+            running = device["image_hash"] if device else ""
+            if running and s.db.image(running) is not None and _signature(running, None)["signer"] == "development":
+                names.append(naming.display_name(device))
+        return names
+
     @app.post("/api/updates")
     async def start_update(body: dict):
         image_hash = str(body.get("image_hash", ""))
@@ -1016,6 +1030,15 @@ def create_app(services, background_tasks=True, on_quit=None, port=None):
             if check["signer"] in signing.REFUSED:
                 raise _bad_request(f"{check['detail']}. Start it anyway only for the simulator, or a board "
                                    "with a development bootloader.")
+        if not body.get("allow_key_change"):
+            boards = await asyncio.to_thread(_development_boards, image_hash, list(body.get("targets", [])))
+            if boards:
+                one = len(boards) == 1
+                raise HTTPException(409, f"{', '.join(boards)} {'runs' if one else 'run'} an image signed with the "
+                                         f"development key, so {'its' if one else 'their'} bootloader most likely only "
+                                         "accepts that key: this image is signed with yours, and would be refused "
+                                         "(MCUboot reverts the update). Build it with 'sign with: development key', "
+                                         "or go on if the bootloader was flashed with your key.")
         try:
             job = s.updates.start(image_hash, list(body.get("targets", [])), bool(body.get("stop_on_failure", True)),
                                   bool(body.get("staged", False)), s.console, bool(body.get("ignore_battery", False)),
