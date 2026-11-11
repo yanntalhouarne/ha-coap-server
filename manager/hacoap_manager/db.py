@@ -147,6 +147,16 @@ CREATE TABLE IF NOT EXISTS activity (
     actor     TEXT NOT NULL DEFAULT ''         -- who did it: a device, a link, automatic watering ('': the board)
 );
 CREATE INDEX IF NOT EXISTS activity_device_time ON activity (device_id, time);
+CREATE TABLE IF NOT EXISTS care_tasks (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    device_id  TEXT NOT NULL,                  -- the plant's board
+    what       TEXT NOT NULL,                  -- such as "Fertilize"
+    every_days INTEGER NOT NULL,               -- it comes back this many days after it's done
+    due        REAL NOT NULL,                  -- when it's next to do
+    last_done  REAL,
+    created    REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS care_tasks_device ON care_tasks (device_id);
 CREATE TABLE IF NOT EXISTS builds (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
     profile    TEXT NOT NULL,
@@ -289,7 +299,8 @@ class Database:
     def purge_device(self, device_id):
         """Deletes a device and everything recorded about it."""
         with self._lock:
-            for table in ("readings", "link_samples", "activity", "alerts", "updates", "network_events", "devices"):
+            for table in ("readings", "link_samples", "activity", "alerts", "updates", "network_events", "care_tasks",
+                          "devices"):
                 self._conn.execute(f"DELETE FROM {table} WHERE device_id = ?", (device_id,))
             self._conn.execute("DELETE FROM floorplan_positions WHERE node_key = ?", (device_id,))
             self._conn.commit()
@@ -550,6 +561,31 @@ class Database:
         with self._lock:
             return {table: self._conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
                     for table in ("readings", "link_samples", "network_snapshots", "activity")}
+
+    # ------------------------------------------------------------ care tasks: fertilize, repot...
+
+    def care_tasks(self, device_id=None):
+        """A plant's care tasks (or every plant's), the soonest due first."""
+        if device_id is None:
+            return self._query("SELECT * FROM care_tasks ORDER BY due, id")
+        return self._query("SELECT * FROM care_tasks WHERE device_id = ? ORDER BY due, id", (device_id,))
+
+    def care_task(self, task_id):
+        rows = self._query("SELECT * FROM care_tasks WHERE id = ?", (task_id,))
+        return rows[0] if rows else None
+
+    def add_care_task(self, device_id, what, every_days, due):
+        cursor = self._execute("INSERT INTO care_tasks (device_id, what, every_days, due, created) VALUES (?, ?, ?, ?, ?)",
+                               (device_id, what, every_days, due, time.time()))
+        return self.care_task(cursor.lastrowid)
+
+    def update_care_task(self, task_id, **fields):
+        assignments = ", ".join(f"{name} = ?" for name in fields if name in ("what", "every_days", "due", "last_done"))
+        self._execute(f"UPDATE care_tasks SET {assignments} WHERE id = ?", (*fields.values(), task_id))
+        return self.care_task(task_id)
+
+    def delete_care_task(self, task_id):
+        return self._execute("DELETE FROM care_tasks WHERE id = ?", (task_id,)).rowcount > 0
 
     # ------------------------------------------------------------ floor plan
 

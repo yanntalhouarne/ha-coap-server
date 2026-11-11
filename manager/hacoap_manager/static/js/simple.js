@@ -12,6 +12,7 @@ import { showPumping, startPumping, waitForBoard } from './motion.js';
 import { setTheme } from './themes.js';
 import { refillTank, tankBar, tankLasts, tankText } from './watering.js';
 import { byWhom } from './timeline.js';
+import { careDone, careSection, dueText, everyText, isDue } from './care.js';
 
 const simple = { route: null, plants: [], plantId: null, fromWall: false, soon: null, openWater: false };
 
@@ -63,7 +64,7 @@ export function refreshSimple(deviceId) {
   simple.soon = setTimeout(() => {
     if (onPlants) loadPlants().catch(() => {});
     // Not while a button waits for the board, or the watering menu is open: drawing the page again would lose it
-    else if (!document.querySelector('#plant-page .waiting, #plant-page .water-menu:not(.d-none)')) {
+    else if (!document.querySelector('#plant-page .waiting, #plant-page .water-menu:not(.d-none), #plant-page .care-form:not(.d-none)')) {
       loadPlant(deviceId, simple.fromWall).catch(() => {});
     }
   }, 2000);
@@ -142,6 +143,8 @@ async function renderAway() {
 function plantNote(p) {
   if (!p.online) return 'offline';
   if (p.needs_water) return 'needs water now';
+  const care = (p.care || []).find((task) => isDue(task));
+  if (care) return `${care.what.toLowerCase()} today`;
   if (p.water_forecast && has(p.water_forecast.days)) return `water ${waterIn(p.water_forecast)}`;
   return p.power === 'charging' ? 'charging' : '';
 }
@@ -192,6 +195,10 @@ export function todayTasks(plants, now = Date.now() / 1000) {
       tasks.push({ rank: 3, kind: 'offline', icon: 'triangle-alert', plant: p, text: `Check ${name(p)}`,
         note: p.last_seen ? `not answering since ${ago(p.last_seen)}` : 'never answered' });
     }
+    for (const task of (p.care || []).filter((t) => isDue(t, now * 1000))) {
+      tasks.push({ rank: 2.5, kind: 'care', icon: 'sprout', plant: p, task, text: `${task.what}: ${name(p)}`,
+        note: `${everyText(task)} · ${dueText(task, now * 1000)}` });
+    }
     if (!p.needs_water && p.online && p.water_forecast && has(p.water_forecast.days) && p.water_forecast.days <= 1) {
       tasks.push({ rank: 4, kind: 'soon', icon: 'clock', plant: p, text: `${name(p)} needs water ${waterIn(p.water_forecast)}`,
         note: `soil ${p.soil_moisture} %` });
@@ -211,6 +218,12 @@ function renderToday(plants) {
         simple.openWater = true;  // its page, with How long? open
         location.hash = plantHref(p.device_id);
       } }, 'Water');
+    }
+    if (task.kind === 'care' && !view) {
+      return h('button', { class: 'btn btn-sm btn-outline-primary', type: 'button', onclick: async (e) => {
+        await careDone(task.task, e.currentTarget);
+        await loadPlants();
+      } }, 'Done');
     }
     if (task.kind === 'refill' && p.tank && !view) {
       return h('button', { class: 'btn btn-sm btn-outline-primary', type: 'button', onclick: async (e) => {
@@ -347,6 +360,7 @@ function renderPlant(details) {
       } }, 'Refilled')) : null,
     device.watering_missed ? h('p', { class: 'tank-missed' }, icon('triangle-alert'),
       " Its soil didn't rise after its last waterings: is its tank empty, or the tube out of the pot?") : null,
+    careSection(device, details.care || [], () => loadPlant(id, simple.fromWall).catch(() => {})),
     h('section', { class: 'plant-facts' },
       fact('battery', pct(device.battery), onUsb(device) ? powerText(device) : has(device.battery) ? daysText(health.battery_forecast) : '', low ? 'bad' : ''),
       fact('air', has(device.temperature) ? `${device.temperature} °C` : '–', has(device.air_humidity) ? `${device.air_humidity} % humid` : ''),

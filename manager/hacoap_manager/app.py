@@ -215,6 +215,8 @@ LINK_ALLOWED = [
     (("GET", "HEAD"), re.compile(r"^/api/(network|network/history|network/floorplan|graph|readings\.csv)$")),
     (("GET", "HEAD"), re.compile(r"^/api/network/history/[^/]+$")),
     (("POST",), re.compile(r"^/api/devices/[^/]+/(pump|ping|tank/refilled)$")),
+    (("GET", "HEAD"), re.compile(r"^/api/devices/[^/]+/care$")),
+    (("POST",), re.compile(r"^/api/care/\d+/done$")),  # a care task done (adding or removing them: the full app)
     (("POST",), re.compile(r"^/api/network/refresh$")),  # reading the network again (it changes nothing)
     (("POST",), re.compile(r"^/api/alerts/(dismiss|\d+/dismiss)$")),
     (("PATCH",), re.compile(r"^/api/devices/[^/]+$")),  # its plant's name only (edit_device)
@@ -603,7 +605,7 @@ def create_app(services, background_tasks=True, on_quit=None, port=None):
                                                             s.db.activity(device_id, effect_since))},
                 "readings": s.db.readings(device_id, since), "links": s.db.link_samples(device_id, since),
                 "updates": s.db.updates(device_id, limit=50), "network_events": s.db.network_events_for(device_id),
-                "activity": s.db.activity(device_id, since),
+                "activity": s.db.activity(device_id, since), "care": s.db.care_tasks(device_id),
                 "restarts": s.db.recent_activity(device_id, "restart", 20),
                 "drain": await asyncio.to_thread(fleet.battery_drain, s.db, device)}
 
@@ -643,6 +645,81 @@ def create_app(services, background_tasks=True, on_quit=None, port=None):
     @app.get("/api/wall")
     async def wall():
         return await asyncio.to_thread(fleet.wall, s.db, s.inventory)
+
+    # ------------------------------------------------------------ care tasks: fertilize, repot...
+
+    def _care_values(body, partial=False):
+        """{what, every_days, due} from the page, checked (only those given, when 'partial')."""
+        values = {}
+        if "what" in body or not partial:
+            values["what"] = " ".join(str(body.get("what") or "").split())[:60]
+            if not values["what"]:
+                raise _bad_request("Say what to do (such as: Fertilize)")
+        if "every_days" in body or not partial:
+            try:
+                values["every_days"] = int(body.get("every_days"))
+            except (TypeError, ValueError):
+                raise _bad_request("Every how many days: a number from 1 to 365") from None
+            if not 1 <= values["every_days"] <= 365:
+                raise _bad_request("Every how many days: a number from 1 to 365")
+        if "due" in body or not partial:
+            try:
+                values["due"] = float(body.get("due") or time.time())
+            except (TypeError, ValueError):
+                raise _bad_request("When: a time") from None
+            if abs(values["due"] - time.time()) > 400 * DAY_S:
+                raise _bad_request("When: within a year")
+        return values
+
+    def _care_changed(device_id):
+        device = s.db.device(device_id)
+        if device is not None:
+            s.events.publish("device", device=s.inventory.describe(device))
+
+    @app.get("/api/devices/{device_id}/care")
+    async def care_tasks(device_id: str):
+        return s.db.care_tasks(device_id)
+
+    @app.post("/api/devices/{device_id}/care")
+    async def add_care_task(device_id: str, body: dict):
+        if s.db.device(device_id) is None:
+            raise HTTPException(404, "Unknown device")
+        task = s.db.add_care_task(device_id, **_care_values(body))
+        s.db.add_activity(device_id, "care", f"Care task added: {task['what']}, every {task['every_days']} days")
+        _care_changed(device_id)
+        return task
+
+    def _task(task_id):
+        task = s.db.care_task(task_id)
+        if task is None:
+            raise HTTPException(404, "No such care task")
+        return task
+
+    @app.patch("/api/care/{task_id}")
+    async def edit_care_task(task_id: int, body: dict):
+        task = _task(task_id)
+        values = _care_values(body, partial=True)
+        task = s.db.update_care_task(task_id, **values) if values else task
+        _care_changed(task["device_id"])
+        return task
+
+    @app.delete("/api/care/{task_id}")
+    async def delete_care_task(task_id: int):
+        task = _task(task_id)
+        s.db.delete_care_task(task_id)
+        s.db.add_activity(task["device_id"], "care", f"Care task removed: {task['what']}")
+        _care_changed(task["device_id"])
+        return {"deleted": task_id}
+
+    @app.post("/api/care/{task_id}/done")
+    async def care_done(task_id: int):
+        """Done: next due its number of days from now."""
+        task = _task(task_id)
+        now = time.time()
+        task = s.db.update_care_task(task_id, last_done=now, due=now + task["every_days"] * DAY_S)
+        s.db.add_activity(task["device_id"], "care", f"Done: {task['what']}")
+        _care_changed(task["device_id"])
+        return task
 
     @app.get("/api/away")
     async def away(until: float = 0):

@@ -343,10 +343,13 @@ def trends(db, inventory, days=7, now=None):
 
 
 def wall(db, inventory, now=None):
-    """The wall display: every plant with its photo, soil, target, forecasts and battery; the ones
-    that need water first, then the soonest to."""
+    """The wall display: every plant with its photo, soil, target, forecasts and battery, and its
+    care tasks; the ones that need water first, then the soonest to."""
     now = now or time.time()
     plants = []
+    care = {}
+    for task in db.care_tasks():
+        care.setdefault(task["device_id"], []).append(task)
     for device in inventory.devices():
         readings = db.readings(device["device_id"], since=now - FORECAST_WINDOW_DAYS * DAY)
         plants.append({"device_id": device["device_id"], **names(device),
@@ -355,7 +358,7 @@ def wall(db, inventory, now=None):
                        "needs_water": device["needs_water"], "battery": device["battery"], "power": device["power"], "online": device["online"],
                        "last_seen": device["last_seen"], "tank": device.get("tank"),
                        "watering_missed": device.get("watering_missed", False),
-                       "waters_itself": waters_itself(device),
+                       "waters_itself": waters_itself(device), "care": care.get(device["device_id"], []),
                        "water_forecast": water_forecast(readings, device["water_target"], now),
                        "battery_forecast": battery_forecast(readings)})
     soon = lambda p: (p["water_forecast"] or {}).get("days")  # noqa: E731
