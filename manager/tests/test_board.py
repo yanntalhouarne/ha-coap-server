@@ -98,6 +98,9 @@ async def test_a_refresh_reads_diag_and_records_restarts(client, services, start
 def test_parse_diag_power():
     assert coap.parse_diag(b"boots=1,up=5,reset=power,role=child,soil_mv=900,power=charging").power == "charging"
     assert coap.parse_diag(b"boots=1,up=5,reset=power,role=child,soil_mv=900").power == ""  # firmware before it
+    # All its pump's runs since boot (ms), whatever started them
+    assert coap.parse_diag(b"boots=1,up=5,reset=power,role=child,button_s=6,pump_ms=14020").pump_ms == 14020
+    assert coap.parse_diag(b"boots=1,up=5,reset=power,role=child,button_s=6").pump_ms is None  # firmware before it
 
 
 async def test_plugging_in_and_unplugging(client, services, start_sim):

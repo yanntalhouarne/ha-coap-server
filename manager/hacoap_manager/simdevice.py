@@ -128,6 +128,7 @@ class SimulatedDevice:
     diag: bool = True                # the 'diag' resource and the 'hacoap' mcumgr group (newer firmware)
     history: bool = True             # the 'hist' resource, observed (newer firmware)
     button_s: int = 0                # the pump's run time started with its button since boot ('diag')
+    pump_ms: int = 0                 # how long its pump ran since boot, whatever started it ('diag')
     rloc16: int = 0x5001             # its short address on the Thread network, reported in 'diag'
     parent_rloc16: int = 0x5000
     boots: int = 1
@@ -285,6 +286,7 @@ class SimulatedDevice:
         self.reset_cause, self.fault = cause, fault
         self.samples = 1
         self.button_s = 0
+        self.pump_ms = 0
         self._samples, self._samples_added, self._observer = [], 0, None
         self._boot_log()
         self.sample()
@@ -319,7 +321,7 @@ class SimulatedDevice:
                  f"rssi=-62,last_rssi=-60,lq=3")
         text += f",soil_mv={self.soil_mv()},power={self.power}"
         if self.history:
-            text += f",button_s={self.button_s}"  # with 'hist': the same firmware
+            text += f",button_s={self.button_s},pump_ms={self.pump_ms}"  # with 'hist': the same firmware
         return text.encode()
 
     def _settings_response(self):
@@ -599,6 +601,7 @@ class SimulatedDevice:
                 self.log(f"Received 'pump' PUT request: {message.payload.decode()}", module="coap_resources")
                 self.pump_running = message.payload == b"1"
                 if self.pump_running:
+                    self.pump_ms += self.pump_duration * 1000
                     asyncio.get_running_loop().call_later(self.pump_duration, self._pump_off)
             elif message.code != coap.GET:
                 return None  # the firmware ignores a NON PUT
@@ -623,6 +626,7 @@ class SimulatedDevice:
         """S1: the pump runs for its run time (application/src/pump.c), counted in 'diag'."""
         self.pump_running = True
         self.button_s += self.pump_duration
+        self.pump_ms += self.pump_duration * 1000
         asyncio.get_running_loop().call_later(self.pump_duration, self._pump_off)
 
     def _pump_off(self):
