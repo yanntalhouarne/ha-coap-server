@@ -133,6 +133,10 @@ def fake_home_assistant(token="secret-token"):
         {"entity_id": "sensor.fern_device_id", "state": "99999999", "attributes": {"friendly_name": "fern.device-id"}},
         {"entity_id": "sensor.fern_battery", "state": "50", "attributes": {"friendly_name": "fern.battery"}},
         {"entity_id": "light.kitchen", "state": "on", "attributes": {"friendly_name": "Kitchen"}},
+        # The integration's version 2: "<device> <entity>" names
+        {"entity_id": "sensor.mint_device_id", "state": "5e6f7a8b", "attributes": {"friendly_name": "mint Device ID"}},
+        {"entity_id": "sensor.mint_soil_moisture", "state": "33", "attributes": {"friendly_name": "mint Soil moisture", "unit_of_measurement": "%"}},
+        {"entity_id": "sensor.mint_air_humidity", "state": "51", "attributes": {"friendly_name": "mint Air humidity", "unit_of_measurement": "%"}},
     ]
     history = {
         "sensor.basil_battery": [(now - 5 * DAY, "82"), (now - 3 * DAY, "81"), (now - 2 * DAY, "unavailable"), (now - DAY, "80")],
@@ -172,6 +176,9 @@ def test_home_assistant_import(services):
     assert ha.check()["version"] == "2026.10.1"
     boards = {b["ha_name"]: b for b in ha.boards()}
     assert boards["basil"]["device_id"] == "1a2b3c4d" and set(boards["basil"]["entities"]) == {"battery", "soil_moisture", "temperature"}
+    assert boards["mint"]["device_id"] == "5e6f7a8b" and boards["mint"]["entities"] == {
+        "soil_moisture": {"entity_id": "sensor.mint_soil_moisture", "unit": "%"},
+        "air_humidity": {"entity_id": "sensor.mint_air_humidity", "unit": "%"}}
 
     results = {r["ha_name"]: r for r in homeassistant.import_history(services.db, ha, services.db.devices(), days=10)}
     assert results["basil"]["imported"] == 5 and "99999999" in results["fern"]["note"]

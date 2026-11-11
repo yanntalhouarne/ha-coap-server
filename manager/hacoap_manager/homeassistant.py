@@ -1,8 +1,10 @@
 """Imports the boards' history from Home Assistant, which has it from before the app ran.
 
 The ha-coap integration gives each board the sensors "<name>.battery", "<name>.soil-humidity",
-"<name>.air-humidity", "<name>.temperature" and "<name>.device-id", whose state is the board's
-ID: boards are matched by that ID (by name only when it's unavailable). The history comes from
+"<name>.air-humidity", "<name>.temperature" and "<name>.device-id" (version 1), or "<name> Battery",
+"<name> Soil moisture", "<name> Air humidity", "<name> Temperature" and "<name> Device ID" (version
+2, Home Assistant's naming: the device's name, then the entity's), whose state is the board's ID:
+boards are matched by that ID (by name only when it's unavailable). The history comes from
 HA's REST API (/api/history), so it covers what HA's recorder keeps: 10 days by default.
 
 The access token is kept in its own file in the data folder (ha-token), never in settings.json,
@@ -19,9 +21,13 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
-# The integration's sensor names, and the reading each one fills
+# The integration's sensor names, and the reading each one fills: version 1 ("<name>.<sensor>")
+# and version 2 ("<name> <Sensor>")
 FIELDS = {"battery": "battery", "soil-humidity": "soil_moisture", "air-humidity": "air_humidity",
           "temperature": "temperature"}
+FIELDS_V2 = {"Battery": "battery", "Soil moisture": "soil_moisture", "Air humidity": "air_humidity",
+             "Temperature": "temperature"}
+DEVICE_ID_SUFFIXES = ((".device-id", "."), (" Device ID", " "))  # its suffix, and what joins the others
 READING_FIELDS = ("battery", "soil_moisture", "air_humidity", "temperature")
 BUCKET_S = 900   # one imported reading per 15 minutes at most, as often as the app reads
 MAX_DAYS = 90
@@ -117,13 +123,14 @@ class HomeAssistant:
             names[str(attributes.get("friendly_name") or "")] = (state.get("entity_id"), attributes, state.get("state"))
         boards = []
         for name, (_, _, value) in names.items():
-            if not name.endswith(".device-id"):
+            suffix = next((s for s in DEVICE_ID_SUFFIXES if name.endswith(s[0])), None)
+            if suffix is None:
                 continue
-            prefix = name[: -len(".device-id")]
+            prefix = name[: -len(suffix[0])]
             device_id = str(value or "").strip().lower()
             entities = {}
-            for sensor, field in FIELDS.items():
-                found = names.get(f"{prefix}.{sensor}")
+            for sensor, field in (FIELDS if suffix[1] == "." else FIELDS_V2).items():
+                found = names.get(f"{prefix}{suffix[1]}{sensor}")
                 if found:
                     entities[field] = {"entity_id": found[0], "unit": found[1].get("unit_of_measurement") or ""}
             boards.append({"ha_name": prefix, "device_id": device_id if device_id not in ("", "unknown", "unavailable")
