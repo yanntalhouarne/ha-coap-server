@@ -339,6 +339,8 @@ def watering_report(readings, pump_rows, now=None, days=REPORT_DAYS):
     median = lambda values: sorted(values)[len(values) // 2] if values else None  # noqa: E731
     recent = median([rate for end, rate in spells if end >= now - RECENT_DAYS * DAY])
     before = median([rate for end, rate in spells if end < now - RECENT_DAYS * DAY])
+    # Under half a % a day it isn't drying (a sensor out of the soil, a flat reading): nothing to say
+    recent, before = [None if rate is None or rate < 0.5 else rate for rate in (recent, before)]
     flags = []
     if rise and rise["runs"] >= WEAK_RUNS and rise["median"] < NO_RISE:
         flags.append({"kind": "weak", "text": "Its pump runs, but barely raises the soil: is the tube blocked or out of "

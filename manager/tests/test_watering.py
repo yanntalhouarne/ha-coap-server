@@ -279,3 +279,10 @@ def test_watering_report():
     # Nothing to tell
     assert fleet.watering_report([], [], now) == {"days": 30, "waterings": {"app": 0, "automatic": 0, "button": 0, "hand": 0},
                                                   "rise": None, "drying": {"now": None, "before": None}, "flags": []}
+
+
+def test_watering_report_of_a_soil_that_doesnt_move():
+    """A flat reading (the sensor out of the soil): no drying rate, rather than 0.0 % a day."""
+    now = 40 * 86400
+    flat = [{"time": t, "soil_moisture": 0} for t in range(int(now - 20 * 86400), int(now), 1800)]
+    assert fleet.watering_report(flat, [], now)["drying"] == {"now": None, "before": None}
