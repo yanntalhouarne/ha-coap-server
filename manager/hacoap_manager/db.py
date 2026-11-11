@@ -1,10 +1,15 @@
 """The app's database (SQLite, in the user's data folder): devices and their history, images,
 update history, build profiles and builds, and the network's floor plan."""
 
+import contextvars
 import json
 import sqlite3
 import threading
 import time
+
+# Who a request comes from ("this computer", "Chrome on Android", "the link “Kitchen”"), set by
+# the app for each request: what it does to a board is recorded with it (activity.actor)
+current_actor = contextvars.ContextVar("hacoap_actor", default="")
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS devices (
@@ -138,7 +143,8 @@ CREATE TABLE IF NOT EXISTS activity (
     time      REAL NOT NULL,
     device_id TEXT NOT NULL,
     kind      TEXT NOT NULL,                   -- pump (started from the app), restart, settings, network
-    message   TEXT NOT NULL
+    message   TEXT NOT NULL,
+    actor     TEXT NOT NULL DEFAULT ''         -- who did it: a device, a link, automatic watering ('': the board)
 );
 CREATE INDEX IF NOT EXISTS activity_device_time ON activity (device_id, time);
 CREATE TABLE IF NOT EXISTS builds (
@@ -197,6 +203,7 @@ ADDED_COLUMNS = [
     ("devices", "hist_next", "INTEGER"),
     ("devices", "no_hist_fw", "TEXT NOT NULL DEFAULT ''"),
     ("devices", "button_s", "INTEGER"),
+    ("activity", "actor", "TEXT NOT NULL DEFAULT ''"),
 ]
 
 
@@ -455,22 +462,24 @@ class Database:
 
     # ------------------------------------------------------------ activity: what the app did to a device
 
-    def add_activity(self, device_id, kind, message, when=None):
-        self._execute("INSERT INTO activity (time, device_id, kind, message) VALUES (?, ?, ?, ?)",
-                      (when or time.time(), device_id, kind, message))
+    def add_activity(self, device_id, kind, message, when=None, actor=None):
+        """Notes what happened to a board. 'actor': who did it ('' for the board itself); None:
+        whoever the request being answered comes from (current_actor)."""
+        self._execute("INSERT INTO activity (time, device_id, kind, message, actor) VALUES (?, ?, ?, ?, ?)",
+                      (when or time.time(), device_id, kind, message, current_actor.get() if actor is None else actor))
 
     def activity(self, device_id, since=0):
-        return self._query("SELECT time, kind, message FROM activity WHERE device_id = ? AND time >= ? ORDER BY time",
+        return self._query("SELECT time, kind, message, actor FROM activity WHERE device_id = ? AND time >= ? ORDER BY time",
                            (device_id, since))
 
     def activity_kind_since(self, device_id, kind, since):
         """A device's activity of one kind since a time, oldest first."""
-        return self._query("SELECT time, kind, message FROM activity WHERE device_id = ? AND kind = ? AND time >= ? "
+        return self._query("SELECT time, kind, message, actor FROM activity WHERE device_id = ? AND kind = ? AND time >= ? "
                            "ORDER BY time", (device_id, kind, since))
 
     def device_activity(self, device_id, limit):
         """A device's newest activity, newest first."""
-        return self._query("SELECT time, kind, message FROM activity WHERE device_id = ? ORDER BY time DESC LIMIT ?",
+        return self._query("SELECT time, kind, message, actor FROM activity WHERE device_id = ? ORDER BY time DESC LIMIT ?",
                            (device_id, limit))
 
     def device_alerts(self, device_id, limit):

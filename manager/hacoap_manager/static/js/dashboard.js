@@ -7,6 +7,7 @@ import { prepareUpdate, statusClass } from './updates.js';
 import { runOnTab } from './palette.js';
 import { waterIn } from './network.js';
 import { countTo, startPumping, waitForBoard } from './motion.js';
+import { byWhom } from './timeline.js';
 
 // ------------------------------------------------------------------ dashboard
 
@@ -155,7 +156,7 @@ export async function loadFeed(older = false) {
   document.getElementById('dash-feed').replaceChildren(feed.entries.length ? h('ol', { class: 'feed' }, feed.entries.map((e) =>
     h('li', { class: `feed-${e.kind}${e.kind === 'update' && /failed/.test(e.text) ? ' failed' : ''}` },
       svg('svg', { class: 'icon', 'aria-hidden': 'true' }, svg('use', { href: `#i-${feedIcons[e.kind] || 'activity'}` })),
-      e.device_id ? h('a', { href: `#device/${encodeURIComponent(e.device_id)}` }, e.text) : h('span', {}, e.text),
+      e.device_id ? h('a', { href: `#device/${encodeURIComponent(e.device_id)}` }, e.text) : h('span', {}, e.text), byWhom(e),
       h('time', { title: when(e.time) }, ago(e.time))))) : h('p', { class: 'text-body-secondary mb-0' },
     'Nothing yet: updates, alerts, pump runs, photos and builds show here as they happen.'));
 }

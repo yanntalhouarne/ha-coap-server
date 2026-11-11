@@ -5,11 +5,13 @@ import { api, h, shortHash, svg } from './core.js';
 import { statusClass } from './updates.js';
 
 const KINDS = [
-  ['all', 'everything'], ['update', 'updates'], ['restart', 'restarts'], ['pump', 'pump runs'], ['settings', 'settings'],
-  ['network', 'network'], ['power', 'power'], ['photo', 'photos'], ['alert', 'alerts'],
+  ['all', 'everything'], ['update', 'updates'], ['restart', 'restarts'], ['pump', 'pump runs'], ['care', 'care'],
+  ['settings', 'settings'], ['edit', 'changes'], ['network', 'network'], ['power', 'power'], ['photo', 'photos'],
+  ['alert', 'alerts'],
 ];
 const ICONS = { update: 'upload', restart: 'power', pump: 'droplets', settings: 'sliders-horizontal', parent: 'network',
-  network: 'network', power: 'plug', photo: 'camera', alert: 'triangle-alert' };
+  network: 'network', power: 'plug', photo: 'camera', alert: 'triangle-alert', edit: 'tag', ping: 'bell-ring',
+  dismiss: 'x', tank: 'droplet', care: 'sprout' };
 
 const view = { id: null, entries: [], filter: 'all' };
 
@@ -20,8 +22,9 @@ export async function loadDeviceTimeline(deviceId) {
   renderTimeline();
 }
 
-// 'network' covers its parent changes and its network forgotten
-const kindOf = (entry) => (entry.kind === 'parent' ? 'network' : entry.kind);
+// 'network' covers its parent changes and its network forgotten; 'alert', the ones dismissed;
+// 'pump', its tank refilled; 'edit', a beep
+const kindOf = (entry) => ({ parent: 'network', dismiss: 'alert', tank: 'pump', ping: 'edit' }[entry.kind] || entry.kind);
 
 function entryDetail(entry) {
   const d = entry.detail;
@@ -36,6 +39,9 @@ function entryDetail(entry) {
   }
   return null;
 }
+
+// Who did it ("by this computer", "by the link “Kitchen”"): what the app did, not the board
+export const byWhom = (entry) => (entry.by ? h('span', { class: 'by-whom' }, ` · by ${entry.by}`) : null);
 
 function renderTimeline() {
   const counts = new Map();
@@ -61,7 +67,7 @@ function renderTimeline() {
       h('ul', { class: 'list-unstyled mb-0' }, d.entries.map((e) => h('li', { class: `tl-entry tl-${kindOf(e)}${bad(e) ? ' bad' : ''}` },
         h('span', { class: 'tl-icon' }, svg('svg', { class: 'icon', 'aria-hidden': 'true' }, svg('use', { href: `#i-${ICONS[e.kind] || 'circle'}` }))),
         h('time', { class: 'tl-time' }, new Date(e.time * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })),
-        h('div', { class: 'tl-text' }, e.text, entryDetail(e))))))))
+        h('div', { class: 'tl-text' }, e.text, byWhom(e), entryDetail(e))))))))
       : h('p', { class: 'text-body-secondary mb-0' }, view.entries.length ? 'Nothing of this kind.'
         : 'Nothing yet: its updates, restarts, pump runs from the app, settings changes, network changes, photos and alerts show here.'));
 }

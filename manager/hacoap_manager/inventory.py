@@ -36,6 +36,7 @@ REDISCOVER_INTERVAL_S = 300
 
 HISTORY_READS = 8      # answers read at most at a refresh (54 samples each: more than the board keeps)
 SAMPLE_MARGIN_S = 1    # a sample this close after the last reading kept is that one again (its time is to the second)
+BUTTON = "its button"   # who ran its pump, in the activity, when it was its button
 
 
 def same_board(reported, device_id):
@@ -160,7 +161,7 @@ class Inventory:
         address = (self.db.device(device["device_id"]) or {}).get("address")
         if address and address != device["address"]:
             self.db.add_activity(device["device_id"], "network",
-                                 f"Found at a new address: {address} (was {device['address']})")
+                                 f"Found at a new address: {address} (was {device['address']})", actor="")
             return address
         return None
 
@@ -235,7 +236,7 @@ class Inventory:
                       temperature=newest.temperature, last_seen=time.time(), last_error="")
         if newest.power:
             if device["power"] and newest.power != device["power"] and newest.power in POWER_CHANGES:
-                self.db.add_activity(device["device_id"], "power", POWER_CHANGES[newest.power])
+                self.db.add_activity(device["device_id"], "power", POWER_CHANGES[newest.power], actor="")
             fields["power"] = newest.power
         device = self._changed(self.db.upsert_device(device["device_id"], **fields))
         if self.on_pushed is not None:
@@ -305,13 +306,13 @@ class Inventory:
             message = f"Restarted: {reset_text(diag.reset, diag.fault)}"
             if count > 1:
                 message += f" ({count} restarts since the last check)"
-            self.db.add_activity(device["device_id"], "restart", message, when=now - diag.uptime_s)
+            self.db.add_activity(device["device_id"], "restart", message, when=now - diag.uptime_s, actor="")
             if diag.reset in BAD_RESETS and self.on_restart is not None:
                 self.on_restart(device, diag.reset, diag.fault)
         # Its power now, not as the refresh started: a sample it pushed meanwhile may have told already
         power = (self.db.device(device["device_id"]) or device)["power"]
         if diag.power and power and diag.power != power and diag.power in POWER_CHANGES:
-            self.db.add_activity(device["device_id"], "power", POWER_CHANGES[diag.power])
+            self.db.add_activity(device["device_id"], "power", POWER_CHANGES[diag.power], actor="")
         fields = dict(boots=diag.boots, reset_cause=diag.reset, fault=diag.fault, uptime_s=diag.uptime_s,
                       role=diag.role, srp_state=diag.srp, rloc16=diag.rloc16, parent_rloc16=diag.parent, parent_rssi=diag.rssi,
                       link_quality=diag.link_quality, soil_mv=diag.soil_mv, diag_time=now, no_diag_fw="", power=diag.power)
@@ -321,7 +322,7 @@ class Inventory:
             restarted = previous is not None and diag.boots != previous
             ran = diag.button_s if restarted else diag.button_s - (device["button_s"] or 0)
             if device["button_s"] is not None and ran > 0:
-                self.db.add_activity(device["device_id"], "pump", f"Pump run with its button ({ran} s)")
+                self.db.add_activity(device["device_id"], "pump", f"Pump run with its button ({ran} s)", actor=BUTTON)
             fields["button_s"] = diag.button_s
         return fields
 

@@ -33,7 +33,7 @@ from .appupdate import UpdateCheck
 from .borderrouter import BorderRouterService, BorderRouterSetupError
 from .builds import VARIANTS, BuildError, BuildRunner
 from .console import ConsoleError, SerialConsole
-from .db import Database
+from .db import Database, current_actor
 from .doctor import Doctor
 from .events import EventBus
 from .images import ImageLibrary, build_commit, build_images, changes, find_repository
@@ -158,6 +158,51 @@ def _access(services, client, host_header, cookies, key=None):
     return "sign-in"
 
 
+# What each field a device's page changes is called, and its unit, for the activity log
+EDITED = {"name": ("name", ""), "plant": ("plant", ""), "location": ("room", ""), "address": ("address", ""),
+          "water_below": ("watering target", " %"), "tank_ml": ("tank size", " ml"), "pump_ml_s": ("pump flow", " ml/s"),
+          "tags": ("tags", "")}
+
+
+def described_changes(before, fields):
+    """What changed, in words: ["plant “basil” → “Thai basil”", "notes changed", ...]."""
+    changes = []
+    for field, value in fields.items():
+        old = before.get(field)
+        if field == "watering":
+            old_rule = {k: v for k, v in (json.loads(old) if old else {"on": False}).items() if k not in ("tz", "utc_offset_min")}
+            new_rule = {k: v for k, v in json.loads(value).items() if k not in ("tz", "utc_offset_min")}
+            if bool(old_rule.get("on")) != bool(new_rule.get("on")):
+                changes.append(f"automatic watering {'on' if new_rule.get('on') else 'off'}")
+            elif old_rule != new_rule:
+                changes.append("automatic watering's limits")
+            continue
+        if field == "notes":
+            if (old or "") != (value or ""):
+                changes.append("notes")
+            continue
+        if field not in EDITED or (old in (None, "") and value in (None, "")) or old == value:
+            continue
+        label, unit = EDITED[field]
+        shown = lambda v: "none" if v in (None, "") else (f"{v:g}{unit}" if isinstance(v, float) else  # noqa: E731
+                                                          f"{v}{unit}" if unit else f"“{v}”")
+        changes.append(f"{label} {shown(old)} → {shown(value)}")
+    return changes
+
+
+def _actor(services, access, request, link):
+    """Who a request comes from, for the activity log: "this computer", a signed-in device's
+    browser ("Chrome on Android"), or a dashboard link by its name."""
+    if access == "local":
+        return "this computer"
+    if access == "remote":
+        session = services.remote.session(request.cookies.get(remote.COOKIE)) or {}
+        return remote.browser_name(session.get("device", ""))
+    if access == "link" and link:
+        return f"the link “{link['name']}”"
+    return ""
+
+
 # What a dashboard link opens: the page, and the plants (simple view) with watering, beeping and
 # naming them; the network map and the charts, to look at. Never updates, builds, settings,
 # backups, the border router...
@@ -235,7 +280,8 @@ def create_app(services, background_tasks=True, on_quit=None, port=None):
             return HTMLResponse(LINK_REVOKED_PAGE, status_code=401)
         if access == "link" and not _link_allows(request.method, path):
             return JSONResponse({"detail": "A dashboard link only opens the plants"}, status_code=403)
-        view_only = access == "link" and bool((s.remote.link(key, request.client.host if request.client else "") or {}).get("view_only"))
+        link = s.remote.link(key, request.client.host if request.client else "") if access == "link" else None
+        view_only = bool((link or {}).get("view_only"))
         if view_only and request.method not in ("GET", "HEAD") and not (request.method == "POST" and path in VIEW_ONLY_POSTS):
             return JSONResponse({"detail": "This dashboard link is view only"}, status_code=403)
         if access == "sign-in" and not path.startswith(SIGNED_OUT_PATHS):
@@ -248,7 +294,11 @@ def create_app(services, background_tasks=True, on_quit=None, port=None):
             return JSONResponse({"detail": f"Missing {CHANGE_HEADER} header"}, status_code=403)
         request.state.access = access
         request.state.view_only = view_only
-        response = await call_next(request)
+        token = current_actor.set(_actor(s, access, request, link))  # what it does is noted with who did it
+        try:
+            response = await call_next(request)
+        finally:
+            current_actor.reset(token)
         if request.url.path.startswith(("/static/", "/v/")):
             # The browser checks with the app each time (a 304 when unchanged), so a new
             # version's page is never run with an older cached script.
@@ -334,7 +384,10 @@ def create_app(services, background_tasks=True, on_quit=None, port=None):
         if "tags" in body:
             tags = body["tags"] if isinstance(body["tags"], list) else str(body["tags"]).split(",")
             fields["tags"] = ",".join(sorted({t.strip().lower() for t in tags if t.strip()}))
+        changes = described_changes(s.db.device(device_id), fields)
         device = s.db.upsert_device(device_id, **fields)
+        if changes:
+            s.db.add_activity(device_id, "edit", "Changed: " + ", ".join(changes))
         s.events.publish("device", device=s.inventory.describe(device))
         s.alerts.scan()
         return s.inventory.describe(device)
@@ -625,6 +678,7 @@ def create_app(services, background_tasks=True, on_quit=None, port=None):
             await s.inventory.ping(device_id)
         except InventoryError as exc:
             raise _bad_request(exc)
+        s.db.add_activity(device_id, "ping", "Beeped, to be found")
         return {"ok": True}
 
     # ------------------------------------------------------------ the CoAP tab

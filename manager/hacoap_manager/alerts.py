@@ -125,15 +125,25 @@ class AlertService:
         self.events.publish("alert", alert=alert)
         self.events.publish("alerts")
 
+    def _dismiss_one(self, alert_id, open_alerts):
+        """Clears it, and notes who did (in its board's activity, its name left out)."""
+        alert = next((a for a in open_alerts if a["id"] == alert_id), None)
+        if alert is None or not self.db.clear_alert(alert_id, dismissed=True):
+            return False
+        what = alert["message"].replace(f"{NAME}'s ", "its ").replace(f"{NAME} ", "").replace(NAME, "it")
+        self.db.add_activity(alert["device_id"], "dismiss", f"Alert dismissed: {what}")
+        return True
+
     def dismiss(self, alert_id):
         """Clears an open alert. One about a state (a dry plant, say) isn't raised again while it lasts."""
-        done = self.db.clear_alert(alert_id, dismissed=True)
+        done = self._dismiss_one(alert_id, self.db.open_alerts())
         if done:
             self.events.publish("alerts")
         return done
 
     def dismiss_many(self, alert_ids):
-        count = sum(self.db.clear_alert(alert_id, dismissed=True) for alert_id in alert_ids)
+        open_alerts = self.db.open_alerts()
+        count = sum(self._dismiss_one(alert_id, open_alerts) for alert_id in alert_ids)
         if count:
             self.events.publish("alerts")
         return count

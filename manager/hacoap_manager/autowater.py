@@ -23,6 +23,7 @@ log = logging.getLogger(__name__)
 DEFAULTS = {"on": False, "max_per_day": 2, "from_hour": 7, "to_hour": 21, "wait_h": 3, "seconds": None,
             "tz": "", "utc_offset_min": 0}
 AUTOMATIC = "Watered automatically"  # how its pump runs read in the activity
+ACTOR = "automatic watering"  # who did it, in the activity
 
 
 class RuleError(ValueError):
@@ -167,7 +168,7 @@ class AutoWatering:
             self._failed.pop(device["device_id"], None)
             self.db.add_activity(device["device_id"], "pump",
                                  f"{AUTOMATIC}: soil {device['soil_moisture']} % under {device['water_target']} % "
-                                 f"({result['duration']} s)")
+                                 f"({result['duration']} s)", actor=ACTOR)
             self.events.publish("pump", device_id=device["device_id"], seconds=result["duration"], automatic=True)
             watered.append(device["device_id"])
         if watered:

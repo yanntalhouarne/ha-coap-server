@@ -11,6 +11,7 @@ import { devicePath, pingDevice } from './devices.js';
 import { showPumping, startPumping, waitForBoard } from './motion.js';
 import { setTheme } from './themes.js';
 import { refillTank, tankBar, tankText } from './watering.js';
+import { byWhom } from './timeline.js';
 
 const simple = { route: null, plants: [], plantId: null, fromWall: false, soon: null, openWater: false };
 
@@ -328,13 +329,13 @@ export function renderSimpleAlerts() {
 document.addEventListener('hacoap-alerts', renderSimpleAlerts);
 
 const FEED_ICONS = { update: 'upload', alert: 'triangle-alert', parent: 'network', pump: 'droplets', tank: 'droplet', photo: 'camera', build: 'hammer',
-  restart: 'power', settings: 'sliders-horizontal', network: 'network' };
+  restart: 'power', settings: 'sliders-horizontal', network: 'network', edit: 'tag', ping: 'bell-ring', dismiss: 'x', care: 'sprout' };
 
 async function loadSimpleFeed() {
   const entries = await api('GET', '/api/activity-feed?limit=15', undefined, { quiet: true }).catch(() => []);
   document.getElementById('simple-feed').replaceChildren(entries.length
     ? h('ul', { class: 'simple-list' }, entries.map((e) => h('li', {}, icon(FEED_ICONS[e.kind] || 'activity'),
-      e.device_id ? h('a', { href: plantHref(e.device_id) }, e.text) : h('span', {}, e.text),
+      h('span', {}, e.device_id ? h('a', { href: plantHref(e.device_id) }, e.text) : e.text, byWhom(e)),
       h('time', {}, ago(e.time)))))
     : h('p', { class: 'text-body-secondary' }, 'Nothing yet.'));
 }

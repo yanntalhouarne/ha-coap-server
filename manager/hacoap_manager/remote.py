@@ -51,6 +51,16 @@ class RemoteError(Exception):
     pass
 
 
+def browser_name(agent):
+    """"Edge on Windows" from a browser's User-Agent (as js/settings.js browserName)."""
+    agent = agent or ""
+    system = next((name for name in ("iPhone", "iPad", "Android") if name in agent), "") or \
+        ("Windows" if "Windows" in agent else "macOS" if "Mac OS X" in agent else "Linux" if "Linux" in agent else "")
+    browser = "Home Assistant" if "Home Assistant" in agent else "Edge" if "Edg/" in agent else \
+        "Firefox" if "Firefox/" in agent else "Chrome" if "Chrome/" in agent else "Safari" if "Safari/" in agent else ""
+    return " on ".join(part for part in (browser, system) if part) or "a signed-in device"
+
+
 def _hash_password(password, salt):
     return hashlib.scrypt(password.encode("utf-8"), salt=salt, dklen=32, maxmem=64 * 1024 * 1024, **SCRYPT)
 

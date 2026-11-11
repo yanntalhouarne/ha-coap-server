@@ -402,3 +402,58 @@ def test_a_dashboard_links_live_events(services, monkeypatch):
             with pytest.raises(WebSocketDisconnect) as closed:
                 ws.receive_json()
             assert closed.value.code == 1008
+
+
+ANDROID_CHROME = ("Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) "
+                  "Chrome/126.0.0.0 Mobile Safari/537.36")
+
+
+def test_browser_name():
+    assert remote.browser_name(ANDROID_CHROME) == "Chrome on Android"
+    assert remote.browser_name("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) "
+                               "Chrome/126.0.0.0 Safari/537.36 Edg/126.0.0.0") == "Edge on Windows"
+    assert remote.browser_name("Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 "
+                               "(KHTML, like Gecko) Home Assistant/2024.6.0") == "Home Assistant on iPhone"
+    assert remote.browser_name("") == "a signed-in device"
+
+
+async def test_what_is_done_is_noted_with_who_did_it(services):
+    """The activity log says who: this computer, a signed-in device's browser, a link by its name."""
+    await allow_home_network(services)
+    services.db.upsert_device("1a2b3c4d", name="ha-coap-1a2b3c4d", plant="basil", address="fd11::1", water_below=30)
+    async with client_for(services) as local:
+        response = await local.patch("/api/devices/1a2b3c4d", json={"plant": "Thai basil", "water_below": 25,
+                                                                    "notes": "by the window", "location": ""},
+                                     headers=CHANGE)
+        assert response.status_code == 200
+    key = (await make_link(services, "Kitchen"))["link"]["key"]
+    async with client_for(services, "192.168.50.20", SERVER) as phone:
+        await phone.post("/api/login", json={"password": PASSWORD}, headers={**CHANGE, "user-agent": ANDROID_CHROME})
+        services.db.upsert_device("1a2b3c4d", tank_ml=500)
+        assert (await phone.post("/api/devices/1a2b3c4d/tank/refilled", headers=CHANGE)).status_code == 200
+    async with client_for(services, "192.168.50.30", SERVER) as dashboard:
+        header = {remote.KEY_HEADER: key, **CHANGE}
+        assert (await dashboard.patch("/api/devices/1a2b3c4d", json={"plant": "basil"}, headers=header)).status_code == 200
+        services.alerts.scan()
+        services.db.upsert_device("1a2b3c4d", soil_moisture=10)
+        services.alerts.scan()
+        alert = next(a for a in services.db.open_alerts() if a["kind"] == "dry")
+        assert (await dashboard.post(f"/api/alerts/{alert['id']}/dismiss", headers=header)).status_code == 200
+    rows = [(r["kind"], r["message"], r["actor"]) for r in services.db.activity("1a2b3c4d")]
+    assert rows == [
+        ("edit", "Changed: plant “basil” → “Thai basil”, notes, watering target 30 % → 25 %", "this computer"),
+        ("tank", "Water tank refilled", "Chrome on Android"),
+        ("edit", "Changed: plant “Thai basil” → “basil”", "the link “Kitchen”"),
+        ("dismiss", "Alert dismissed: needs water (soil under 25 %)", "the link “Kitchen”"),
+    ]
+    # Outside a request (the board's own news, automatic watering): no one, unless said
+    services.db.add_activity("1a2b3c4d", "restart", "Restarted: power")
+    assert services.db.activity("1a2b3c4d")[-1]["actor"] == ""
+    # The device's timeline and the feed say who
+    async with client_for(services) as local:
+        timeline = (await local.get("/api/devices/1a2b3c4d/timeline")).json()
+        assert {e["by"] for e in timeline if e["kind"] in ("edit", "tank", "dismiss")} == \
+            {"this computer", "Chrome on Android", "the link “Kitchen”"}
+        feed = (await local.get("/api/activity-feed")).json()
+        assert any(e["by"] == "the link “Kitchen”" and e["text"] == "basil: alert dismissed: needs water (soil under 25 %)"
+                   for e in feed)

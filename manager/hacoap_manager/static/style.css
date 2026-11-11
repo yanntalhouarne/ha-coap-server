@@ -1018,6 +1018,7 @@ td.flip { display: table-cell; animation: flip-cell 1.4s ease-out; }
   background: var(--t-surface-2); color: var(--t-text-muted); margin-left: -1.45rem; border: 1px solid var(--t-border-subtle); }
 .tl-time { color: var(--t-text-muted); font-size: .78rem; padding-top: .15rem; white-space: nowrap; }
 .tl-detail { font-size: .78rem; margin-top: .15rem; }
+.by-whom { color: var(--t-text-muted); font-size: .9em; }  /* who did it, after what was done */
 .tl-update .tl-icon { color: var(--t-green); }
 .tl-restart .tl-icon { color: var(--t-orange); }
 .tl-pump .tl-icon { color: var(--t-cyan); }
