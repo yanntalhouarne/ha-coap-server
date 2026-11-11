@@ -457,3 +457,49 @@ async def test_what_is_done_is_noted_with_who_did_it(services):
         feed = (await local.get("/api/activity-feed")).json()
         assert any(e["by"] == "the link “Kitchen”" and e["text"] == "basil: alert dismissed: needs water (soil under 25 %)"
                    for e in feed)
+
+
+async def test_a_home_assistant_link_reads_and_updates_the_firmware_only(services):
+    """The HA CoAP integration's link: the boards' firmware and the release, and updating one board
+    to the release image; nothing else (not even the plants)."""
+    await allow_home_network(services)
+    services.db.upsert_device("1a2b3c4d", name="ha-coap-1a2b3c4d", plant="basil", address="fd11::1",
+                              image_hash="a" * 64, image_version="1.0.0")
+    async with client_for(services) as local:
+        made = (await local.post("/api/remote-access/links", json={"name": "Home Assistant", "kind": "home_assistant"},
+                                 headers=CHANGE)).json()
+        assert made["links"][0]["kind"] == "home_assistant" and not made["links"][0]["view_only"]
+        refused = await local.post("/api/remote-access/links", json={"name": "x", "kind": "admin"}, headers=CHANGE)
+        assert refused.status_code == 400
+    key = made["link"]["key"]
+    dashboard_key = (await make_link(services, "Kitchen"))["link"]["key"]
+    started = []
+
+    def start(image_hash, targets, *args, **kwargs):
+        started.append((image_hash, targets))
+
+        class Job:
+            def as_dict(self):
+                return {"id": "job1", "targets": targets}
+        return Job()
+
+    services.updates.start = start
+    async with client_for(services, "192.168.50.40", SERVER) as ha:
+        header = {remote.KEY_HEADER: key, **CHANGE}
+        firmware = (await ha.get("/api/ha/firmware", headers=header)).json()
+        assert firmware["release"] is None and firmware["devices"][0]["device_id"] == "1a2b3c4d"
+        for method, path in [("GET", "/api/devices"), ("GET", "/api/wall"), ("POST", "/api/devices/1a2b3c4d/pump"),
+                             ("POST", "/api/updates"), ("GET", "/api/backup")]:
+            assert (await ha.request(method, path, headers=header, json={})).status_code == 403, path
+        assert (await ha.post("/api/ha/update", headers=header, json={"device_id": "nope"})).status_code == 404
+        no_release = await ha.post("/api/ha/update", headers=header, json={"device_id": "1a2b3c4d"})
+        assert no_release.status_code == 400 and "release" in no_release.json()["detail"]
+        services.db.add_image("b" * 64, "1.0.1", "app_update.bin", 1000, "the release", git_commit="3e0592d")
+        services.db.set_release("b" * 64)
+        firmware = (await ha.get("/api/ha/firmware", headers=header)).json()
+        assert firmware["release"]["git_commit"] == "3e0592d"
+        assert (await ha.post("/api/ha/update", headers=header, json={"device_id": "1a2b3c4d"})).status_code == 200
+        assert started == [("b" * 64, [{"device_id": "1a2b3c4d"}])]   # the release, that board only
+    # A dashboard link doesn't reach them
+    async with client_for(services, "192.168.50.30", SERVER) as dashboard:
+        assert (await dashboard.get("/api/ha/firmware", headers={remote.KEY_HEADER: dashboard_key})).status_code == 403

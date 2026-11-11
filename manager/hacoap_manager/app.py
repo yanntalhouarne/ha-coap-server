@@ -231,6 +231,18 @@ def _link_allows(method, path):
     return any(method in methods and pattern.match(path) for methods, pattern in LINK_ALLOWED)
 
 
+# What a link for the HA CoAP integration opens: the boards' firmware, and updating one of them
+# to the release image (never another image, nothing else)
+HA_LINK_ALLOWED = [
+    (("GET", "HEAD"), re.compile(r"^/api/ha/firmware$")),
+    (("POST",), re.compile(r"^/api/ha/update$")),
+]
+
+
+def _ha_link_allows(method, path):
+    return any(method in methods and pattern.match(path) for methods, pattern in HA_LINK_ALLOWED)
+
+
 def _link_key(request):
     return request.headers.get(remote.KEY_HEADER) or request.query_params.get("key")
 
@@ -281,9 +293,13 @@ def create_app(services, background_tasks=True, on_quit=None, port=None):
             if path.startswith("/api/"):
                 return JSONResponse({"detail": "This dashboard link doesn't work any more"}, status_code=401)
             return HTMLResponse(LINK_REVOKED_PAGE, status_code=401)
-        if access == "link" and not _link_allows(request.method, path):
-            return JSONResponse({"detail": "A dashboard link only opens the plants"}, status_code=403)
         link = s.remote.link(key, request.client.host if request.client else "") if access == "link" else None
+        if access == "link" and (link or {}).get("kind") == "home_assistant":
+            if not _ha_link_allows(request.method, path):
+                return JSONResponse({"detail": "A Home Assistant link only reads and updates the boards' firmware"},
+                                    status_code=403)
+        elif access == "link" and not _link_allows(request.method, path):
+            return JSONResponse({"detail": "A dashboard link only opens the plants"}, status_code=403)
         view_only = bool((link or {}).get("view_only"))
         if view_only and request.method not in ("GET", "HEAD") and not (request.method == "POST" and path in VIEW_ONLY_POSTS):
             return JSONResponse({"detail": "This dashboard link is view only"}, status_code=403)
@@ -1008,6 +1024,45 @@ def create_app(services, background_tasks=True, on_quit=None, port=None):
             raise _bad_request(exc)
         return job.as_dict()
 
+    # ------------------------------------------------------------ for the HA CoAP integration
+
+    def _last_update_of(device_id):
+        """The newest update job's step for a board: {status, step, progress, message}, or None."""
+        for job_item in sorted(s.updates.jobs.values(), key=lambda j: j.created, reverse=True):
+            for target in job_item.targets:
+                if target.device_id == device_id:
+                    return {"job": job_item.id, "status": target.status, "step": target.step,
+                            "progress": target.progress, "message": target.message}
+        return None
+
+    @app.get("/api/ha/firmware")
+    async def ha_firmware():
+        """The release image, and what each board runs (with its last update's state)."""
+        release = s.db.release_image()
+        commits = {i["hash"]: i["git_commit"] for i in s.db.images()}
+        return {
+            "release": {"hash": release["hash"], "version": release["version"], "git_commit": release["git_commit"],
+                        "notes": release["notes"]} if release else None,
+            "running": s.updates.running_job() is not None,
+            "devices": [{"device_id": d["device_id"], "name": naming.display_name(d), "image_hash": d["image_hash"],
+                         "image_version": d["image_version"], "git_commit": commits.get(d["image_hash"], "") or d["fw_version"],
+                         "update": _last_update_of(d["device_id"])} for d in s.db.devices()],
+        }
+
+    @app.post("/api/ha/update")
+    async def ha_update(body: dict):
+        """Updates one board to the release image (as the Updates tab does, one board). Its
+        signature isn't checked against this computer's key: the release is the image chosen
+        for the fleet (a board whose bootloader refuses it stays on the image it runs)."""
+        device_id = str(body.get("device_id", ""))
+        if s.db.device(device_id) is None:
+            raise HTTPException(404, "Unknown device")
+        release = s.db.release_image()
+        if release is None:
+            raise _bad_request("No release image: choose one in the fleet manager's Images")
+        return await start_update({"image_hash": release["hash"], "targets": [{"device_id": device_id}],
+                                   "allow_unverified": True})
+
     @app.get("/api/updates")
     async def jobs():
         return [job.as_dict() for job in sorted(s.updates.jobs.values(), key=lambda j: j.created, reverse=True)]
@@ -1592,7 +1647,8 @@ def create_app(services, background_tasks=True, on_quit=None, port=None):
         """A dashboard link: its addresses carry the key, shown this once."""
         await _confirm(request)
         try:
-            key = await asyncio.to_thread(s.remote.create_link, body.get("name", ""), bool(body.get("view_only")))
+            key = await asyncio.to_thread(s.remote.create_link, body.get("name", ""), bool(body.get("view_only")),
+                                          str(body.get("kind") or "dashboard"))
         except remote.RemoteError as exc:
             raise _bad_request(exc)
         addresses = [f"http://{a}:{port}/?key={key}#plants" for a in s.remote.addresses()] if port else []

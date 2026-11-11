@@ -355,6 +355,7 @@ function renderLinks(st) {
   list.replaceChildren(h('ul', { class: 'list-unstyled mb-0' }, st.links.map((link) => h('li', { class: 'd-flex align-items-center gap-2 py-1' },
     h('div', { class: 'flex-grow-1 text-truncate' }, h('b', {}, link.name),
       link.view_only ? h('span', { class: 'tag ms-2' }, 'view only') : null,
+      link.kind === 'home_assistant' ? h('span', { class: 'tag ms-2' }, 'HA CoAP: firmware') : null,
       h('div', { class: 'text-body-secondary' }, `made ${when(link.created)}, `,
         link.last_used ? `last used ${when(link.last_used)} from ${link.address}` : 'never used yet')),
     h('button', { class: 'btn btn-sm btn-outline-danger text-nowrap', type: 'button', onclick: (e) => {
@@ -373,9 +374,24 @@ document.getElementById('remote-link-form').addEventListener('submit', (event) =
   if (!name) return notify("Name the link: what it's for, such as Home Assistant", 'warning');
   busy(event.submitter, async () => {
     const viewOnly = document.getElementById('remote-link-view-only').checked;
-    const made = await api('POST', '/api/remote-access/links', { name, view_only: viewOnly }, confirmed());
+    const forHa = document.getElementById('remote-link-ha').checked;
+    const made = await api('POST', '/api/remote-access/links', { name, view_only: viewOnly && !forHa,
+      kind: forHa ? 'home_assistant' : 'dashboard' }, confirmed());
     document.getElementById('remote-link-name').value = '';
     document.getElementById('remote-link-view-only').checked = false;
+    document.getElementById('remote-link-ha').checked = false;
+    if (forHa) {
+      // Not a page to open: the address and the key, for the integration's form
+      const key = made.link.key;
+      const base = (made.link.addresses[0] || '').split('?')[0];
+      document.getElementById('remote-link-new').replaceChildren(h('div', { class: 'alert alert-info py-2 small' },
+        h('div', { class: 'mb-1' }, h('b', {}, 'Copy them now: '), "the key isn't shown again. In Home Assistant: ",
+          'Settings → Devices & services → Add integration → HA CoAP → Connect the fleet manager.'),
+        h('div', {}, 'Address: ', h('code', {}, base || '(turn on other devices first)')),
+        h('div', {}, 'Key: ', h('code', { class: 'user-select-all' }, key))));
+      loadRemoteAccess();
+      return;
+    }
     const copy = (text) => h('button', { class: 'btn btn-sm btn-outline-secondary ms-2', type: 'button', onclick: async () => {
       try { await navigator.clipboard.writeText(text); notify('Copied', 'success', 2000); } catch (error) { prompt('Copy the link:', text); }
     } }, 'Copy');

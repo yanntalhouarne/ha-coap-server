@@ -44,6 +44,7 @@ WAIT_S = (30, 15 * 60)   # then 30 s, doubling with each wrong one, at most 15 m
 TOUCH_S = 600            # a session's last use is saved at most this often
 KEY_HEADER = "X-HACoap-Key"  # a dashboard link's key, as the page sends it (or ?key= in an address)
 MAX_LINKS = 20
+LINK_KINDS = ("dashboard", "home_assistant")  # the plants (in a dashboard), or the HA CoAP integration's firmware updates
 MAX_LINK_NAME = 80
 
 
@@ -255,9 +256,13 @@ class RemoteAccess:
 
     # ------------------------------------------------------------ dashboard links
 
-    def create_link(self, name, view_only=False):
+    def create_link(self, name, view_only=False, kind="dashboard"):
         """A new dashboard link: returns its key (shown once: only its hash is kept). A view-only
-        one shows the plants without watering, beeping, naming them or dismissing alerts."""
+        one shows the plants without watering, beeping, naming them or dismissing alerts. Kind
+        "home_assistant": for the HA CoAP integration, which only reads the boards' firmware and
+        updates a board to the release image (/api/ha/...), nothing else."""
+        if kind not in LINK_KINDS:
+            raise RemoteError(f"Unknown kind of link: {kind}")
         name = " ".join(str(name or "").split())[:MAX_LINK_NAME]
         if not name:
             raise RemoteError("Name the link (such as: Home Assistant, plants)")
@@ -265,7 +270,7 @@ class RemoteAccess:
             raise RemoteError(f"At most {MAX_LINKS} links: revoke one first")
         key = secrets.token_urlsafe(32)
         self._state["links"][_token_hash(key)] = {"name": name, "created": time.time(), "last_used": None, "address": "",
-                                                  "view_only": bool(view_only)}
+                                                  "view_only": bool(view_only) and kind == "dashboard", "kind": kind}
         self._save()
         log.info("dashboard link made: %s", name)
         return key
