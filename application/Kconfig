@@ -70,7 +70,8 @@ config HACOAP_BOOT_PROBE
 	  reached times 1000 plus the uptime in seconds (1: main, 2: watchdog set up, 3: after
 	  the boot delay, 4: boot counted, 5: USB, 6: sensors, 7: CoAP, 8: OpenThread
 	  started, 9 and up: every 5 s after). 'soil_wet_mv' is 1 + 100 times the reset cause
-	  (diag.h) + 10 if the watchdog was already running. Put both back afterwards.
+	  (diag.h) + 10 if the watchdog was already running. Once the boot got through
+	  (stage 20), it puts both back as they were: they stay only when it got stuck.
 	  Not for boards in use.
 
 config HACOAP_REMOTE_LOG

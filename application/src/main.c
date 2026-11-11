@@ -354,20 +354,47 @@ static void boot_jingle(void)
 #ifdef CONFIG_HACOAP_BOOT_PROBE
 /* Diagnostic builds only (see HACOAP_BOOT_PROBE): how far the boot got, in two settings that
  * the previous firmware reports after the bootloader reverts this image. */
+static const enum device_setting probe_ids[] = {SETTING_SAMPLE_S, SETTING_SOIL_WET_MV};
+static int32_t probe_saved[ARRAY_SIZE(probe_ids)]; // their values before the first breadcrumb
+static bool probe_started;
+
 static void probe(int stage)
 {
-	static const enum device_setting ids[] = {SETTING_SAMPLE_S, SETTING_SOIL_WET_MV};
 	int32_t values[] = {
 		stage * 1000 + (int32_t)MIN(k_uptime_get() / MSEC_PER_SEC, 999),
 		1 + (watchdog_was_running_at_boot() ? 10 : 0) + ((stage >= 4) ? 100 * (1 + (int32_t)diag_reset_cause()) : 0),
 	};
 
-	(void)device_settings_set(ids, values, ARRAY_SIZE(ids));
+	if (!probe_started)
+	{
+		for (size_t i = 0U; i < ARRAY_SIZE(probe_ids); i++)
+		{
+			probe_saved[i] = device_setting_get(probe_ids[i]);
+		}
+		probe_started = true;
+	}
+	(void)device_settings_set(probe_ids, values, ARRAY_SIZE(probe_ids));
+}
+
+/* The boot got through: the breadcrumbs only matter when it doesn't (the image is reverted and
+ * the previous firmware reports them), so the two settings get their values back. Left in place,
+ * the sampling period read 20092 s: the boards sampled every 5.6 hours (Nov 2026). */
+static void probe_finished(void)
+{
+	if (probe_started)
+	{
+		(void)device_settings_set(probe_ids, probe_saved, ARRAY_SIZE(probe_ids));
+		LOG_INF("Boot probe done: sample_s and soil_wet_mv restored");
+	}
 }
 #else
 static inline void probe(int stage)
 {
 	ARG_UNUSED(stage);
+}
+
+static inline void probe_finished(void)
+{
 }
 #endif
 
@@ -491,6 +518,7 @@ int main(void)
 		k_sleep(K_SECONDS(5));
 		probe(stage);
 	}
+	probe_finished();
 
 	return 0;
 }
