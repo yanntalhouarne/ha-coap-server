@@ -124,7 +124,7 @@ static const struct coap_resources_handlers handlers_with_log = {
 static void setup(void)
 {
 	memset(&fake_app, 0, sizeof(fake_app));
-	memset(&observer, 0, sizeof(observer));
+	memset(observers, 0, sizeof(observers));
 	fake_app.info = (struct coap_info){.fw_version = "abc1234", .hw_version = "v2.0", .device_id = "1a2b3c4d"};
 	CHECK_EQ(coap_resources_init(&handlers), 0);
 }
@@ -132,7 +132,7 @@ static void setup(void)
 static void setup_with_log(void)
 {
 	memset(&fake_app, 0, sizeof(fake_app));
-	memset(&observer, 0, sizeof(observer));
+	memset(observers, 0, sizeof(observers));
 	CHECK_EQ(coap_resources_init(&handlers_with_log), 0);
 }
 
@@ -457,8 +457,8 @@ static void test_hist_get_reads_from_the_query(void)
 	check_response(ACK, OT_COAP_CODE_CONTENT, "H12", 3);
 	CHECK_EQ(fake_app.hist_from, 12);
 	CHECK(!fake_response.has_observe);  // not observed: a plain answer
-	CHECK(!coap_resources_observed(&next));
-	CHECK_EQ(coap_resources_notify(), -ENOTCONN);
+	CHECK(!coap_resources_observed(0, &next));
+	CHECK_EQ(coap_resources_notify(0), -ENOTCONN);
 	CHECK_EQ(fake_requests_sent, 0);
 }
 
@@ -474,12 +474,12 @@ static void test_hist_observe_registers_then_notifies_the_new_samples(void)
 	request("hist", CON, OT_COAP_CODE_GET, NULL);
 	check_response(ACK, OT_COAP_CODE_CONTENT, "H3", 2);
 	CHECK(fake_response.has_observe);   // registered: the answer says so
-	CHECK(coap_resources_observed(&next));
+	CHECK(coap_resources_observed(0, &next));
 	CHECK_EQ(next, 9);                  // it has everything before 9
 
 	/* Two samples later: it's sent them, from 9 */
 	fake_app.hist_next = 11;
-	CHECK_EQ(coap_resources_notify(), 0);
+	CHECK_EQ(coap_resources_notify(0), 0);
 	CHECK_EQ(fake_requests_sent, 1);
 	CHECK_EQ(fake_request_sent.type, NON);
 	CHECK_EQ(fake_request_sent.code, OT_COAP_CODE_CONTENT);
@@ -492,10 +492,10 @@ static void test_hist_observe_registers_then_notifies_the_new_samples(void)
 	CHECK(memcmp(fake_request_sent.bytes, "H9", 2) == 0);
 	CHECK_EQ(fake_request_info.mPeerAddr.m8[0], 0xab);   // to the observer
 	CHECK_EQ(fake_request_info.mPeerPort, 5683);
-	CHECK(coap_resources_observed(&next));
+	CHECK(coap_resources_observed(0, &next));
 	CHECK_EQ(next, 11);
 	/* The next one is newer again */
-	CHECK_EQ(coap_resources_notify(), 0);
+	CHECK_EQ(coap_resources_notify(0), 0);
 	CHECK_EQ(fake_request_sent.observe, fake_response.observe + 2);
 	CHECK(memcmp(fake_request_sent.bytes, "H11", 3) == 0);
 }
@@ -508,10 +508,10 @@ static void test_hist_observe_ends_after_its_lease(void)
 	next_observe = 0;
 	request("hist", CON, OT_COAP_CODE_GET, NULL);
 	fake_uptime_ms += (int64_t)CONFIG_HACOAP_PUSH_LEASE_S * 1000;
-	CHECK(coap_resources_observed(&next));      // just in time
+	CHECK(coap_resources_observed(0, &next));      // just in time
 	fake_uptime_ms += 1;
-	CHECK(!coap_resources_observed(&next));     // it didn't register again: gone
-	CHECK_EQ(coap_resources_notify(), -ENOTCONN);
+	CHECK(!coap_resources_observed(0, &next));     // it didn't register again: gone
+	CHECK_EQ(coap_resources_notify(0), -ENOTCONN);
 }
 
 static void test_hist_observe_1_from_the_observer_deregisters(void)
@@ -525,13 +525,62 @@ static void test_hist_observe_1_from_the_observer_deregisters(void)
 	next_observe = 1;
 	next_peer_port = 40000;                      // someone else: no effect
 	request("hist", CON, OT_COAP_CODE_GET, NULL);
-	CHECK(coap_resources_observed(&next));
+	CHECK(coap_resources_observed(0, &next));
 	CHECK(!fake_response.has_observe);
 	request("hist", CON, OT_COAP_CODE_GET, NULL); // a plain GET from it: still observed
-	CHECK(coap_resources_observed(&next));
+	CHECK(coap_resources_observed(0, &next));
 	next_observe = 1;
 	request("hist", CON, OT_COAP_CODE_GET, NULL);
-	CHECK(!coap_resources_observed(&next));
+	CHECK(!coap_resources_observed(0, &next));
+}
+
+static void test_several_observers_at_once(void)
+{
+	uint32_t next = 0U;
+
+	setup_with_log();
+	fake_app.hist_next = 5;
+	next_observe = 0;
+	request("hist", CON, OT_COAP_CODE_GET, NULL);  // the fleet manager (port 5683)
+	fake_uptime_ms += 1000;
+	fake_app.hist_next = 7;
+	next_observe = 0;
+	next_peer_port = 40000;
+	request("hist", CON, OT_COAP_CODE_GET, NULL);  // Home Assistant: beside it, not instead
+	CHECK(coap_resources_observed(0, &next));
+	CHECK_EQ(next, 5);
+	CHECK(coap_resources_observed(1, &next));
+	CHECK_EQ(next, 7);
+	/* Each one is sent what it lacks, at its own address */
+	fake_app.hist_next = 9;
+	CHECK_EQ(coap_resources_notify(1), 0);
+	CHECK_EQ(fake_request_info.mPeerPort, 40000);
+	CHECK(memcmp(fake_request_sent.bytes, "H7", 2) == 0);
+	CHECK_EQ(coap_resources_notify(0), 0);
+	CHECK_EQ(fake_request_info.mPeerPort, 5683);
+	CHECK(memcmp(fake_request_sent.bytes, "H5", 2) == 0);
+	/* One registering again keeps its place */
+	fake_uptime_ms += 1000;
+	next_observe = 0;
+	request("hist", CON, OT_COAP_CODE_GET, NULL);  // the fleet manager again
+	CHECK(coap_resources_observed(0, &next));
+	CHECK(coap_resources_observed(1, &next));
+	CHECK(!coap_resources_observed(2, &next));
+	/* All taken: a new one replaces the one that registered longest ago (Home Assistant's, now) */
+	fake_uptime_ms += 1000;
+	next_observe = 0;
+	next_peer_port = 40001;
+	request("hist", CON, OT_COAP_CODE_GET, NULL);
+	fake_uptime_ms += 1000;
+	next_observe = 0;
+	next_peer_port = 40002;
+	request("hist", CON, OT_COAP_CODE_GET, NULL);
+	CHECK(coap_resources_observed(1, &next));
+	CHECK_EQ(coap_resources_notify(1), 0);
+	CHECK_EQ(fake_request_info.mPeerPort, 40002);
+	CHECK_EQ(coap_resources_notify(0), 0);
+	CHECK_EQ(fake_request_info.mPeerPort, 5683);    // the fleet manager kept its place
+	CHECK(!coap_resources_observed(CONFIG_HACOAP_PUSH_OBSERVERS, &next));
 }
 
 static void test_a_notification_that_cant_be_sent_keeps_the_samples(void)
@@ -544,13 +593,13 @@ static void test_a_notification_that_cant_be_sent_keeps_the_samples(void)
 	request("hist", CON, OT_COAP_CODE_GET, NULL);
 	fake_app.hist_next = 6;
 	fake_send_request_error = OT_ERROR_NO_BUFS;
-	CHECK_EQ(coap_resources_notify(), -EIO);
+	CHECK_EQ(coap_resources_notify(0), -EIO);
 	CHECK_EQ(fake_messages_freed, 1);
-	CHECK(coap_resources_observed(&next));
+	CHECK(coap_resources_observed(0, &next));
 	CHECK_EQ(next, 4);                           // sent with the next one
 	fake_send_request_error = OT_ERROR_NONE;
 	fake_coap_no_bufs = true;
-	CHECK_EQ(coap_resources_notify(), -ENOMEM);
+	CHECK_EQ(coap_resources_notify(0), -ENOMEM);
 }
 
 int main(void)
@@ -582,6 +631,7 @@ int main(void)
 	RUN_TEST(test_hist_observe_registers_then_notifies_the_new_samples);
 	RUN_TEST(test_hist_observe_ends_after_its_lease);
 	RUN_TEST(test_hist_observe_1_from_the_observer_deregisters);
+	RUN_TEST(test_several_observers_at_once);
 	RUN_TEST(test_a_notification_that_cant_be_sent_keeps_the_samples);
 	return TEST_RESULT();
 }

@@ -44,8 +44,9 @@ static const struct coap_resources_handlers *app;
 #define OBSERVE_SEQUENCE_MASK 0xFFFFFFU
 #define TOKEN_MAX_SIZE 8U
 
-/* The one observer of 'hist' (written and read with the OpenThread API lock held) */
-static struct
+/* The observers of 'hist', such as the fleet manager and Home Assistant (written and read with the
+ * OpenThread API lock held) */
+struct observer
 {
 	bool active;
 	otIp6Address address;
@@ -55,7 +56,9 @@ static struct
 	uint32_t next;         // the first sample it wasn't given
 	int64_t registered_ms; // k_uptime_get() at its registration
 	uint32_t sequence;     // the last Observe value sent (24 bits)
-} observer;
+};
+
+static struct observer observers[CONFIG_HACOAP_PUSH_OBSERVERS];
 
 /* Sends a response to 'request', with an optional payload.
  *
@@ -324,11 +327,46 @@ static uint32_t query_observe(otMessage *request)
 	return (value > OBSERVE_DEREGISTER) ? OBSERVE_NONE : (uint32_t)value;
 }
 
-/* Whether a request with this 'info' comes from the observer (its address and port). */
-static bool from_observer(const otMessageInfo *info)
+/* The observer a request with this 'info' comes from (its address and port), or NULL. */
+static struct observer *observer_of(const otMessageInfo *info)
 {
-	return observer.active && (observer.port == info->mPeerPort) &&
-	       (memcmp(&observer.address, &info->mPeerAddr, sizeof(observer.address)) == 0);
+	for (size_t i = 0U; i < ARRAY_SIZE(observers); i++)
+	{
+		if (observers[i].active && (observers[i].port == info->mPeerPort) &&
+		    (memcmp(&observers[i].address, &info->mPeerAddr, sizeof(observers[i].address)) == 0))
+		{
+			return &observers[i];
+		}
+	}
+	return NULL;
+}
+
+/* Where a registration from 'info' goes: its own place when it's an observer already (it registers
+ * again), else a free one, else the one that registered longest ago (it's replaced). */
+static struct observer *observer_slot(const otMessageInfo *info)
+{
+	struct observer *slot = observer_of(info);
+
+	if (slot != NULL)
+	{
+		return slot;
+	}
+	for (size_t i = 0U; i < ARRAY_SIZE(observers); i++)
+	{
+		if (!observers[i].active)
+		{
+			return &observers[i];
+		}
+	}
+	slot = &observers[0];
+	for (size_t i = 1U; i < ARRAY_SIZE(observers); i++)
+	{
+		if (observers[i].registered_ms < slot->registered_ms)
+		{
+			slot = &observers[i];
+		}
+	}
+	return slot;
 }
 
 /* 'hist' GET: the samples from the "from=<n>" query on (see history.h). With Observe 0, the
@@ -336,6 +374,7 @@ static bool from_observer(const otMessageInfo *info)
 static void handle_hist(otMessage *request, const otMessageInfo *response_info, otCoapCode code)
 {
 	static uint8_t payload[HIST_PAYLOAD_MAX_SIZE]; // only used from the OpenThread thread
+	struct observer *slot = NULL;
 	uint32_t observe = OBSERVE_NONE;
 	uint32_t next = 0U;
 	size_t length;
@@ -354,27 +393,31 @@ static void handle_hist(otMessage *request, const otMessageInfo *response_info, 
 		observe = query_observe(request);
 		if ((observe == OBSERVE_REGISTER) && (otCoapMessageGetTokenLength(request) <= TOKEN_MAX_SIZE))
 		{
-			observer.active = true;
-			observer.address = response_info->mPeerAddr;
-			observer.port = response_info->mPeerPort;
-			observer.token_length = otCoapMessageGetTokenLength(request);
-			memcpy(observer.token, otCoapMessageGetToken(request), observer.token_length);
-			observer.next = next;
-			observer.registered_ms = k_uptime_get();
-			observer.sequence = (observer.sequence + 1U) & OBSERVE_SEQUENCE_MASK;
-			LOG_INF("'hist' observed, until %u s from now", CONFIG_HACOAP_PUSH_LEASE_S);
+			slot = observer_slot(response_info);
+			slot->active = true;
+			slot->address = response_info->mPeerAddr;
+			slot->port = response_info->mPeerPort;
+			slot->token_length = otCoapMessageGetTokenLength(request);
+			memcpy(slot->token, otCoapMessageGetToken(request), slot->token_length);
+			slot->next = next;
+			slot->registered_ms = k_uptime_get();
+			slot->sequence = (slot->sequence + 1U) & OBSERVE_SEQUENCE_MASK;
+			LOG_INF("'hist' observed (%u), until %u s from now", (unsigned int)(slot - observers),
+				CONFIG_HACOAP_PUSH_LEASE_S);
 		}
 		else
 		{
-			if ((observe == OBSERVE_DEREGISTER) && from_observer(response_info))
+			slot = (observe == OBSERVE_DEREGISTER) ? observer_of(response_info) : NULL;
+			if (slot != NULL)
 			{
-				observer.active = false; // no more notifications
+				slot->active = false; // no more notifications
 			}
 			observe = OBSERVE_NONE;
+			slot = NULL;
 		}
 	}
 	response_send_observe(request, response_info, OT_COAP_CODE_CONTENT, payload, (uint16_t)length,
-			      (observe == OBSERVE_REGISTER) ? observer.sequence : OBSERVE_NONE);
+			      (slot != NULL) ? slot->sequence : OBSERVE_NONE);
 }
 
 static struct coap_resource resources[] = {
@@ -470,22 +513,30 @@ int coap_resources_init(const struct coap_resources_handlers *handlers)
 	return 0;
 }
 
-bool coap_resources_observed(uint32_t *next)
+bool coap_resources_observed(size_t index, uint32_t *next)
 {
-	if (observer.active && (k_uptime_get() - observer.registered_ms > (int64_t)CONFIG_HACOAP_PUSH_LEASE_S * MSEC_PER_SEC))
+	struct observer *observer;
+
+	if (index >= ARRAY_SIZE(observers))
 	{
-		observer.active = false; // it didn't register again: gone
-		LOG_INF("'hist' no longer observed");
+		return false;
 	}
-	if (observer.active)
+	observer = &observers[index];
+	if (observer->active && (k_uptime_get() - observer->registered_ms > (int64_t)CONFIG_HACOAP_PUSH_LEASE_S * MSEC_PER_SEC))
 	{
-		*next = observer.next;
+		observer->active = false; // it didn't register again: gone
+		LOG_INF("'hist' no longer observed (%u)", (unsigned int)index);
 	}
-	return observer.active;
+	if (observer->active)
+	{
+		*next = observer->next;
+	}
+	return observer->active;
 }
 
-int coap_resources_notify(void)
+int coap_resources_notify(size_t index)
 {
+	struct observer *observer;
 	static uint8_t payload[HIST_PAYLOAD_MAX_SIZE]; // with the OpenThread API lock held: one at a time
 	otMessageInfo info;
 	otMessage *message;
@@ -494,10 +545,11 @@ int coap_resources_notify(void)
 	uint32_t from;
 	size_t length;
 
-	if ((app == NULL) || (app->hist_get == NULL) || !coap_resources_observed(&from))
+	if ((app == NULL) || (app->hist_get == NULL) || !coap_resources_observed(index, &from))
 	{
 		return -ENOTCONN;
 	}
+	observer = &observers[index];
 	length = app->hist_get(from, payload, sizeof(payload), &next);
 
 	message = otCoapNewMessage(ot_instance, NULL);
@@ -506,10 +558,10 @@ int coap_resources_notify(void)
 		return -ENOMEM;
 	}
 	otCoapMessageInit(message, OT_COAP_TYPE_NON_CONFIRMABLE, OT_COAP_CODE_CONTENT);
-	error = otCoapMessageSetToken(message, observer.token, observer.token_length);
+	error = otCoapMessageSetToken(message, observer->token, observer->token_length);
 	if (error == OT_ERROR_NONE)
 	{
-		error = otCoapMessageAppendObserveOption(message, (observer.sequence + 1U) & OBSERVE_SEQUENCE_MASK);
+		error = otCoapMessageAppendObserveOption(message, (observer->sequence + 1U) & OBSERVE_SEQUENCE_MASK);
 	}
 	if ((error == OT_ERROR_NONE) && (length > 0U))
 	{
@@ -522,8 +574,8 @@ int coap_resources_notify(void)
 	if (error == OT_ERROR_NONE)
 	{
 		memset(&info, 0, sizeof(info));
-		info.mPeerAddr = observer.address;
-		info.mPeerPort = observer.port;
+		info.mPeerAddr = observer->address;
+		info.mPeerPort = observer->port;
 		error = otCoapSendRequest(ot_instance, message, &info, NULL, NULL);
 	}
 	if (error != OT_ERROR_NONE)
@@ -531,7 +583,7 @@ int coap_resources_notify(void)
 		otMessageFree(message);
 		return -EIO;
 	}
-	observer.sequence = (observer.sequence + 1U) & OBSERVE_SEQUENCE_MASK;
-	observer.next = next;
+	observer->sequence = (observer->sequence + 1U) & OBSERVE_SEQUENCE_MASK;
+	observer->next = next;
 	return 0;
 }

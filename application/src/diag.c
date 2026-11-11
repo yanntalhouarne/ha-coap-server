@@ -165,7 +165,7 @@ void diag_link_read(otInstance *instance, struct diag_link *link)
 }
 
 size_t diag_format(char *payload, size_t size, const struct diag_link *link, const char *srp, int32_t soil_mv,
-		   const char *power, uint32_t button_s)
+		   const char *power, uint32_t button_s, uint32_t pump_ms)
 {
 	size_t length = 0U;
 	int written;
@@ -202,6 +202,7 @@ size_t diag_format(char *payload, size_t size, const struct diag_link *link, con
 	APPEND(",soil_mv=%d", (int)soil_mv);
 	APPEND(",power=%s", power);
 	APPEND(",button_s=%u", (unsigned int)button_s);
+	APPEND(",pump_ms=%u", (unsigned int)pump_ms);
 
 #undef APPEND
 

@@ -80,17 +80,18 @@ struct coap_resources_handlers
 int coap_resources_init(const struct coap_resources_handlers *handlers);
 
 /* 'hist' can be observed (RFC 7641, CONFIG_HACOAP_PUSH): a GET with Observe 0 registers its
- * sender (one at a time: the newest replaces the one before), until CONFIG_HACOAP_PUSH_LEASE_S
- * after it registered; a GET with Observe 1 from it ends it. The fleet manager registers again at
- * each refresh. */
+ * sender, until CONFIG_HACOAP_PUSH_LEASE_S after it registered; a GET with Observe 1 from it ends
+ * it. Up to CONFIG_HACOAP_PUSH_OBSERVERS at once (the fleet manager, Home Assistant...): one that
+ * registers again keeps its place; when they're all taken, a new one replaces the one that
+ * registered longest ago. Each one registers again before its lease ends. */
 
-/* Whether someone observes 'hist': if so, sets '*next' to the first sample it wasn't given.
- * Call with the OpenThread API lock held. */
-bool coap_resources_observed(uint32_t *next);
+/* Whether observer 'index' (0 to CONFIG_HACOAP_PUSH_OBSERVERS - 1) observes 'hist': if so, sets
+ * '*next' to the first sample it wasn't given. Call with the OpenThread API lock held. */
+bool coap_resources_observed(size_t index, uint32_t *next);
 
-/* Sends the observer of 'hist' the samples it wasn't given, in a non-confirmable notification
- * (the same payload as a GET). Call with the OpenThread API lock held. Returns 0, -ENOTCONN
- * without an observer, or another negative error. */
-int coap_resources_notify(void);
+/* Sends observer 'index' the samples it wasn't given, in a non-confirmable notification (the same
+ * payload as a GET). Call with the OpenThread API lock held. Returns 0, -ENOTCONN when it doesn't
+ * observe, or another negative error. */
+int coap_resources_notify(size_t index);
 
 #endif // COAP_RESOURCES_H_

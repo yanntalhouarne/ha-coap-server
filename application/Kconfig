@@ -143,6 +143,17 @@ config HACOAP_PUSH_LEASE_S
 	  The fleet manager registers again at each refresh (every 15 minutes
 	  by default). One that's gone stops getting messages after this.
 
+config HACOAP_PUSH_OBSERVERS
+	int "Observers at once"
+	depends on HACOAP_PUSH
+	range 1 4
+	default 3
+	help
+	  How many senders can observe 'hist' at the same time (the fleet
+	  manager, Home Assistant...), about 60 bytes of RAM each. One that
+	  registers again keeps its place; when all are taken, a new one
+	  replaces the one that registered longest ago.
+
 endmenu
 
 menu "Joining the network"

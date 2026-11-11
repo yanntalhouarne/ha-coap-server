@@ -32,11 +32,22 @@ static struct gpio_callback usr_button_cb_data;
 static atomic_t running;
 static uint8_t duration_s = CONFIG_HACOAP_PUMP_DEFAULT_DURATION;
 static atomic_t button_seconds; // run time started with S1 since boot
+static atomic_t run_ms;         // time it ran since boot, the runs that ended (ms)
+static int64_t started_ms;      // k_uptime_get() when the current run started
 
-/* Turns the pump and the user LED on or off. */
+/* Turns the pump and the user LED on or off, and counts the time it ran. */
 static void pump_set(bool on)
 {
-	atomic_set(&running, on ? 1 : 0);
+	bool was_on = atomic_set(&running, on ? 1 : 0) != 0;
+
+	if (on && !was_on)
+	{
+		started_ms = k_uptime_get();
+	}
+	else if (!on && was_on)
+	{
+		(void)atomic_add(&run_ms, (int32_t)(k_uptime_get() - started_ms));
+	}
 	gpio_pin_set_dt(&pump_gpio, on ? 1 : 0);
 	status_led_user(on);
 }
@@ -103,6 +114,17 @@ static void on_usr_button_work(struct k_work *work)
 uint32_t pump_button_seconds(void)
 {
 	return (uint32_t)atomic_get(&button_seconds);
+}
+
+uint32_t pump_run_ms(void)
+{
+	uint32_t total = (uint32_t)atomic_get(&run_ms);
+
+	if (atomic_get(&running) != 0)
+	{
+		total += (uint32_t)(k_uptime_get() - started_ms); // the run going on, so far
+	}
+	return total;
 }
 
 static K_WORK_DEFINE(usr_button_work, on_usr_button_work);

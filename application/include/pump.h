@@ -36,4 +36,8 @@ bool pump_set_duration(uint8_t seconds);
  * which counts it in the plant's water tank. The runs started over CoAP aren't in it. */
 uint32_t pump_button_seconds(void);
 
+/* How long the pump actually ran since boot (ms), whatever started it (CoAP, S1) and however it
+ * ended (its run time, or stopped early): 'diag' pump_ms, for the water a plant was given. */
+uint32_t pump_run_ms(void);
+
 #endif // PUMP_H_

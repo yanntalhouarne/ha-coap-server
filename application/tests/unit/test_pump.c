@@ -32,6 +32,9 @@ static void reset_module(void)
 {
 	running = 0;
 	button_seconds = 0;
+	run_ms = 0;
+	started_ms = 0;
+	fake_uptime_ms = 0;
 	duration_s = CONFIG_HACOAP_PUMP_DEFAULT_DURATION;
 	pump_timer.running = false;
 	pump_timer.starts = 0;
@@ -148,6 +151,29 @@ static void test_the_buttons_runs_are_counted(void)
 	CHECK_EQ(pump_button_seconds(), 6);        // two presses of 3 s
 }
 
+static void test_its_run_time_is_counted(void)
+{
+	reset_module();
+	CHECK(pump_set_duration(3));
+	fake_uptime_ms = 1000;
+	pump_start();
+	fake_uptime_ms = 4000;
+	on_pump_timer_expiry(&pump_timer);         // its run time is over
+	CHECK_EQ(pump_run_ms(), 3000);
+	fake_uptime_ms = 10000;
+	pump_start();
+	fake_uptime_ms = 11000;
+	pump_start();                              // started again while running: one run
+	fake_uptime_ms = 11500;
+	CHECK_EQ(pump_run_ms(), 4500);             // the run going on counts so far
+	fake_uptime_ms = 12000;
+	pump_stop();                               // stopped early: the time it really ran
+	CHECK_EQ(pump_run_ms(), 5000);
+	fake_uptime_ms = 20000;
+	pump_stop();                               // stopping a stopped pump adds nothing
+	CHECK_EQ(pump_run_ms(), 5000);
+}
+
 static void test_s1_can_be_read(void)
 {
 	CHECK(!pump_button_pressed());
@@ -166,6 +192,7 @@ int main(void)
 	RUN_TEST(test_start_uses_the_new_run_time);
 	RUN_TEST(test_button_starts_the_pump_from_the_work_queue);
 	RUN_TEST(test_the_buttons_runs_are_counted);
+	RUN_TEST(test_its_run_time_is_counted);
 	RUN_TEST(test_s1_can_be_read);
 	return TEST_RESULT();
 }

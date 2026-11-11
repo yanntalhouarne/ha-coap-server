@@ -59,9 +59,14 @@ static struct
 	int samples_now;
 	uint32_t button_s;
 	uint32_t diag_button_s;
-	bool observed;        // someone observes 'hist'...
+	uint32_t pump_ms;
+	uint32_t diag_pump_ms;
+	bool observed;        // someone observes 'hist' (observer 0)...
 	uint32_t observed_next; // ...and has every sample before this one
 	int notifies;
+	bool observed2;       // a second observer (1), as Home Assistant beside the fleet manager
+	uint32_t observed2_next;
+	int notifies2;
 	int calls;            // order of the init calls
 	int led_init_call;
 	int coap_init_call;
@@ -165,25 +170,40 @@ uint32_t pump_button_seconds(void)
 	return fake_mod.button_s;
 }
 
+uint32_t pump_run_ms(void)
+{
+	return fake_mod.pump_ms;
+}
+
 uint32_t device_settings_boots(void)
 {
 	return 7;
 }
 
-bool coap_resources_observed(uint32_t *next)
+bool coap_resources_observed(size_t index, uint32_t *next)
 {
-	if (fake_mod.observed)
+	bool observed = (index == 0U) ? fake_mod.observed : (index == 1U) ? fake_mod.observed2 : false;
+
+	if (observed)
 	{
-		*next = fake_mod.observed_next;
+		*next = (index == 0U) ? fake_mod.observed_next : fake_mod.observed2_next;
 	}
-	return fake_mod.observed;
+	return observed;
 }
 
-int coap_resources_notify(void)
+int coap_resources_notify(size_t index)
 {
 	CHECK_EQ(fake_ot_api_lock_depth, 1); // with OpenThread's lock held
-	fake_mod.notifies++;
-	fake_mod.observed_next = history_next(); // it was given them all
+	if (index == 0U)
+	{
+		fake_mod.notifies++;
+		fake_mod.observed_next = history_next(); // it was given them all
+	}
+	else
+	{
+		fake_mod.notifies2++;
+		fake_mod.observed2_next = history_next();
+	}
 	return 0;
 }
 
@@ -295,9 +315,10 @@ void diag_link_read(otInstance *instance, struct diag_link *link)
 }
 
 size_t diag_format(char *payload, size_t size, const struct diag_link *link, const char *srp, int32_t soil_mv,
-		   const char *power, uint32_t button_s)
+		   const char *power, uint32_t button_s, uint32_t pump_ms)
 {
 	fake_mod.diag_button_s = button_s;
+	fake_mod.diag_pump_ms = pump_ms;
 	return (size_t)snprintf(payload, size, "srp=%s,rloc=%04x,soil_mv=%d,power=%s", srp, link->rloc16, (int)soil_mv, power);
 }
 
@@ -486,8 +507,10 @@ static void test_diag_reports_the_link_and_the_soil_voltage(void)
 	CHECK(memcmp(payload, "srp=registered,rloc=5c01,soil_mv=1696,power=charging", length) == 0);
 
 	fake_mod.button_s = 6;                     // the pump's runs with S1, for the water tank
+	fake_mod.pump_ms = 14020;                  // and all its runs, for the water a plant was given
 	(void)on_diag_get(payload, sizeof(payload));
 	CHECK_EQ(fake_mod.diag_button_s, 6);
+	CHECK_EQ(fake_mod.diag_pump_ms, 14020);
 }
 
 /* A sample of this soil moisture, taken now */
@@ -542,6 +565,15 @@ static void test_samples_that_changed_are_pushed(void)
 	fake_mod.observed_next = 0;
 	sampled(10);
 	CHECK_EQ(fake_mod.notifies, 3);
+	/* A second observer, which has everything: each one gets what it lacks */
+	fake_mod.observed2 = true;
+	fake_mod.observed2_next = history_next();
+	sampled(10);                               // nothing new for either
+	CHECK_EQ(fake_mod.notifies, 3);
+	CHECK_EQ(fake_mod.notifies2, 0);
+	sampled(10 + CONFIG_HACOAP_PUSH_SOIL_DELTA);
+	CHECK_EQ(fake_mod.notifies, 4);
+	CHECK_EQ(fake_mod.notifies2, 1);
 }
 
 static void test_a_power_change_takes_a_sample(void)

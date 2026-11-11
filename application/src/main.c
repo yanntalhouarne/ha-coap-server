@@ -174,7 +174,7 @@ static size_t on_diag_get(char *payload, size_t size)
 
 	diag_link_read(openthread_get_default_instance(), &link);
 	return diag_format(payload, size, &link, srp_state(openthread_get_default_instance()), sensors_get().soil_mv,
-			   power_name(power_source()), pump_button_seconds());
+			   power_name(power_source()), pump_button_seconds(), pump_run_ms());
 }
 
 static size_t on_hist_get(uint32_t from, uint8_t *payload, size_t size, uint32_t *next)
@@ -206,12 +206,15 @@ static void on_sampled(const struct sensors_data *data)
 	}
 	openthread_api_mutex_lock(context);
 	/* The last sample it was given: one that's gone (or none yet) counts as a change */
-	if (coap_resources_observed(&next) && (!history_get(next - 1U, &given) || history_push_wanted(&given, &sample)))
+	for (size_t i = 0U; i < CONFIG_HACOAP_PUSH_OBSERVERS; i++)
 	{
-		err = coap_resources_notify();
-		if (err != 0)
+		if (coap_resources_observed(i, &next) && (!history_get(next - 1U, &given) || history_push_wanted(&given, &sample)))
 		{
-			LOG_WRN("Could not push the sample (%d)", err);
+			err = coap_resources_notify(i);
+			if (err != 0)
+			{
+				LOG_WRN("Could not push the sample to observer %u (%d)", (unsigned int)i, err);
+			}
 		}
 	}
 	openthread_api_mutex_unlock(context);
