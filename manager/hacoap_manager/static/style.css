@@ -1158,6 +1158,11 @@ body.wall-mode .simple-top, body.wall-mode .simple-nav { display: none !importan
 .today-done { display: flex; align-items: center; gap: .5rem; color: var(--t-text-secondary); }
 .today-done .icon { color: var(--t-green, var(--t-cyan)); }
 .plant-rows { display: flex; flex-direction: column; gap: .4rem; margin: 0; padding: 0 0 1rem; list-style: none; }
+/* The plants by room (Plants as: Rooms) */
+.room-head { display: flex; align-items: baseline; justify-content: space-between; gap: .75rem; }
+.room-summary { text-transform: none; letter-spacing: 0; font-size: .75rem; color: var(--t-text-muted); text-align: right; }
+.room-summary.busy { color: var(--t-yellow); }
+.room.no-room .room-head > span:first-child { font-style: italic; }
 .plant-row { display: grid; grid-template-columns: minmax(0, 1fr) 7rem 3rem; align-items: center; gap: .75rem; padding: .6rem .9rem;
   border-radius: .75rem; background: var(--t-surface); border: 1px solid var(--t-border-subtle); color: var(--t-text); text-decoration: none; }
 .plant-row:hover { border-color: var(--t-brand); color: var(--t-text); }
@@ -1197,6 +1202,7 @@ body.wall-mode .simple-top, body.wall-mode .simple-nav { display: none !importan
 .plant-hero h1 { margin: 0; font-size: 1.5rem; }
 .plant-sub { font-size: .8rem; color: var(--t-text-muted); }
 .plant-rename { min-height: 2.75rem; padding: 0 .75rem; font-size: .8rem; text-decoration: none; }
+.plant-name-actions { display: flex; justify-content: center; flex-wrap: wrap; }  /* Rename, Room */
 .soil-card { padding: 1rem; border-radius: .9rem; background: var(--t-surface); border: 1px solid var(--t-border-subtle); color: var(--t-cyan); }
 .soil-card.thirsty { border-color: var(--t-yellow); color: var(--t-yellow); }
 .soil-big { font-size: 2.5rem; font-weight: 700; line-height: 1; }

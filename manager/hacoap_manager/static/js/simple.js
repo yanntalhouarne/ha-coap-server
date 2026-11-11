@@ -16,13 +16,17 @@ import { careDone, careSection, dueText, everyText, isDue } from './care.js';
 
 const simple = { route: null, plants: [], plantId: null, fromWall: false, soon: null, openWater: false };
 
-// How the plants show: as cards, or as the Today list (what to do, then a row per plant). A
-// dashboard link's address can choose (&layout=today), else this browser's choice.
+// How the plants show: as cards, as the Today list (what to do, then a row per plant), or by
+// room. A dashboard link's address can choose (&layout=today), else this browser's choice.
 const LAYOUT_KEY = 'hacoap.plants-layout';
+const LAYOUTS = ['cards', 'today', 'rooms'];
 export function plantsLayout() {
   const asked = new URLSearchParams(location.search).get('layout');
-  if (asked === 'today' || asked === 'cards') return asked;
-  try { return localStorage.getItem(LAYOUT_KEY) === 'today' ? 'today' : 'cards'; } catch (error) { return 'cards'; }
+  if (LAYOUTS.includes(asked)) return asked;
+  try {
+    const kept = localStorage.getItem(LAYOUT_KEY);
+    return LAYOUTS.includes(kept) ? kept : 'cards';
+  } catch (error) { return 'cards'; }
 }
 function setPlantsLayout(layout) {
   try { localStorage.setItem(LAYOUT_KEY, layout); } catch (error) { /* private window: for this visit only */ }
@@ -155,6 +159,10 @@ function renderPlants() {
     renderToday(plants);
     return;
   }
+  if (plantsLayout() === 'rooms' && plants.length) {
+    renderRooms(plants);
+    return;
+  }
   document.getElementById('plant-grid').classList.remove('today');
   document.getElementById('plants-banner').replaceChildren(...[awayBanner(), ...plants.filter((p) => p.needs_water).map((p) =>
     h('a', { class: 'plants-banner', href: plantHref(p.device_id) }, icon('droplet'),
@@ -243,14 +251,59 @@ function renderToday(plants) {
         action(task))))
       : h('p', { class: 'today-done' }, icon('check'), ' Nothing to do today: every plant is fine.'),
     h('h2', { class: 'simple-h' }, 'All plants'),
-    h('ul', { class: 'plant-rows' }, plants.map((p) => h('li', {},
-      h('a', { class: `plant-row${p.needs_water ? ' thirsty' : ''}${p.online ? '' : ' offline'}`, href: plantHref(p.device_id) },
-        h('div', { class: 'plant-row-name' }, h('b', {}, title(p)), h('span', {}, boardName(p) || plantNote(p))),
-        h('div', { class: 'plant-row-soil' }, h('span', {}, has(p.soil_moisture) ? `${p.soil_moisture} %` : '–'),
-          h('div', { class: 'soil-bar' }, h('i', { style: `width: ${has(p.soil_moisture) ? Math.max(0, Math.min(100, p.soil_moisture)) : 0}%` }),
-            p.water_target ? h('b', { style: `left: ${p.water_target}%` }) : null)),
-        h('span', { class: 'plant-row-battery', title: 'battery' }, has(p.battery)
-          ? [icon(p.power === 'charging' ? 'battery-charging' : p.battery <= 20 ? 'battery-low' : 'battery-medium'), ` ${p.battery} %`] : ''))))));
+    h('ul', { class: 'plant-rows' }, plants.map((p) => plantRow(p))));
+}
+
+// A plant as a row: its name, its soil as a bar with its target marked, its battery
+function plantRow(p, note = boardName(p) || plantNote(p)) {
+  return h('li', {},
+    h('a', { class: `plant-row${p.needs_water ? ' thirsty' : ''}${p.online ? '' : ' offline'}`, href: plantHref(p.device_id) },
+      h('div', { class: 'plant-row-name' }, h('b', {}, title(p)), h('span', {}, note)),
+      h('div', { class: 'plant-row-soil' }, h('span', {}, has(p.soil_moisture) ? `${p.soil_moisture} %` : '–'),
+        h('div', { class: 'soil-bar' }, h('i', { style: `width: ${has(p.soil_moisture) ? Math.max(0, Math.min(100, p.soil_moisture)) : 0}%` }),
+          p.water_target ? h('b', { style: `left: ${p.water_target}%` }) : null)),
+      h('span', { class: 'plant-row-battery', title: 'battery' }, has(p.battery)
+        ? [icon(p.power === 'charging' ? 'battery-charging' : p.battery <= 20 ? 'battery-low' : 'battery-medium'), ` ${p.battery} %`] : '')));
+}
+
+// ------------------------------------------------------------------ by room
+
+// The plants by room (their board's location), each room with what needs doing there
+export function rooms(plants) {
+  const byKey = new Map();
+  for (const p of plants) {
+    const name = (p.location || '').trim();
+    const key = name.toLowerCase();
+    if (!byKey.has(key)) byKey.set(key, { name: name || 'No room', none: !name, plants: [] });
+    byKey.get(key).plants.push(p);
+  }
+  return [...byKey.values()].sort((a, b) => (a.none - b.none) || a.name.localeCompare(b.name));
+}
+
+// "2 need water · 1 offline", or '' when every plant there is fine
+export function roomSummary(room, now = Date.now()) {
+  const count = (test) => room.plants.filter(test).length;
+  const parts = [
+    [count((p) => p.needs_water), (n) => `${n} need${n === 1 ? 's' : ''} water`],
+    [count((p) => p.tank && (p.tank.low || p.watering_missed)), (n) => `${n} tank${n === 1 ? '' : 's'} to refill`],
+    [count((p) => (p.care || []).some((t) => isDue(t, now))), (n) => `${n} with care due`],
+    [count((p) => !onUsb(p) && has(p.battery) && p.battery <= 20), (n) => `${n} low battery`],
+    [count((p) => !p.online), (n) => `${n} offline`],
+  ];
+  return parts.filter(([n]) => n).map(([n, text]) => text(n)).join(' · ');
+}
+
+function renderRooms(plants) {
+  document.getElementById('plants-banner').replaceChildren(...[awayBanner()].filter(Boolean));
+  const grid = document.getElementById('plant-grid');
+  grid.classList.add('today');
+  grid.replaceChildren(...rooms(plants).map((room) => {
+    const summary = roomSummary(room);
+    return h('section', { class: `room${room.none ? ' no-room' : ''}` },
+      h('h2', { class: 'simple-h room-head' }, h('span', {}, room.name),
+        h('span', { class: `room-summary${summary ? ' busy' : ''}` }, summary || `${room.plants.length === 1 ? 'fine' : 'all fine'}`)),
+      h('ul', { class: 'plant-rows' }, room.plants.map((p) => plantRow(p, plantNote(p) || boardName(p)))));
+  }));
 }
 
 // ------------------------------------------------------------------ one plant
@@ -339,8 +392,11 @@ function renderPlant(details) {
       h('h1', {}, name),
       h('div', { class: 'plant-sub' }, [boardName(device), device.location].filter(Boolean).join(' · '),
         boardName(device) || device.location ? ' · ' : '', h('span', { class: device.online ? 'text-success' : 'text-body-secondary' }, device.online ? 'online' : 'offline')),
-      h('button', { class: 'btn btn-sm btn-link plant-rename link-action', type: 'button', onclick: () => renamePlant(device) },
-        device.plant ? 'Rename' : 'Give it a name')),
+      h('div', { class: 'plant-name-actions' },
+        h('button', { class: 'btn btn-sm btn-link plant-rename link-action', type: 'button', onclick: () => renamePlant(device) },
+          device.plant ? 'Rename' : 'Give it a name'),
+        linkMode() ? null : h('button', { class: 'btn btn-sm btn-link plant-rename', type: 'button', onclick: () => moveToRoom(device) },
+          device.location ? 'Room' : 'Put it in a room'))),
     h('section', { class: `soil-card${device.needs_water ? ' thirsty' : ''}`, 'data-board': id },
       h('div', { class: 'd-flex align-items-baseline gap-2' }, h('span', { class: 'soil-big' }, has(soil) ? `${soil} %` : '–'),
         h('span', { class: 'small text-body-secondary' }, 'soil moisture')),
@@ -381,6 +437,17 @@ async function renamePlant(device) {
   const value = prompt('What should this plant be called?', device.plant || '');
   if (value === null) return;
   await api('PATCH', devicePath(device), { plant: value.trim() });
+  await loadPlant(device.device_id, simple.fromWall);
+}
+
+// Its room (its board's location), with the rooms there are as a hint
+async function moveToRoom(device) {
+  const known = [...new Set(simple.plants.map((p) => (p.location || '').trim()).filter(Boolean))];
+  const value = prompt(`Which room is it in?${known.length ? ` (${known.join(', ')})` : ''}`, device.location || '');
+  if (value === null) return;
+  const typed = value.trim();
+  const same = known.find((room) => room.toLowerCase() === typed.toLowerCase());  // "Kitchen" for "kitchen"
+  await api('PATCH', devicePath(device), { location: same || typed });
   await loadPlant(device.device_id, simple.fromWall);
 }
 
@@ -427,8 +494,9 @@ function renderSimpleMore() {
   const notifications = notificationsOn();
   const signOut = document.getElementById('sign-out');
   const layout = plantsLayout();
-  const layoutRow = row('Plants as', layout === 'today' ? 'Today: what to do, then a row per plant' : 'Cards: a card per plant',
-    ...[['cards', 'Cards'], ['today', 'Today list']].map(([id, label]) => h('button', {
+  const layoutRow = row('Plants as', { today: 'Today: what to do, then a row per plant', rooms: 'Rooms: the plants by room, with what needs doing in each',
+    cards: 'Cards: a card per plant' }[layout],
+    ...[['cards', 'Cards'], ['today', 'Today list'], ['rooms', 'Rooms']].map(([id, label]) => h('button', {
       class: `btn btn-sm ${id === layout ? 'btn-primary' : 'btn-outline-secondary'}`, type: 'button', 'aria-pressed': String(id === layout),
       onclick: () => { setPlantsLayout(id); renderSimpleMore(); } }, label)));
   if (linkMode()) {
