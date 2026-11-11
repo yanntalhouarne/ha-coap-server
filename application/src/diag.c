@@ -203,6 +203,11 @@ size_t diag_format(char *payload, size_t size, const struct diag_link *link, con
 	APPEND(",power=%s", power);
 	APPEND(",button_s=%u", (unsigned int)button_s);
 	APPEND(",pump_ms=%u", (unsigned int)pump_ms);
+#ifdef CONFIG_HACOAP_PUSH
+	/* How many can observe 'hist' at once: Home Assistant only registers beside the fleet manager
+	 * when there's room for both (firmware without this field keeps one) */
+	APPEND(",observers=%u", (unsigned int)CONFIG_HACOAP_PUSH_OBSERVERS);
+#endif
 
 #undef APPEND
 
