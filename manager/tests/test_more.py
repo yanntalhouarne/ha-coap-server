@@ -129,6 +129,24 @@ async def test_summary_and_wall(services, client):
     assert len(report["parent_changes"]) == 1 and report["devices"] == 2
     earlier = summary.build(db, services.inventory, services.settings, days=7, end=now - 7 * DAY)
     assert next(p for p in earlier["plants"] if p["name"] == "basil")["readings"] == 1
+    # How it was watered, the water pumped (20 ml/s by default), its tank and care; who did what
+    assert basil["by"]["app"] == 1 and basil["water_ml"] == 60
+    db.add_activity("abcd0001", "tank", "Water tank refilled", actor="this computer")
+    db.add_activity("abcd0001", "care", "Done: Fertilize", actor="the link “Kitchen”")
+    db.add_activity("abcd0001", "pump", "Watered automatically: soil 25 % under 30 % (5 s)", actor="automatic watering")
+    db.add_activity("abcd0001", "restart", "Restarted: power", actor="")                   # the board's own: no one
+    # Offline for 2 hours (its alert raised 30 min in, cleared since), and another time before the week
+    db._execute("INSERT INTO alerts (key, kind, device_id, message, raised, cleared) VALUES (?, ?, ?, ?, ?, ?)",
+                ("offline:abcd0002", "offline", "abcd0002", "{name} stopped answering", now - 3 * DAY + 1800, now - 3 * DAY + 7200))
+    db._execute("INSERT INTO alerts (key, kind, device_id, message, raised, cleared) VALUES (?, ?, ?, ?, ?, ?)",
+                ("offline:abcd0002", "offline", "abcd0002", "{name} stopped answering", now - 20 * DAY, now - 19 * DAY))
+    report = (await client.get("/api/summary?days=7")).json()
+    basil = next(p for p in report["plants"] if p["name"] == "basil")
+    assert (basil["by"]["automatic"], basil["water_ml"], basil["refills"], basil["care_done"]) == (1, 160, 1, ["Fertilize"])
+    assert report["done_by"] == [{"by": "automatic watering", "count": 1}, {"by": "the link “Kitchen”", "count": 1},
+                                 {"by": "this computer", "count": 1}]
+    fern = next(b for b in report["batteries"] if b["name"] == "fern")
+    assert fern["offline_s"] == 7200 and next(b for b in report["batteries"] if b["name"] == "basil")["offline_s"] == 0
 
     plants = (await client.get("/api/wall")).json()
     assert [p["name"] for p in plants] == ["basil", "fern"] and plants[0]["needs_water"]

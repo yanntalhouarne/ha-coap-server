@@ -522,6 +522,12 @@ class Database:
     def alerts_between(self, start, end):
         return self._query("SELECT * FROM alerts WHERE raised >= ? AND raised < ? ORDER BY raised", (start, end))
 
+    def alerts_overlapping(self, kind, start, end):
+        """Alerts of one kind that were open at some point between two times (a dismissed one
+        lasted until its condition ended)."""
+        return self._query("SELECT * FROM alerts WHERE kind = ? AND raised < ? AND (cleared IS NULL OR cleared > ? "
+                           "OR (dismissed = 1 AND (ended IS NULL OR ended > ?))) ORDER BY raised", (kind, end, start, start))
+
     def network_events_between(self, start, end):
         return self._query("SELECT * FROM network_events WHERE time >= ? AND time < ? ORDER BY time", (start, end))
 

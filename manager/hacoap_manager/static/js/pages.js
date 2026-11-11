@@ -109,8 +109,28 @@ export function renderSummary(r) {
   const section = (title, body) => h('section', { class: 'summary-section' }, h('h5', {}, title), body);
   const list = (rows, empty) => rows.length ? h('ul', { class: 'mb-0' }, rows) : h('p', { class: 'text-body-secondary mb-0' }, empty);
   const totalWaterings = r.plants.reduce((sum, p) => sum + p.waterings, 0);
+  const total = (key) => r.plants.reduce((sum, p) => sum + (key(p) || 0), 0);
+  const water = total((p) => p.water_ml);
+  const careDone = total((p) => (p.care_done || []).length);
   const numbers = [[r.devices, 'boards'], [`${r.online}`, 'online now'], [totalWaterings, 'waterings'],
-    [r.alerts.length, 'alerts'], [r.updates.length, 'updates'], [r.parent_changes.length, 'parent changes']];
+    water ? [water >= 1000 ? `${(water / 1000).toFixed(1)} l` : `${water} ml`, 'water pumped'] : null,
+    careDone ? [careDone, 'care done'] : null,
+    [r.alerts.length, 'alerts'], [r.updates.length, 'updates'], [r.parent_changes.length, 'parent changes']].filter(Boolean);
+  // "4 (2 automatic, 1 app, 1 by hand)"
+  const how = (p) => {
+    const by = p.by || {};
+    const ways = [[by.automatic, 'automatic', 'automatic'], [by.app, 'app', 'from the app'], [by.button, 'button', 'with its button'],
+      [by.hand, 'by hand', 'by hand']].filter(([n]) => n);
+    if (ways.length === 1) return ` (${ways[0][2]})`;  // "1 (from the app)"
+    return ways.length ? ` (${ways.map(([n, text]) => `${n} ${text}`).join(', ')})` : '';
+  };
+  // "Fertilize ×2, Repot"
+  const careText = (done) => [...new Set(done)].map((what) => {
+    const n = done.filter((d) => d === what).length;
+    return n > 1 ? `${what} ×${n}` : what;
+  }).join(', ');
+  const duration = (s) => (s < 60 ? '–' : s < 3600 ? `${Math.round(s / 60)} min`
+    : s < 86400 ? `${Math.floor(s / 3600)} h ${Math.round((s % 3600) / 60)} min` : `${(s / 86400).toFixed(1)} days`);
   document.getElementById('summary').replaceChildren(
     h('div', { class: 'summary-head' }, h('img', { src: '/static/logo.svg', alt: '', class: 'summary-logo' }),
       h('div', {}, h('h3', { class: 'mb-0' }, 'ha-coap fleet summary'),
@@ -118,20 +138,24 @@ export function renderSummary(r) {
     h('div', { class: 'summary-numbers' }, numbers.map(([value, label]) => h('div', {}, h('b', {}, value), h('span', {}, label)))),
     section('Plants', h('table', { class: 'table table-sm' },
       h('thead', {}, h('tr', {}, h('th', {}, 'Plant'), h('th', { class: 'text-end' }, 'Soil (low to high)'), h('th', { class: 'text-end' }, 'Now'),
-        h('th', { class: 'text-end' }, 'Waterings'), h('th', {}, 'Next'))),
+        h('th', { class: 'text-end' }, 'Waterings'), h('th', { class: 'text-end' }, 'Water'), h('th', {}, 'Care'), h('th', {}, 'Next'))),
       h('tbody', {}, r.plants.map((p) => h('tr', {},
         h('td', {}, h('b', {}, p.name), p.board && p.board !== p.name ? ` · ${p.board}` : ''),
         h('td', { class: 'text-end' }, p.soil ? `${p.soil.min} to ${p.soil.max} %` : '–'),
         h('td', { class: 'text-end' }, p.soil ? `${p.soil.last} %` : '–'),
-        h('td', { class: 'text-end' }, p.waterings ? `${p.waterings}${p.pump_runs ? ` (${p.pump_runs} from the app)` : ''}` : '0'),
+        h('td', { class: 'text-end' }, p.waterings ? `${p.waterings}${how(p)}` : '0'),
+        h('td', { class: 'text-end' }, p.water_ml ? `${p.water_ml} ml` : '–', p.refills ? h('div', { class: 'small text-body-secondary' },
+          `tank refilled${p.refills > 1 ? ` ×${p.refills}` : ''}`) : null),
+        h('td', {}, careText(p.care_done || [])),
         h('td', { class: p.needs_water ? 'text-warning' : '' }, p.needs_water ? 'needs water now'
           : p.water_forecast && p.water_forecast.days !== null ? `water ${waterIn(p.water_forecast)}` : '')))))),
     section('Batteries', h('table', { class: 'table table-sm' },
       h('thead', {}, h('tr', {}, h('th', {}, 'Board'), h('th', { class: 'text-end' }, 'Start'), h('th', { class: 'text-end' }, 'End'),
-        h('th', { class: 'text-end' }, 'Per day'), h('th', {}, 'Firmware'))),
+        h('th', { class: 'text-end' }, 'Per day'), h('th', { class: 'text-end' }, 'Offline'), h('th', {}, 'Firmware'))),
       h('tbody', {}, r.batteries.map((b) => h('tr', {}, h('td', {}, b.name),
         h('td', { class: 'text-end' }, b.battery ? `${b.battery.first} %` : '–'), h('td', { class: 'text-end' }, b.battery ? `${b.battery.last} %` : '–'),
         h('td', { class: 'text-end' }, b.per_day !== null ? `${b.per_day.toFixed(2)} %` : '–'),
+        h('td', { class: `text-end${b.offline_s >= 3600 ? ' text-warning' : ''}` }, duration(b.offline_s || 0)),
         h('td', {}, b.image_hash ? `v${b.image_version} · ${shortHash(b.image_hash)}` : '')))))),
     r.drain_by_image.length ? section('Battery drain by firmware', list(r.drain_by_image.map((g) => h('li', {},
       `${imageLabel(g.image_hash, g.version)}: ${perDay({ per_day: g.median })} over ${g.devices.length} board(s), ${fullLasts(g.days_full)}`)), '')) : null,
@@ -140,6 +164,8 @@ export function renderSummary(r) {
     section('Updates', list(r.updates.map((u) => h('li', {}, `${when(u.started)}: ${u.name} to v${u.image_version}, ${u.result}`)), 'No updates.')),
     section('Network', list(r.parent_changes.map((e) => h('li', {}, `${when(e.time)}: ${e.message}`)),
       `No parent changes${r.network_readings ? ` in ${r.network_readings} network reading(s)` : ' (no network readings in this period)'}.`)),
+    section('Done by', list((r.done_by || []).map((d) => h('li', {}, `${d.by}: ${d.count} thing${d.count === 1 ? '' : 's'}`)),
+      'Nothing done from the app.')),
     h('p', { class: 'small text-body-secondary mt-3 mb-0' }, `Made by the HA-CoAP Fleet Manager on ${when(Date.now() / 1000)}.`));
   document.getElementById('summary-later').disabled = summaryView.weeksBack === 0;
 }
