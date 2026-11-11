@@ -2,7 +2,7 @@
 // settings, with tabs at the bottom; made for a phone first. Everything else is in the advanced
 // view, one link away.
 
-import { ago, api, h, linkMode, linkView, onUsb, pct, powerText, state, svg } from './core.js';
+import { ago, api, busy, h, linkMode, linkView, notify, onUsb, pct, powerText, state, svg } from './core.js';
 import { batteryRing } from './pages.js';
 import { linkMargin, waterIn } from './network.js';
 import { daysText, dismissAlert, dismissAllAlerts, notificationsOn, toggleNotifications } from './dashboard.js';
@@ -10,7 +10,7 @@ import { lineChart } from './charts.js';
 import { devicePath, pingDevice } from './devices.js';
 import { showPumping, startPumping, waitForBoard } from './motion.js';
 import { setTheme } from './themes.js';
-import { refillTank, tankBar, tankText } from './watering.js';
+import { refillTank, tankBar, tankLasts, tankText } from './watering.js';
 import { byWhom } from './timeline.js';
 
 const simple = { route: null, plants: [], plantId: null, fromWall: false, soon: null, openWater: false };
@@ -72,8 +72,71 @@ export function refreshSimple(deviceId) {
 // ------------------------------------------------------------------ the plants
 
 export async function loadPlants() {
-  simple.plants = await api('GET', '/api/wall', undefined, { quiet: true });
+  const [plants, away] = await Promise.all([api('GET', '/api/wall', undefined, { quiet: true }),
+    api('GET', '/api/away', undefined, { quiet: true }).catch(() => null)]);
+  simple.plants = plants;
+  simple.away = away;
   renderPlants();
+}
+
+// ------------------------------------------------------------------ going away
+
+const dayText = (t) => new Date(t * 1000).toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' });
+const awayProblems = (away) => (away && away.until ? away.plants.filter((p) => p.problems.length) : []);
+
+// While away: a line above the plants, to the check in Settings
+function awayBanner() {
+  const away = simple.away;
+  if (!away || !away.until) return null;
+  const count = awayProblems(away).length;
+  return h('a', { class: `plants-banner away-banner${count ? '' : ' fine'}`, href: '#more' }, icon(count ? 'triangle-alert' : 'check'),
+    h('span', {}, h('b', {}, `Away until ${dayText(away.until)}`),
+      count ? `: ${count} plant${count === 1 ? '' : 's'} won't make it on ${count === 1 ? 'its' : 'their'} own` : ': every plant should be fine'),
+    h('span', { 'aria-hidden': 'true' }, '›'));
+}
+
+// Settings' Going away: a date, then what would go wrong before it
+async function renderAway() {
+  const box = document.getElementById('simple-away');
+  if (!box) return;
+  const away = await api('GET', '/api/away', undefined, { quiet: true }).catch(() => null);
+  simple.away = away;
+  const change = !linkView();
+  const tomorrow = new Date(Date.now() + 86400000);
+  const iso = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  const date = h('input', { class: 'form-control form-control-sm w-auto', type: 'date', min: iso(tomorrow), 'aria-label': 'Back on',
+    value: away && away.until ? iso(new Date(away.until * 1000)) : '' });
+  const setAway = async (until, button) => {
+    await busy(button, () => api('PUT', '/api/away', { until }));
+    await renderAway();
+  };
+  const pick = h('form', { class: 'd-flex flex-wrap gap-2 align-items-center away-form' },
+    h('label', { class: 'small' }, 'Back on'), date,
+    h('button', { class: 'btn btn-sm btn-primary', type: 'submit' }, away && away.until ? 'Change' : 'Check the plants'),
+    away && away.until ? h('button', { class: 'btn btn-sm btn-outline-secondary', type: 'button',
+      onclick: (e) => setAway(0, e.currentTarget) }, "I'm back") : null);
+  pick.onsubmit = (event) => {
+    event.preventDefault();
+    if (!date.value) return notify('Choose the day you come back', 'warning');
+    const [y, m, d] = date.value.split('-').map(Number);
+    setAway(new Date(y, m - 1, d, 23, 59).getTime() / 1000, pick.querySelector('[type=submit]'));
+  };
+  if (!away || !away.until) {
+    box.replaceChildren(h('p', { class: 'small text-body-secondary' },
+      "Going away? Say when you're back: the app checks each plant's water, tank and battery will last until then."),
+    change ? pick : h('p', { class: 'small text-body-secondary' }, 'Not away.'));
+    return;
+  }
+  const problems = awayProblems(away);
+  const fine = away.plants.length - problems.length;
+  box.replaceChildren(
+    h('p', {}, h('b', {}, `Away until ${dayText(away.until)}.`), ' ',
+      problems.length ? `${problems.length} plant${problems.length === 1 ? ' needs' : 's need'} something before you go` : 'Every plant should be fine.',
+      problems.length && fine ? `; ${fine} should be fine.` : problems.length ? '.' : ''),
+    problems.length ? h('ul', { class: 'simple-list mb-3' }, problems.map((p) => h('li', { class: 'warn' }, icon('triangle-alert'),
+      h('a', { href: plantHref(p.device_id) }, h('b', {}, title(p)),
+        h('div', { class: 'small text-body-secondary' }, p.problems.map((x) => x.text + (x.when ? `, about ${dayText(x.when)}` : '')).join('; ')))))) : null,
+    change ? pick : null);
 }
 
 function plantNote(p) {
@@ -90,9 +153,9 @@ function renderPlants() {
     return;
   }
   document.getElementById('plant-grid').classList.remove('today');
-  document.getElementById('plants-banner').replaceChildren(...plants.filter((p) => p.needs_water).map((p) =>
+  document.getElementById('plants-banner').replaceChildren(...[awayBanner(), ...plants.filter((p) => p.needs_water).map((p) =>
     h('a', { class: 'plants-banner', href: plantHref(p.device_id) }, icon('droplet'),
-      h('span', {}, h('b', {}, title(p)), ' needs water'), h('span', { 'aria-hidden': 'true' }, '›'))));
+      h('span', {}, h('b', {}, title(p)), ' needs water'), h('span', { 'aria-hidden': 'true' }, '›')))].filter(Boolean));
   document.getElementById('plant-grid').replaceChildren(...(plants.length ? plants.map((p) =>
     h('a', { class: `plant-card${p.needs_water ? ' thirsty' : ''}${p.online ? '' : ' offline'}`, href: plantHref(p.device_id) },
       batteryRing(p, 'plant-ring'),
@@ -118,9 +181,9 @@ export function todayTasks(plants, now = Date.now() / 1000) {
     if (p.watering_missed) {
       tasks.push({ rank: 1, kind: 'refill', icon: 'droplet', plant: p, text: `Check ${name(p)}'s water`,
         note: "its soil didn't rise after its last waterings: is its tank empty, or the tube out of the pot?" });
-    } else if (p.tank && p.tank.low) {
+    } else if (p.tank && (p.tank.low || (has(p.tank.days_left) && p.tank.days_left <= 2))) {
       tasks.push({ rank: 1, kind: 'refill', icon: 'droplet', plant: p, text: `Refill ${name(p)}'s tank`,
-        note: `about ${p.tank.percent} % full, ${p.tank.left_ml} ml left` });
+        note: `about ${p.tank.percent} % full, ${p.tank.left_ml} ml left${tankLasts(p.tank) ? `: ${tankLasts(p.tank)}` : ''}` });
     }
     if (!onUsb(p) && has(p.battery) && p.battery <= 20) {
       tasks.push({ rank: 2, kind: 'charge', icon: 'battery-low', plant: p, text: `Charge ${name(p)}`, note: `battery at ${p.battery} %` });
@@ -138,7 +201,7 @@ export function todayTasks(plants, now = Date.now() / 1000) {
 }
 
 function renderToday(plants) {
-  document.getElementById('plants-banner').replaceChildren();
+  document.getElementById('plants-banner').replaceChildren(...[awayBanner()].filter(Boolean));
   const tasks = todayTasks(plants);
   const view = linkView();
   const action = (task) => {
@@ -362,12 +425,15 @@ function renderSimpleMore() {
         row('The full app', 'Devices, network, updates, settings… In a new tab: sign in there once, it’s remembered',
           h('a', { class: 'btn btn-sm btn-outline-secondary', ...fullApp('#dashboard') }, 'Open')),
         row('Wall display', 'Every plant big, for a spare screen', h('a', { class: 'btn btn-sm btn-outline-secondary', href: '#wall' }, 'Open'))),
+      h('h2', { class: 'simple-h' }, 'Going away'),
+      h('div', { id: 'simple-away' }),
       h('h2', { class: 'simple-h' }, 'Colours'),
       h('div', { class: 'theme-pick' }, themes.map((t) => h('button', {
         class: `btn btn-sm ${t.id === current ? 'btn-primary' : 'btn-outline-secondary'}`, type: 'button', 'aria-pressed': String(t.id === current),
         onclick: () => { setTheme(t.id); renderSimpleMore(); } }, t.name))),
       h('p', { class: 'small text-body-secondary mt-3' }, 'Opened with a dashboard link: the plants only. The rest of the app opens on its ',
         'computer, or after signing in on a network it allows.'));
+    renderAway().catch(() => {});
     return;
   }
   document.getElementById('simple-more').replaceChildren(
@@ -377,6 +443,8 @@ function renderSimpleMore() {
         h('a', { class: 'btn btn-sm btn-outline-secondary', href: '#dashboard' }, 'Advanced view')),
       row('Wall display', 'Every plant big, for a spare screen', h('a', { class: 'btn btn-sm btn-outline-secondary', href: '#wall' }, 'Open')),
       row('Weekly summary', 'To read or print', h('a', { class: 'btn btn-sm btn-outline-secondary', href: '#summary' }, 'Open'))),
+    h('h2', { class: 'simple-h' }, 'Going away'),
+    h('div', { id: 'simple-away' }),
     h('h2', { class: 'simple-h' }, 'Notifications'),
     h('ul', { class: 'simple-list' },
       row('Alerts pop up on this device', notifications ? 'On, in this browser' : 'Off',
@@ -393,4 +461,5 @@ function renderSimpleMore() {
       // Signed in from another network (remote access): the advanced view's sign-out button, here too
       signOut.classList.contains('d-none') ? null : row('Signed in from another network', 'This device stays signed in until you sign it out',
         h('button', { class: 'btn btn-sm btn-outline-secondary', type: 'button', onclick: () => signOut.click() }, 'Sign out'))));
+  renderAway().catch(() => {});
 }

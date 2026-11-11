@@ -186,3 +186,52 @@ async def test_it_waters_a_thirsty_plant(client, services, start_sim):
                               last_seen=time.time(), watering='{"on": true, "from_hour": 0, "to_hour": 24}')
     assert await services.autowater.run_once() == []
     assert "5e6f7a8b" in services.autowater._failed
+
+
+def test_how_long_a_tank_lasts():
+    settings = Settings()
+    now = 100 * 86400
+    device = {"tank_ml": 1000, "pump_ml_s": 10, "added": 0}
+    # 4 runs of 5 s over the last 14 days: 200 ml in 14 days, about 14 ml a day
+    recent = [(now - d * 86400, 5) for d in (12, 9, 5, 2)]
+    tank = fleet.tank_state(device, recent[-2:], settings, recent, now)
+    assert tank["left_ml"] == 900 and tank["per_day_ml"] == 14
+    assert round(tank["days_left"]) == 63
+    # Not known: one run, or a board added under a day ago
+    assert fleet.tank_state(device, [], settings, recent[-1:], now)["days_left"] is None
+    assert fleet.tank_state({**device, "added": now - 3600}, [], settings, [(now - 600, 5), (now - 60, 5)], now)["days_left"] is None
+    # Added 2 days ago: its use counts over those 2 days, not 14
+    assert fleet.water_per_day({**device, "added": now - 2 * 86400}, [(now - 86400, 5), (now - 600, 5)], 10, now) == 50
+
+
+async def test_going_away(services, client):
+    now = time.time()
+    services.inventory.refreshed = True
+    # Waters itself: its tank (500 ml) empties at 100 ml a day: 4 days left
+    services.db.upsert_device("aaaa0001", name="ha-coap-aaaa0001", plant="fern", address="fd11::1", last_seen=now,
+                              soil_moisture=50, water_below=30, tank_ml=500, pump_ml_s=10, tank_filled=now - 86400,
+                              watering='{"on": true}', battery=90)
+    services.db._execute("UPDATE devices SET added = ? WHERE device_id = 'aaaa0001'", (now - 30 * 86400,))
+    for day in range(14):
+        services.db.add_activity("aaaa0001", "pump", "Watered automatically: soil 29 % under 30 % (5 s)", when=now - 86400 * day - 600 - (86400 if day else 0))
+        services.db.add_activity("aaaa0001", "pump", "Watered automatically: soil 29 % under 30 % (5 s)", when=now - 86400 * day - 7200 - (86400 if day else 0))
+    # Watered by hand, dry now; and one that's fine
+    services.db.upsert_device("aaaa0002", name="ha-coap-aaaa0002", plant="cactus", address="fd11::2", last_seen=now,
+                              soil_moisture=10, water_below=30, battery=80)
+    services.db.upsert_device("aaaa0003", name="ha-coap-aaaa0003", plant="moss", address="fd11::3", last_seen=now,
+                              soil_moisture=60, water_below=30, battery=80)
+    assert (await client.get("/api/away")).json() == {"until": 0, "plants": []}           # not away
+    bad = await client.put("/api/away", json={"until": now - 60}, headers=CHANGE)
+    assert bad.status_code == 400
+    response = await client.put("/api/away", json={"until": now + 10 * 86400}, headers=CHANGE)
+    assert response.status_code == 200 and services.settings.away_until == now + 10 * 86400
+    plants = {p["plant"]: p["problems"] for p in response.json()["plants"]}
+    assert [p["kind"] for p in plants["fern"]] == ["tank"] and "runs out" in plants["fern"][0]["text"]
+    assert plants["fern"][0]["when"] < now + 5 * 86400
+    assert [p["kind"] for p in plants["cactus"]] == ["water"] and plants["moss"] == []
+    assert response.json()["plants"][-1]["plant"] == "moss"                                 # the fine ones last
+    # A shorter trip: the tank lasts
+    short = (await client.get(f"/api/away?until={now + 2 * 86400}")).json()
+    assert {p["plant"]: p["problems"] for p in short["plants"]}["fern"] == []
+    # Back
+    assert (await client.put("/api/away", json={"until": 0}, headers=CHANGE)).json()["until"] == 0

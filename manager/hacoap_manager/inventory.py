@@ -85,15 +85,19 @@ class Inventory:
         now = time.time()
         seen = device.get("last_seen")
         online = seen is not None and now - seen < self.settings.online_minutes * 60
-        # Since its tank was refilled (the runs before don't count), else the last 30 days
+        # Since its tank was refilled (the runs before don't count), else the last 30 days; and
+        # those of the last two weeks, for how fast its tank empties
         since = (device.get("tank_filled") or 0) if device.get("tank_ml") else now - 30 * 86400
-        runs = fleet.pump_runs(self.db.activity_kind_since(device["device_id"], "pump", since))
+        recent_since = now - fleet.USAGE_DAYS * 86400
+        recent = fleet.pump_runs(self.db.activity_kind_since(device["device_id"], "pump", min(since, recent_since)))
+        runs = [r for r in recent if r[0] >= since]
         first = runs[-fleet.NO_RISE_RUNS][0] if len(runs) >= fleet.NO_RISE_RUNS else None
         missed = first is not None and fleet.watering_missed(
             self.db.readings(device["device_id"], since=first - 86400), runs, now)
         return {**device, "online": online, "water_target": fleet.water_target(device, self.settings),
                 "needs_water": fleet.needs_water(device, self.settings),
-                "tank": fleet.tank_state(device, runs, self.settings), "watering_missed": missed,
+                "tank": fleet.tank_state(device, runs, self.settings, [r for r in recent if r[0] >= recent_since], now),
+                "watering_missed": missed,
                 "watering_rule": autowater.rule_of(device)}
 
     def devices(self):

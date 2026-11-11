@@ -40,6 +40,7 @@ class Settings:
     keep_backups: int = 7           # automatic daily backups kept
     backup_copy_dir: str = ""       # a folder each daily backup is also copied to (a NAS share, a USB disk), or ''
     home_assistant_url: str = ""    # such as http://homeassistant.local:8123, to import its history
+    away_until: float = 0.0         # away until then (a time): the plants are checked for it (0: not away)
 
     def link_settings(self):
         return LinkSettings(udp_port=self.smp_port, udp_mtu=self.udp_mtu, serial_buffer=self.serial_buffer,

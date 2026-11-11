@@ -1147,6 +1147,8 @@ body.wall-mode .simple-top, body.wall-mode .simple-nav { display: none !importan
   color: var(--t-yellow); text-decoration: none; }
 .plants-banner:hover { color: var(--t-yellow); border-color: var(--t-yellow); }
 .plants-banner span:first-of-type { flex: 1; }
+.plants-banner.away-banner.fine { background: var(--t-surface-2, transparent); border-color: var(--t-border); color: var(--t-text-secondary); }  /* away, and nothing to sort */
+.plants-banner.away-banner.fine:hover { color: var(--t-text); border-color: var(--t-border-strong); }
 .plant-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(10rem, 100%), 1fr)); gap: .75rem; padding-bottom: 1rem; }
 .plant-grid.today { display: block; }
 .plant-grid.today .simple-h:first-child { margin-top: 0; }

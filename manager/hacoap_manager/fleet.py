@@ -226,10 +226,26 @@ def pump_runs(activity):
     return runs
 
 
-def tank_state(device, runs, settings):
+USAGE_DAYS = 14          # the pump runs that tell how fast a tank empties: the last this many days
+
+
+def water_per_day(device, recent_runs, flow, now=None):
+    """How much water its pump moved a day lately (ml), from its runs of the last USAGE_DAYS (or
+    since it was added, when later), or None: fewer than 2 runs, or under a day of them."""
+    now = now or time.time()
+    start = max(now - USAGE_DAYS * DAY, device.get("added") or 0)
+    seconds = [s for t, s in recent_runs if t >= start]
+    days = (now - start) / DAY
+    if len(seconds) < 2 or days < 1:
+        return None
+    return sum(seconds) * flow / days
+
+
+def tank_state(device, runs, settings, recent_runs=None, now=None):
     """Its water tank, from its pump runs since it was refilled: {size_ml, flow_ml_s, filled, runs,
-    used_ml, left_ml, percent, low}, or None when its size isn't set. 'runs': [(time, seconds)]
-    since the refill."""
+    used_ml, left_ml, percent, low, per_day_ml, days_left}, or None when its size isn't set.
+    'runs': [(time, seconds)] since the refill; 'recent_runs': those of the last USAGE_DAYS, for
+    how fast it empties (per_day_ml, days_left: None when not known)."""
     size = device.get("tank_ml")
     if not size:
         return None
@@ -237,8 +253,10 @@ def tank_state(device, runs, settings):
     used = sum(seconds for _, seconds in runs) * flow
     left = max(0.0, size - used)
     percent = round(100 * left / size)
+    per_day = water_per_day(device, recent_runs or [], flow, now)
     return {"size_ml": size, "flow_ml_s": flow, "filled": device.get("tank_filled"), "runs": len(runs),
-            "used_ml": round(used), "left_ml": round(left), "percent": percent, "low": percent <= TANK_LOW}
+            "used_ml": round(used), "left_ml": round(left), "percent": percent, "low": percent <= TANK_LOW,
+            "per_day_ml": round(per_day) if per_day else None, "days_left": left / per_day if per_day else None}
 
 
 def watering_missed(readings, runs, now=None):
@@ -337,12 +355,61 @@ def wall(db, inventory, now=None):
                        "needs_water": device["needs_water"], "battery": device["battery"], "power": device["power"], "online": device["online"],
                        "last_seen": device["last_seen"], "tank": device.get("tank"),
                        "watering_missed": device.get("watering_missed", False),
-                       "waters_itself": bool((device.get("watering_rule") or {}).get("on")) and bool(device["water_target"]),
+                       "waters_itself": waters_itself(device),
                        "water_forecast": water_forecast(readings, device["water_target"], now),
                        "battery_forecast": battery_forecast(readings)})
     soon = lambda p: (p["water_forecast"] or {}).get("days")  # noqa: E731
     plants.sort(key=lambda p: (not p["needs_water"], soon(p) is None, soon(p) or 0, p["name"].lower()))
     return plants
+
+
+def waters_itself(device):
+    return bool((device.get("watering_rule") or {}).get("on")) and bool(device.get("water_target"))
+
+
+def away_check(db, inventory, until, now=None):
+    """What would go wrong before 'until' (a time), for a trip: every plant with its problems,
+    [{device_id, name, board, plant, location, problems: [{kind, text, when}]}]. 'when': when it
+    happens (None: now, or not known). The kinds: offline, water (no one to water it), tank (it
+    waters itself: its tank runs out), battery."""
+    now = now or time.time()
+    result = []
+    for device in inventory.devices():
+        readings = db.readings(device["device_id"], since=now - FORECAST_WINDOW_DAYS * DAY)
+        problems = []
+
+        def add(kind, text, when=None):
+            problems.append({"kind": kind, "text": text, "when": when})
+
+        if not device["online"]:
+            add("offline", "it isn't answering now, so the app can't look after it")
+        tank = device.get("tank")
+        if waters_itself(device):
+            if tank is None:
+                add("tank", "it waters itself, but its tank isn't tracked: check it holds enough")
+            elif tank["days_left"] is not None and now + tank["days_left"] * DAY < until:
+                add("tank", f"its tank runs out ({tank['left_ml']} ml left, it uses about {tank['per_day_ml']} ml a day)",
+                    now + tank["days_left"] * DAY)
+            elif tank["days_left"] is None and tank["low"]:
+                add("tank", f"its tank is low ({tank['left_ml']} ml left)")
+            elif tank["days_left"] is None:
+                add("tank", "how fast its tank empties isn't known yet: check it holds enough")
+        elif device["needs_water"]:
+            add("water", "it needs water now, and nothing waters it")
+        else:
+            forecast = water_forecast(readings, device["water_target"], now)
+            if forecast and forecast["days"] is not None and now + forecast["days"] * DAY < until:
+                add("water", "it will need water, and nothing waters it", now + forecast["days"] * DAY)
+        if not on_usb(device):
+            battery = battery_forecast(readings)
+            if device["battery"] is not None and device["battery"] <= LOW_BATTERY:
+                add("battery", f"its battery is low ({device['battery']} %)")
+            elif battery and now + battery["days_left"] * DAY < until:
+                add("battery", "its battery runs out", now + battery["days_left"] * DAY)
+        result.append({"device_id": device["device_id"], **names(device), "plant": device["plant"],
+                       "location": device["location"], "problems": problems})
+    result.sort(key=lambda p: (not p["problems"], p["name"].lower()))
+    return result
 
 
 # Restarts that are a problem (application/src/diag.c: the watchdog, a CPU lockup, a crash)

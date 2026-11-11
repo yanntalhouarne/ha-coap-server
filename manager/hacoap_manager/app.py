@@ -208,7 +208,8 @@ def _actor(services, access, request, link):
 # backups, the border router...
 LINK_ALLOWED = [
     (("GET", "HEAD"), re.compile(r"^/$")),
-    (("GET", "HEAD"), re.compile(r"^/api/(devices|wall|alerts|status|activity-feed|images|updates|setup)$")),
+    (("GET", "HEAD"), re.compile(r"^/api/(devices|wall|alerts|status|activity-feed|images|updates|setup|away)$")),
+    (("PUT",), re.compile(r"^/api/away$")),  # going away (or back): it only sets the date the plants are checked for
     (("GET", "HEAD"), re.compile(r"^/api/devices/[^/]+/(details|photo)$")),
     # Read-only: the network's map (mesh, tree, floor plan) and its history, and the charts
     (("GET", "HEAD"), re.compile(r"^/api/(network|network/history|network/floorplan|graph|readings\.csv)$")),
@@ -642,6 +643,28 @@ def create_app(services, background_tasks=True, on_quit=None, port=None):
     @app.get("/api/wall")
     async def wall():
         return await asyncio.to_thread(fleet.wall, s.db, s.inventory)
+
+    @app.get("/api/away")
+    async def away(until: float = 0):
+        """What would go wrong while away: until 'until', else the away date set (none: nothing)."""
+        until = until or s.settings.away_until
+        if until <= time.time():
+            return {"until": 0, "plants": []}
+        return {"until": until, "plants": await asyncio.to_thread(fleet.away_check, s.db, s.inventory, until)}
+
+    @app.put("/api/away")
+    async def set_away(body: dict):
+        """Away until a time (0 or none: back). The plants are checked for it."""
+        try:
+            until = float(body.get("until") or 0)
+        except (TypeError, ValueError):
+            raise _bad_request("until: a time") from None
+        if until and not time.time() < until < time.time() + 366 * DAY_S:
+            raise _bad_request("Away until a day in the coming year")
+        s.settings.update({"away_until": until})
+        config.save_settings(s.data_dir, s.settings)
+        s.events.publish("devices")  # the plants' pages show it
+        return await away()
 
     @app.get("/api/summary")
     async def weekly_summary(days: int = 7, end: float = 0):

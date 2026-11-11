@@ -4,9 +4,17 @@
 import { api, busy, h, notify, state } from './core.js';
 import { devicePath } from './devices.js';
 
-// "about 60 % full · 1200 ml left"
+// "about 60 % full · 1200 ml left · lasts about 9 days"
 export function tankText(tank) {
-  return `about ${tank.percent} % full · ${tank.left_ml} ml left`;
+  return `about ${tank.percent} % full · ${tank.left_ml} ml left${tankLasts(tank) ? ` · ${tankLasts(tank)}` : ''}`;
+}
+
+// How long it lasts at the pace its pump took lately: "lasts about 9 days", or '' when not known
+export function tankLasts(tank) {
+  if (tank.days_left === null || tank.days_left === undefined) return '';
+  if (tank.days_left < 1) return 'runs out within a day';
+  const days = Math.round(tank.days_left);
+  return `lasts about ${days} day${days === 1 ? '' : 's'}`;
 }
 
 // Its water tank, as a bar, for the plant page and this card
@@ -84,7 +92,8 @@ function tankLevel(device) {
     h('div', { class: 'd-flex align-items-baseline gap-2 flex-wrap' },
       h('b', {}, `Water tank: ${tankText(tank)}`),
       h('span', { class: 'small text-body-secondary' },
-        `${tank.runs} pump run${tank.runs === 1 ? '' : 's'}${since ? ` since it was refilled, ${since}` : ''}`)),
+        `${tank.runs} pump run${tank.runs === 1 ? '' : 's'}${since ? ` since it was refilled, ${since}` : ''}` +
+        (tank.per_day_ml ? ` · it uses about ${tank.per_day_ml} ml a day lately` : ''))),
     tankBar(tank),
     device.watering_missed ? h('div', { class: 'small text-warning mb-1' },
       'Its soil didn\'t rise after its last waterings: is the tank empty, or the tube out of the pot?') : null,
