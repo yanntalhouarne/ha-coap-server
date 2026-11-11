@@ -1,6 +1,7 @@
 """Alerts: a device that stopped answering, a low battery, a plant that needs water, a failed
 update, a board that crashed (or was restarted by its watchdog), the border router down (or its
-radio unplugged, or off the Thread network), and every board silent at once. They're raised when
+radio unplugged, or off the Thread network), every board silent at once, a board whose link
+stays weak for hours, and one that keeps changing routers. They're raised when
 the condition starts and cleared when it ends (or dismissed), and each new one is sent to the
 page, which can show it as a browser notification.
 
@@ -17,6 +18,27 @@ NAME = "{name}"
 
 # Alerts about something that happened, rather than a state: they stay until dismissed.
 EVENTS = ("update", "restart")
+
+WEAK_HOURS = 3        # a board's link weak in every network reading of the last this many hours: an alert...
+WEAK_READINGS = 3     # ...from this many readings
+SWITCHES = 3          # a board that changed routers this many times in the last day: an alert
+SWITCH_HOURS = 24
+
+
+def weak_link(samples):
+    """Whether every one of these link samples (WEAK_READINGS or more) is weak: a link margin
+    under fleet.WEAK_MARGIN_DB, else (none measured) a link quality of 1 or less. Samples with
+    neither don't tell: not weak."""
+    if len(samples) < WEAK_READINGS:
+        return False
+    for sample in samples:
+        margin, quality = sample.get("link_margin"), sample.get("link_quality")
+        if margin is not None:
+            if margin >= fleet.WEAK_MARGIN_DB:
+                return False
+        elif quality is None or quality > 1:
+            return False
+    return True
 
 
 class AlertService:
@@ -61,8 +83,21 @@ class AlertService:
         if self.inventory.refreshed and len(known) >= 2 and not any(d["online"] for d in known):
             found["network:silent"] = ("network", "", f"None of the {len(known)} boards answer: the border router "
                                                       f"or the Thread network is probably down")
+        now = time.time()
+        switches = {}
+        for event in self.db.network_events_between(now - SWITCH_HOURS * 3600, now + 1):
+            if "parent changed" in event["message"]:
+                switches[event["device_id"]] = switches.get(event["device_id"], 0) + 1
         for device in devices:
             device_id = device["device_id"]
+            if weak_link(self.db.link_samples(device_id, now - WEAK_HOURS * 3600)):
+                found[f"weak-link:{device_id}"] = ("network", device_id,
+                                                   f"{NAME}'s link to its router has been weak for {WEAK_HOURS} hours: "
+                                                   f"move it closer to a router, or add a router between them")
+            if switches.get(device_id, 0) >= SWITCHES:
+                found[f"switching:{device_id}"] = ("network", device_id,
+                                                   f"{NAME} changed routers {switches[device_id]} times in a day: it's "
+                                                   f"probably on the edge between two (it costs battery)")
             # Only once the app has asked every device: at start, the last answers are old.
             if self.inventory.refreshed and not device["online"] and device["last_seen"] is not None:
                 found[f"offline:{device_id}"] = ("offline", device_id, f"{NAME} stopped answering")

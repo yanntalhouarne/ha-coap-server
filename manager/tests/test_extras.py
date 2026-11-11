@@ -249,6 +249,34 @@ async def test_backups_copied_elsewhere(client, services, tmp_path):
     assert (await client.get("/api/backups/copy")).json()["name"] == state["name"]
 
 
+def test_weak_links_and_boards_that_keep_switching(services):
+    from hacoap_manager.alerts import weak_link
+    weak = {"link_margin": 6, "link_quality": 1}
+    assert weak_link([weak] * 3) and not weak_link([weak] * 2)                     # 3 readings at least
+    assert not weak_link([weak, weak, {"link_margin": 25, "link_quality": 3}])        # one good one: not weak
+    assert weak_link([{"link_margin": None, "link_quality": 1}] * 3)                  # only its quality: 1 is weak
+    assert not weak_link([{"link_margin": None, "link_quality": None}] * 3)           # nothing measured: can't tell
+    now = time.time()
+    services.db.upsert_device("1a2b3c4d", name="ha-coap-1a2b3c4d", plant="basil", address="fd11::1", last_seen=now)
+    services.db.upsert_device("5e6f7a8b", name="ha-coap-5e6f7a8b", address="fd11::2", last_seen=now)
+    for minutes in (150, 100, 50, 5):
+        services.db.add_link_sample("1a2b3c4d", "0x4000", link_margin=5, average_rssi=-92, link_quality=1,
+                                    when=now - minutes * 60)
+        services.db.add_link_sample("5e6f7a8b", "0x4000", link_margin=30, average_rssi=-60, link_quality=3,
+                                    when=now - minutes * 60)
+    for _ in range(3):
+        services.db.add_network_event("5e6f7a8b", "ha-coap-5e6f7a8b: parent changed from 0x4000 to 0xf800")
+    services.db.add_network_event("1a2b3c4d", "ha-coap-1a2b3c4d: parent changed from 0x4000 to 0xf800")
+    raised = {a["key"]: a["message"] for a in services.alerts.scan()}
+    assert set(raised) == {"weak-link:1a2b3c4d", "switching:5e6f7a8b"}
+    assert raised["weak-link:1a2b3c4d"].startswith("basil's link to its router has been weak for 3 hours")
+    assert raised["switching:5e6f7a8b"].startswith("ha-coap-5e6f7a8b changed routers 3 times in a day")
+    # A good reading since: the link alert clears
+    services.db.add_link_sample("1a2b3c4d", "0x4000", link_margin=22, link_quality=3, when=now)
+    services.alerts.scan()
+    assert {a["key"] for a in services.db.open_alerts()} == {"switching:5e6f7a8b"}
+
+
 def test_alerts_dismissed_before_the_upgrade_dont_stay_quiet(tmp_path):
     import sqlite3
     from hacoap_manager.db import Database
