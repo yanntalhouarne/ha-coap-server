@@ -276,6 +276,79 @@ def watering_missed(readings, runs, now=None):
     return True
 
 
+REPORT_DAYS = 30        # the watering report looks at this many days
+RECENT_DAYS = 7         # its drying "now": the drying spells ending within this many days (before: the rest)
+FASTER = 1.5            # drying this many times faster than before (and FASTER_BY %/day more) is worth saying
+FASTER_BY = 2
+WEAK_RUNS = 3           # pump runs measured, at least, before calling them weak
+
+
+def _source(message):
+    if message.startswith("Watered automatically"):
+        return "automatic"
+    if message.startswith("Pump run with its button"):
+        return "button"
+    return "app"
+
+
+def watering_report(readings, pump_rows, now=None, days=REPORT_DAYS):
+    """Does watering work? Over the last 'days': {days, waterings: {app, automatic, button, hand},
+    rise: {median (% of soil a pump run raises it), runs (measured), seconds (their usual run
+    time)} or None, drying: {now, before} (% a day, None when not known), flags: [{kind, text}]}.
+    A run's rise: from the reading before it to the highest within EFFECT_WINDOW_S (or until the
+    next watering), from under WET %. Drying: each spell between waterings of 3 readings over 6
+    hours or more. Flags: 'weak' (its runs barely raise the soil), 'faster' (it dries much faster
+    than it did)."""
+    now = now or time.time()
+    start = now - days * DAY
+    points = [p for p in _soil_points(readings) if p[0] >= start]
+    runs = [(row["time"], int(SECONDS.search(row["message"]).group(1)), _source(row["message"]))
+            for row in pump_rows if row["time"] >= start and row.get("kind", "pump") == "pump" and SECONDS.search(row["message"])]
+    run_times = sorted(t for t, _, _ in runs)
+    # By hand: the soil jumping up with no pump run in the hours before
+    hand = [t for (_, a), (t, b) in zip(points, points[1:])
+            if b > a + WATERING_RISE and not any(0 <= t - r <= EFFECT_WINDOW_S for r in run_times)]
+    counts = {"app": 0, "automatic": 0, "button": 0, "hand": len(hand)}
+    for _, _, source in runs:
+        counts[source] += 1
+    # What each run did
+    waterings = sorted(run_times + hand)
+    rises, seconds = [], []
+    for t, run_seconds, _ in runs:
+        following = [w for w in waterings if w > t]
+        end = min(t + EFFECT_WINDOW_S, following[0]) if following else t + EFFECT_WINDOW_S
+        before = [v for pt, v in points if pt <= t]
+        after = [v for pt, v in points if t < pt <= end]
+        if before and after and before[-1] < WET:
+            rises.append(max(after) - before[-1])
+            seconds.append(run_seconds)
+    rise = None
+    if rises:
+        ordered = sorted(rises)
+        rise = {"median": ordered[len(ordered) // 2], "runs": len(rises), "seconds": max(set(seconds), key=seconds.count)}
+    # How fast it dries, in each spell between waterings
+    spells, edges = [], [start] + waterings + [now + 1]
+    for a, b in zip(edges, edges[1:]):
+        spell = [(t, v) for t, v in points if a < t < b]
+        if spell:  # from its wettest: the water reaches the sensor over a while
+            spell = spell[max(range(len(spell)), key=lambda i: (spell[i][1], -i)):]
+        if len(spell) >= 3 and spell[-1][0] - spell[0][0] >= 6 * 3600:
+            slope = _slope(spell)
+            if slope is not None:
+                spells.append((spell[-1][0], -slope * DAY))
+    median = lambda values: sorted(values)[len(values) // 2] if values else None  # noqa: E731
+    recent = median([rate for end, rate in spells if end >= now - RECENT_DAYS * DAY])
+    before = median([rate for end, rate in spells if end < now - RECENT_DAYS * DAY])
+    flags = []
+    if rise and rise["runs"] >= WEAK_RUNS and rise["median"] < NO_RISE:
+        flags.append({"kind": "weak", "text": "Its pump runs, but barely raises the soil: is the tube blocked or out of "
+                                              "the pot, the tank empty, or the sensor out of the soil?"})
+    if recent is not None and before is not None and before > 0 and recent >= FASTER * before and recent - before >= FASTER_BY:
+        flags.append({"kind": "faster", "text": f"It dries faster than it did ({recent:.1f} % a day, was {before:.1f}): "
+                                                "warmer weather, a plant that grew, or roots that fill the pot?"})
+    return {"days": days, "waterings": counts, "rise": rise, "drying": {"now": recent, "before": before}, "flags": flags}
+
+
 def image_status(device, release):
     """'current', 'outdated' or 'unknown' (slots never read), compared with the release image."""
     if release is None:

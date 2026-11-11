@@ -1248,6 +1248,8 @@ body.wall-mode .simple-top, body.wall-mode .simple-nav { display: none !importan
 .care-form { display: flex; flex-direction: column; gap: .5rem; margin-top: .6rem; }
 .care-every { width: 4.5rem; }
 .today-list .today-care .icon { color: var(--t-green, var(--t-cyan)); }
+.watering-report { font-size: .85rem; display: flex; flex-direction: column; gap: .2rem; }
+.report-flag { color: var(--t-yellow); }  /* what looks wrong with its watering */
 .link-view .link-action { display: none !important; }
 .rule-number { width: 4.5rem; }
 .rule-line { line-height: 2.4; }

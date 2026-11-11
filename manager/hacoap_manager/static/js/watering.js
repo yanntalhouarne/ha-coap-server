@@ -1,7 +1,7 @@
 // A board's watering, on its page (the Watering card): its water tank (its size, its pump's flow,
 // how full it is, "I refilled it") and its automatic watering.
 
-import { api, busy, h, notify, state } from './core.js';
+import { api, busy, h, notify, state, svg } from './core.js';
 import { devicePath } from './devices.js';
 
 // "about 60 % full · 1200 ml left · lasts about 9 days"
@@ -29,13 +29,36 @@ export async function refillTank(device, button) {
   notify('Its tank counts as full again', 'success', 2500);
 }
 
-// What its rule does now, in words (from its details): kept for the live updates in between
-const explained = { id: null, why: '' };
+// Does watering work? Its waterings of the last 30 days (by whom), how much a pump run raises
+// its soil, how fast it dries now and before, and what looks wrong. null when there's nothing to say.
+export function wateringReport(report) {
+  if (!report) return null;
+  const w = report.waterings;
+  const total = w.app + w.automatic + w.button + w.hand;
+  const ways = [[w.automatic, 'automatic'], [w.app, 'from the app'], [w.button, 'with its button'], [w.hand, 'by hand']]
+    .filter(([n]) => n).map(([n, text]) => `${n} ${text}`);
+  const rate = (value) => `${value.toFixed(1)} % a day`;
+  const lines = [
+    total ? `${total} watering${total === 1 ? '' : 's'} in ${report.days} days: ${ways.join(', ')}.` : null,
+    report.rise ? `A ${report.rise.seconds} s pump run raises its soil about ${Math.round(report.rise.median)} % ` +
+      `(${report.rise.runs} run${report.rise.runs === 1 ? '' : 's'} measured).` : null,
+    report.drying.now !== null ? `It dries about ${rate(report.drying.now)}` +
+      (report.drying.before !== null && Math.abs(report.drying.now - report.drying.before) >= 0.5
+        ? ` (${rate(report.drying.before)} before).` : '.') : null,
+  ].filter(Boolean);
+  if (!lines.length && !report.flags.length) return null;
+  const warn = svg('svg', { class: 'icon', 'aria-hidden': 'true' }, svg('use', { href: '#i-triangle-alert' }));
+  return h('div', { class: 'watering-report' }, lines.map((line) => h('div', {}, line)),
+    report.flags.map((flag) => h('div', { class: 'report-flag' }, warn.cloneNode(true), ' ', flag.text)));
+}
 
-export function renderWatering(device, autowater) {
+// What its rule does now, in words (from its details): kept for the live updates in between
+const explained = { id: null, why: '', report: null };
+
+export function renderWatering(device, autowater, report) {
   const box = document.getElementById('device-watering');
   if (!box) return;
-  if (autowater) Object.assign(explained, { id: device.device_id, why: autowater.why });
+  if (autowater) Object.assign(explained, { id: device.device_id, why: autowater.why, report: report || null });
   // A live update while one of its forms is being filled in: only the tank's level
   if (box.dataset.id === device.device_id && box.contains(document.activeElement) && document.activeElement.matches('input, select')) {
     const level = box.querySelector('.tank-level');
@@ -43,7 +66,9 @@ export function renderWatering(device, autowater) {
     return;
   }
   box.dataset.id = device.device_id;
-  box.replaceChildren(tankLevel(device), tankForm(device), h('hr'), ruleForm(device));
+  const summary = explained.id === device.device_id ? wateringReport(explained.report) : null;
+  box.replaceChildren(...[summary ? h('div', { class: 'mb-3' }, h('div', { class: 'fw-bold mb-1' }, 'Last 30 days'), summary) : null,
+    tankLevel(device), tankForm(device), h('hr'), ruleForm(device)].filter(Boolean));
 }
 
 // Its automatic watering: when its soil is under its target, within limits

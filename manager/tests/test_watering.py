@@ -235,3 +235,47 @@ async def test_going_away(services, client):
     assert {p["plant"]: p["problems"] for p in short["plants"]}["fern"] == []
     # Back
     assert (await client.put("/api/away", json={"until": 0}, headers=CHANGE)).json()["until"] == 0
+
+
+def soil_series(start, end, level, per_day, waterings=(), rise=0, step=1800):
+    """Readings every 'step' s: drying 'per_day' % a day from 'level', back up by 'rise' an hour
+    after each watering time."""
+    readings, soil, t = [], level, start
+    pending = sorted(waterings)
+    while t < end:
+        if pending and t >= pending[0] + 3600:
+            soil += rise
+            pending.pop(0)
+        readings.append({"time": t, "soil_moisture": round(soil)})
+        soil -= per_day * step / 86400
+        t += step
+    return readings
+
+
+def test_watering_report():
+    now = 40 * 86400
+    start = now - 30 * 86400
+    # Watered every 4 days (automatic, then from the app, by its button), each raising the soil 15 %
+    times = [start + d * 86400 for d in range(2, 30, 4)]
+    rows = [{"time": t, "kind": "pump", "message": message} for t, message in zip(times, [
+        "Watered automatically: soil 29 % under 30 % (5 s)", "Pump started from the app (5 s)",
+        "Pump run with its button (6 s)", "Watered automatically: soil 29 % under 30 % (5 s)",
+        "Watered automatically: soil 29 % under 30 % (5 s)", "Pump started from the app (5 s)",
+        "Watered automatically: soil 29 % under 30 % (5 s)"])]
+    readings = soil_series(start, now, 50, 3, times, rise=15)
+    report = fleet.watering_report(readings, rows, now)
+    assert report["waterings"] == {"app": 2, "automatic": 4, "button": 1, "hand": 0}
+    assert report["rise"]["runs"] == 7 and 14 <= report["rise"]["median"] <= 16 and report["rise"]["seconds"] == 5
+    assert 2.5 <= report["drying"]["now"] <= 3.5 and 2.5 <= report["drying"]["before"] <= 3.5
+    assert report["flags"] == []
+    # Its runs stopped raising the soil (an empty tank): weak
+    flat = soil_series(start, now, 50, 3, times, rise=0)
+    assert [f["kind"] for f in fleet.watering_report(flat, rows, now)["flags"]] == ["weak"]
+    # Drying twice as fast this last week: said; a watering by hand counted as one
+    fast = [r for r in readings if r["time"] < now - 7 * 86400] + \
+        soil_series(now - 7 * 86400, now, 60, 8, [now - 4 * 86400], rise=20)
+    report = fleet.watering_report(fast, [r for r in rows if r["time"] < now - 7 * 86400], now)
+    assert [f["kind"] for f in report["flags"]] == ["faster"] and report["waterings"]["hand"] >= 1
+    # Nothing to tell
+    assert fleet.watering_report([], [], now) == {"days": 30, "waterings": {"app": 0, "automatic": 0, "button": 0, "hand": 0},
+                                                  "rise": None, "drying": {"now": None, "before": None}, "flags": []}

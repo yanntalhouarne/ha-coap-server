@@ -606,6 +606,9 @@ def create_app(services, background_tasks=True, on_quit=None, port=None):
                 "readings": s.db.readings(device_id, since), "links": s.db.link_samples(device_id, since),
                 "updates": s.db.updates(device_id, limit=50), "network_events": s.db.network_events_for(device_id),
                 "activity": s.db.activity(device_id, since), "care": s.db.care_tasks(device_id),
+                "watering_report": fleet.watering_report(
+                    s.db.readings(device_id, time.time() - fleet.REPORT_DAYS * 86400),
+                    s.db.activity_kind_since(device_id, "pump", time.time() - fleet.REPORT_DAYS * 86400)),
                 "restarts": s.db.recent_activity(device_id, "restart", 20),
                 "drain": await asyncio.to_thread(fleet.battery_drain, s.db, device)}
 

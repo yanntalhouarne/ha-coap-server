@@ -10,7 +10,7 @@ import { lineChart } from './charts.js';
 import { devicePath, pingDevice } from './devices.js';
 import { showPumping, startPumping, waitForBoard } from './motion.js';
 import { setTheme } from './themes.js';
-import { refillTank, tankBar, tankLasts, tankText } from './watering.js';
+import { refillTank, tankBar, tankLasts, tankText, wateringReport } from './watering.js';
 import { byWhom } from './timeline.js';
 import { careDone, careSection, dueText, everyText, isDue } from './care.js';
 
@@ -417,6 +417,7 @@ function renderPlant(details) {
     device.watering_missed ? h('p', { class: 'tank-missed' }, icon('triangle-alert'),
       " Its soil didn't rise after its last waterings: is its tank empty, or the tube out of the pot?") : null,
     careSection(device, details.care || [], () => loadPlant(id, simple.fromWall).catch(() => {})),
+    reportCard(details.watering_report),
     h('section', { class: 'plant-facts' },
       fact('battery', pct(device.battery), onUsb(device) ? powerText(device) : has(device.battery) ? daysText(health.battery_forecast) : '', low ? 'bad' : ''),
       fact('air', has(device.temperature) ? `${device.temperature} °C` : '–', has(device.air_humidity) ? `${device.air_humidity} % humid` : ''),
@@ -430,6 +431,12 @@ function renderPlant(details) {
     simple.openWater = false;
     toggleWaterMenu(true);
   }
+}
+
+// Its waterings over the last 30 days, and whether they work
+function reportCard(report) {
+  const body = wateringReport(report);
+  return body ? h('section', { class: 'care-card report-card' }, h('div', { class: 'care-head' }, h('span', {}, 'watering, last 30 days')), body) : null;
 }
 
 // The plant's name (its plant field), from its page

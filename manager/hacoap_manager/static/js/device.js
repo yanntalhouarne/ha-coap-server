@@ -49,7 +49,7 @@ export async function loadDevicePage(id) {
     document.getElementById('device-board-settings').dataset.id = id;
   }
   renderDeviceForm(details.device);
-  renderWatering(details.device, details.autowater);
+  renderWatering(details.device, details.autowater, details.watering_report);
   renderDeviceCharts(details);
   loadDeviceTimeline(id).catch(() => {});
 }
