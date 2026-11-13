@@ -25,7 +25,7 @@ from fastapi.staticfiles import StaticFiles
 import re
 
 from . import (__version__, autostart, backup, coap, config, demo, discovery, feed, fleet, homeassistant, housekeeping,
-               kconfig, mcuboot, naming, otctl, remote, report, serial_ports, signing, summary, swd)
+               kconfig, keybackup, mcuboot, naming, otctl, remote, report, serial_ports, signing, summary, swd)
 from .alerts import AlertService
 from .autowater import AutoWatering, RuleError, checked_rule, rule_of
 from .autowater import watch as autowater_watch
@@ -1370,6 +1370,48 @@ def create_app(services, background_tasks=True, on_quit=None, port=None):
         name = f"hacoap-manager-backup-{time.strftime('%Y%m%d-%H%M')}.zip"
         return Response(data, media_type="application/zip",
                         headers={"Content-Disposition": f'attachment; filename="{name}"'})
+
+    # Your private signing key, encrypted with a passphrase, in the backups (keybackup.py)
+
+    def _key_error(exc):
+        return _bad_request(str(exc))
+
+    @app.get("/api/signing-key/backup")
+    async def signing_key_backup():
+        return await asyncio.to_thread(keybackup.status, s.repository, s.data_dir)
+
+    @app.post("/api/signing-key/backup")
+    async def save_signing_key_backup(body: dict):
+        """Encrypts your key with the passphrase into the backups (the passphrase isn't kept)."""
+        if body.get("passphrase") != body.get("again"):
+            raise _bad_request("The two passphrases differ")
+        try:
+            result = await asyncio.to_thread(keybackup.save, s.repository, s.data_dir, str(body.get("passphrase") or ""))
+        except keybackup.KeyBackupError as exc:
+            raise _key_error(exc)
+        await asyncio.to_thread(backup.auto_backup, s.data_dir, s.db, s.settings, min_age_hours=0)  # in a backup now
+        return result
+
+    @app.delete("/api/signing-key/backup")
+    async def remove_signing_key_backup():
+        keybackup.remove(s.data_dir)
+        return await asyncio.to_thread(keybackup.status, s.repository, s.data_dir)
+
+    @app.get("/api/signing-key/backup/file")
+    async def signing_key_backup_file():
+        path = s.data_dir / keybackup.FILE
+        if not path.is_file():
+            raise HTTPException(404, "No encrypted signing key yet")
+        return Response(path.read_bytes(), media_type="application/json",
+                        headers={"Content-Disposition": f'attachment; filename="hacoap-{keybackup.FILE}"'})
+
+    @app.post("/api/signing-key/restore")
+    async def restore_signing_key(body: dict):
+        """Puts your key back from its encrypted copy (after restoring a backup on a new computer)."""
+        try:
+            return await asyncio.to_thread(keybackup.restore, s.repository, s.data_dir, str(body.get("passphrase") or ""))
+        except keybackup.KeyBackupError as exc:
+            raise _key_error(exc)
 
     @app.get("/api/backups")
     async def saved_backups():

@@ -1174,6 +1174,14 @@
               <button class="btn btn-sm btn-outline-secondary" id="backup-copy-now" type="button">Copy now</button>
               <span class="small" id="backup-copy-state"></span>
             </div>
+            <h6 class="mt-3">Your signing key</h6>
+            <p class="small text-body-secondary mb-1">Boards whose bootloader was made with your key only take updates
+              signed with it: if every copy of the key were lost, each board would need flashing over SWD again. Keep a
+              copy in the backups, encrypted with a passphrase you keep in your password manager (it isn't stored
+              here, and can't be recovered). A backup restored on another computer then brings the key back with
+              <b>Put the key back</b>; without the app, <code>python -m hacoap_manager.keybackup &lt;backup.zip&gt;
+              &lt;key.pem&gt;</code> does it.</p>
+            <div class="small mb-3" id="signing-key-backup"></div>
             <h6 class="mt-3">Device list</h6>
             <p class="small text-body-secondary">A spreadsheet (CSV) of the devices. Importing one adds or updates devices
               by their device ID: name, address and notes; the rest comes from the devices.</p>

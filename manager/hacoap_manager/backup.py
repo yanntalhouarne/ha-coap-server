@@ -2,8 +2,9 @@
 
 A backup holds the database (devices, images list, update history, build profiles and
 builds), the images themselves, the build profiles' .conf files, the plant photos, the
-public half of the signing key (never the private key), the settings, and the border router's
-settings with its Thread network's (the network key included: keep backups private). Restoring replaces
+public half of the signing key (the private key only encrypted with your passphrase, when you
+chose one: keybackup.py), the settings, and the border router's settings with its Thread
+network's (the network key included: keep backups private). Restoring replaces
 all of it, after saving the current data as a backup first.
 """
 
@@ -20,7 +21,7 @@ import time
 import zipfile
 from pathlib import Path
 
-from . import __version__, config
+from . import __version__, config, keybackup
 
 APP_NAME = "hacoap-manager"
 AUTO_PREFIX = "auto-"
@@ -61,6 +62,8 @@ def create_backup(data_dir, db, settings):
                 archive.write(data_dir / PUBLIC_KEY, PUBLIC_KEY)
             if (data_dir / BORDER_ROUTER).is_file():
                 archive.write(data_dir / BORDER_ROUTER, BORDER_ROUTER)
+            if (data_dir / keybackup.FILE).is_file():
+                archive.write(data_dir / keybackup.FILE, keybackup.FILE)  # encrypted: the passphrase opens it
             for folder in ("images", "builds", "photos"):
                 for path in sorted((data_dir / folder).glob("*")):
                     if path.is_file():
@@ -113,6 +116,13 @@ def restore_backup(data, data_dir, db, settings):
 
     if PUBLIC_KEY in names:
         (data_dir / PUBLIC_KEY).write_bytes(archive.read(PUBLIC_KEY))
+    if keybackup.FILE in names:
+        try:
+            keybackup.read(archive.read(keybackup.FILE))
+        except keybackup.KeyBackupError:
+            pass  # damaged: the one here (if any) stays
+        else:
+            (data_dir / keybackup.FILE).write_bytes(archive.read(keybackup.FILE))
     if BORDER_ROUTER in names:
         try:
             json.loads(archive.read(BORDER_ROUTER))
