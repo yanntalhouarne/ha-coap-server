@@ -3,7 +3,7 @@
 // radios do. Nothing here asks a battery board for anything: it draws what's already said, or
 // what mains-powered devices (the routers, the border router) report.
 
-import { api, h, svg } from './core.js';
+import { api, closeButton, h, svg } from './core.js';
 import { currentRoute } from './tabs.js';
 import { calm, linkKey, linkMargin, meshTree, net, nodeLabel, redrawNetwork, renderHistoryLabel, selectNode, shownTopology,
   showLatestNetwork } from './network.js';
@@ -181,7 +181,7 @@ function showCaption(entry, lines, index, total) {
     wrap.append(box);
   }
   const kept = (replay.lines = [...lines.map((l) => ({ ...l, at: entry.time })), ...(replay.lines || [])].slice(0, 4));
-  box.replaceChildren(
+  box.replaceChildren(closeButton(stopReplay, 'Stop the replay'),
     h('div', { class: 'replay-time' }, new Date(entry.time * 1000).toLocaleString([], { weekday: 'short', hour: '2-digit', minute: '2-digit' })),
     h('div', { class: 'replay-bar' }, h('i', { style: `width:${Math.round(((index + 1) / total) * 100)}%` })),
     ...(kept.length ? kept.map((l) => h('div', { class: `replay-line ${l.tone}` }, l.text))

@@ -49,6 +49,11 @@ export function h(tag, attrs = {}, ...children) {
   return el;
 }
 
+// The × in the corner of a box floating over a page (the what-if note, the live log, …)
+export function closeButton(onclick, label = 'Close') {
+  return h('button', { type: 'button', class: 'btn-close panel-close', 'aria-label': label, title: label, onclick });
+}
+
 export async function api(method, path, body, options = {}) {
   const init = { method, headers: {}, keepalive: !!options.keepalive };
   if (method !== 'GET') init.headers['X-HACoap'] = '1';

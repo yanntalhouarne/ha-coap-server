@@ -3,7 +3,7 @@
 // signal over the week, boards gliding to their new router when they move, and flying to a node.
 // Nothing here asks a board for anything.
 
-import { api, h, notify, state, svg } from './core.js';
+import { api, closeButton, h, notify, state, svg } from './core.js';
 import { currentRoute } from './tabs.js';
 import { deviceName } from './devices.js';
 import { LENSES, calm, linkMargin, meshTree, net, nodeLabel, redrawNetwork, selectNode, shownTopology } from './network.js';
@@ -72,7 +72,8 @@ export function renderLog() {
     wrap.append(box);
   }
   const lines = log.slice(0, wall.on ? 12 : LOG_SHOWN);
-  box.replaceChildren(h('div', { class: 'net-log-head' }, svg('svg', { class: 'icon', 'aria-hidden': 'true' }, svg('use', { href: '#i-terminal' })), 'live'),
+  box.replaceChildren(h('div', { class: 'net-log-head' }, svg('svg', { class: 'icon', 'aria-hidden': 'true' }, svg('use', { href: '#i-terminal' })), 'live',
+    closeButton(() => setToggle('log-toggle', false), 'Hide the log')),
     ...(lines.length ? lines.map((l, i) => h('button', { class: `net-log-line ${l.kind}`, type: 'button', style: `--age:${i}`,
       onclick: () => l.deviceId && flyToDevice(l.deviceId) },
     h('span', { class: 'net-log-time' }, l.time.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })),
@@ -294,17 +295,34 @@ export function drawWhatIf(drawing, view, points, size = {}) {
   });
 }
 
+// A map toolbar switch turned on or off from elsewhere (a box's ×), as if clicked
+function setToggle(id, on) {
+  const toggle = document.getElementById(id);
+  if (!toggle || toggle.checked === on) return;
+  toggle.checked = on;
+  toggle.dispatchEvent(new Event('change'));
+}
+
+// A box over the map goes under the map's toolbar, however many rows the toolbar takes
+export function belowToolbar(box) {
+  const toolbar = document.querySelector('#map-wrap .map-toolbar');
+  if (!toolbar || getComputedStyle(toolbar).position !== 'absolute') { box.style.top = ''; return; }
+  box.style.top = `${toolbar.offsetTop + toolbar.offsetHeight + 8}px`;
+}
+
 function renderWhatIfNote(effects) {
   const wrap = document.getElementById('map-wrap');
   let box = document.getElementById('what-if-note');
   if (!net.whatIf) { box?.remove(); return; }
   if (!box) {
-    box = h('div', { class: 'what-if-note', id: 'what-if-note' });
+    box = h('div', { class: 'what-if-note', id: 'what-if-note', role: 'dialog', 'aria-label': 'What if' });
     wrap.append(box);
   }
+  belowToolbar(box);
   const name = (e) => nodeLabel(e.node);
   const backups = effects.filter((e) => e.backup), better = effects.filter((e) => e.better);
-  box.replaceChildren(...[h('b', {}, 'A new router here?'), ' Drag it around.',
+  box.replaceChildren(...[closeButton(() => setToggle('whatif-toggle', false), 'Close what if'),
+    h('b', {}, 'A new router here?'), ' Drag it around.',
     h('div', {}, effects.length ? `${effects.length} board${effects.length === 1 ? '' : 's'} in its reach.` : 'No board in its reach: closer.'),
     backups.length ? h('div', { class: 'ok' }, `A second router for ${backups.map(name).join(', ')} (they depend on one router now).`) : null,
     better.length ? h('div', { class: 'ok' }, `Better signal for ${better.map((e) => `${name(e)} (≈${e.estimate} dB, ${e.now} now)`).join(', ')}.`) : null,
@@ -392,8 +410,11 @@ export function initNetPlus() {
   document.getElementById('net-ping-all').addEventListener('click', (event) => pingAll(event.currentTarget));
   document.addEventListener('keydown', (event) => {
     if (event.key === 'Escape' && wall.on) leaveWall();
+    else if (event.key === 'Escape' && net.whatIf && currentRoute().split('/')[0] === 'network') setToggle('whatif-toggle', false);
     else onArrow(event);
   });
+  // The toolbar's rows change with the window's width: the what-if box stays under it
+  window.addEventListener('resize', () => { const box = document.getElementById('what-if-note'); if (box) belowToolbar(box); });
   document.addEventListener('fullscreenchange', () => { if (!document.fullscreenElement && wall.on) leaveWall(); });
   renderLog();
 }

@@ -704,6 +704,11 @@ button.net-figure:hover { border-color: var(--t-brand); }
 .what-if-note { position: absolute; z-index: 3; top: 3.6rem; left: .7rem; max-width: min(22rem, 60%); padding: .45rem .6rem; font-size: .78rem;
   background: color-mix(in srgb, var(--t-surface) 94%, transparent); border: 1px solid var(--t-brand); border-radius: .5rem; color: var(--t-text-secondary); }
 .what-if-note b { color: var(--t-text); } .what-if-note .ok { color: var(--t-green); }
+/* The × of a box over the map */
+.panel-close { float: right; width: .55rem; height: .55rem; padding: .3rem; margin: -.1rem -.15rem .2rem .5rem; background-size: .55rem;
+  opacity: .6; pointer-events: auto; }
+.panel-close:hover, .panel-close:focus-visible { opacity: 1; }
+.net-log-head .panel-close { margin: 0 0 0 auto; float: none; order: 2; }
 /* Wall mode: the map alone, full screen */
 body.net-wall .topbar, body.net-wall .statusbar, body.net-wall .demo-banner, body.net-wall .net-list, body.net-wall .net-more,
 body.net-wall .net-actions, body.net-wall #network-warnings, body.net-wall .map-toolbar, body.net-wall .zoom-controls,
