@@ -171,7 +171,8 @@ CREATE TABLE IF NOT EXISTS builds (
     message    TEXT NOT NULL DEFAULT '',
     image_hash TEXT NOT NULL DEFAULT '',
     signing    TEXT NOT NULL DEFAULT '',       -- private, development, unknown
-    log        TEXT NOT NULL DEFAULT ''
+    log        TEXT NOT NULL DEFAULT '',
+    recipe     TEXT NOT NULL DEFAULT ''        -- what it was made from (builds.recipe), '' when not known
 );
 """
 
@@ -220,6 +221,7 @@ ADDED_COLUMNS = [
     ("devices", "last_sample", "REAL"),
     ("devices", "pump_ms_seen", "INTEGER"),
     ("devices", "pump_ms_time", "REAL"),
+    ("builds", "recipe", "TEXT NOT NULL DEFAULT ''"),
 ]
 
 
@@ -388,10 +390,16 @@ class Database:
     def _build(row):
         return {**row, "settings": json.loads(row["settings"])}
 
-    def add_build(self, profile, variant, settings):
-        cursor = self._execute("INSERT INTO builds (profile, variant, settings, started, result) VALUES (?, ?, ?, ?, ?)",
-                               (profile, variant, json.dumps(settings), time.time(), "running"))
+    def add_build(self, profile, variant, settings, recipe=""):
+        cursor = self._execute("INSERT INTO builds (profile, variant, settings, started, result, recipe) VALUES (?, ?, ?, ?, ?, ?)",
+                               (profile, variant, json.dumps(settings), time.time(), "running", recipe or ""))
         return cursor.lastrowid
+
+    def build_made_from(self, recipe):
+        """The newest build that succeeded from this recipe, or None."""
+        rows = self._query(f"SELECT {self.BUILD_COLUMNS} FROM builds WHERE recipe = ? AND result = 'done' AND image_hash != '' "
+                           "ORDER BY id DESC LIMIT 1", (recipe,))
+        return self._build(rows[0]) if rows else None
 
     def build(self, build_id, with_log=False):
         columns = self.BUILD_COLUMNS + (", log" if with_log else "")

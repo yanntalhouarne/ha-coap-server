@@ -31,7 +31,7 @@ from .autowater import AutoWatering, RuleError, checked_rule, rule_of
 from .autowater import watch as autowater_watch
 from .appupdate import UpdateCheck
 from .borderrouter import BorderRouterService, BorderRouterSetupError
-from .builds import VARIANTS, BuildError, BuildRunner
+from .builds import VARIANTS, AlreadyBuilt, BuildError, BuildRunner
 from .console import ConsoleError, SerialConsole
 from .db import Database, current_actor
 from .doctor import Doctor
@@ -1019,9 +1019,12 @@ def create_app(services, background_tasks=True, on_quit=None, port=None):
 
     @app.post("/api/firmware-builds")
     async def start_build(body: dict):
+        """409 when nothing changed since a build whose image is in the library ('force' builds anyway)."""
         try:
             return s.builds.start(str(body.get("profile", "")), bool(body.get("allow_development_key", False)),
-                                  str(body.get("sign_with", "yours")))
+                                  str(body.get("sign_with", "yours")), bool(body.get("force", False)))
+        except AlreadyBuilt as exc:
+            raise HTTPException(409, str(exc))
         except (BuildError, kconfig.KconfigError, OSError) as exc:
             raise _bad_request(exc)
 

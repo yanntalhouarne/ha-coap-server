@@ -8,6 +8,8 @@ image library. One build at a time.
 
 import asyncio
 import collections
+import hashlib
+import json
 import os
 import shutil
 import signal
@@ -24,8 +26,49 @@ VARIANTS = ("battery", "usb-logging", "uart-console", "debug")
 PUBLIC_PSKD = "J01NU5"
 
 
+def recipe(repository, variant, settings, sign_with, key_file):
+    """What a build is made from, as a hash: the commit, any change not committed (the tracked
+    files' diff, the new files), local.conf, the variant and settings, and the key it's signed
+    with. None outside a git checkout: then it's always built."""
+    def git(*args):
+        return subprocess.run(["git", "-C", str(repository), *args], capture_output=True, timeout=60, check=True).stdout
+
+    try:
+        head = git("rev-parse", "HEAD")
+        diff = git("diff", "HEAD", "--binary")
+        new_files = sorted(name for name in git("ls-files", "--others", "--exclude-standard", "-z").split(b"\0") if name)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    digest = hashlib.sha256(head + diff)
+    for name in new_files:
+        digest.update(name)
+        try:
+            digest.update(hashlib.sha256((Path(repository) / name.decode("utf-8", "replace")).read_bytes()).digest())
+        except OSError:
+            pass
+    for path in (Path(repository) / "application" / "local.conf", key_file):
+        try:
+            digest.update(hashlib.sha256(Path(path).read_bytes()).digest() if path else b"-")
+        except OSError:
+            digest.update(b"-")
+    digest.update(json.dumps({"variant": variant, "settings": settings, "sign_with": sign_with}, sort_keys=True).encode())
+    return digest.hexdigest()
+
+
 class BuildError(Exception):
     pass
+
+
+class AlreadyBuilt(BuildError):
+    """Nothing changed since this build (the same commit, changes, settings and key), and its
+    image is in the library: building again would make the same image."""
+
+    def __init__(self, build):
+        self.build = build
+        when = time.strftime("%d %b %H:%M", time.localtime(build["started"]))
+        super().__init__(f"Already built: build {build['id']} ({build['profile']}, {when}) made image "
+                         f"{build['image_hash'][:8]}, and nothing changed since (the same commit, settings and key). "
+                         "It's in the library (Images).")
 
 
 def build_dir(repository, variant):
@@ -160,9 +203,11 @@ class BuildRunner:
     def running(self):
         return self.current is not None and self.current["result"] == "running"
 
-    def start(self, profile_name, allow_development_key=False, sign_with="yours"):
+    def start(self, profile_name, allow_development_key=False, sign_with="yours", force=False):
         """sign_with: "yours" (the private key; without one, the development key if allowed), or
-        "development" (MCUboot's development key, for boards whose bootloader still has it)."""
+        "development" (MCUboot's development key, for boards whose bootloader still has it).
+        Raises AlreadyBuilt when nothing changed since a build whose image is in the library,
+        unless 'force'."""
         if sign_with not in SIGN_WITH:
             raise BuildError(f"Sign with {' or '.join(SIGN_WITH)}")
         if self.running():
@@ -182,9 +227,16 @@ class BuildRunner:
             raise BuildError("Unknown profile")
         schema = self.schema()
         settings = kconfig.validate(schema, profile["settings"])
+        key_file = development_key(self.repository) if sign_with == "development" else \
+            (signing_key(self.repository) or development_key(self.repository))
+        made_from = recipe(self.repository, profile["variant"], settings, sign_with, key_file)
+        if made_from and not force:
+            before = self.db.build_made_from(made_from)
+            if before and self.db.image(before["image_hash"]) is not None:
+                raise AlreadyBuilt(before)
 
         self.folder.mkdir(parents=True, exist_ok=True)
-        build_id = self.db.add_build(profile["name"], profile["variant"], settings)
+        build_id = self.db.add_build(profile["name"], profile["variant"], settings, made_from)
         conf = self.folder / f"build-{build_id}.conf"
         conf.write_text(kconfig.to_conf(schema, settings, profile["name"]), encoding="utf-8")
 

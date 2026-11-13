@@ -45,6 +45,13 @@ if (-not (Test-Path $nrfutil)) {
     throw "nrfutil not found. Run scripts\setup.ps1 first."
 }
 
+# Reproducible: the compiler's __DATE__ and __TIME__ (in OpenThread's version string) are the
+# commit's, not the clock's, so the same sources and settings always make the same image
+if (-not $env:SOURCE_DATE_EPOCH) {
+    $commitTime = git -C $repo log -1 --format=%ct 2>$null
+    if ($LASTEXITCODE -eq 0 -and $commitTime) { $env:SOURCE_DATE_EPOCH = $commitTime.Trim() }
+}
+
 $westArgs = @("build", "-p", "always", "-d", $buildDir, "application", "--") + $variants[$Variant] + $CMakeArgs
 & $nrfutil toolchain-manager launch --ncs-version $NcsVersion --chdir $repo -- west @westArgs
 if ($LASTEXITCODE -ne 0) {

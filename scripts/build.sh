@@ -55,6 +55,16 @@ else
     exit 1
 fi
 
+# Reproducible: the compiler's __DATE__ and __TIME__ (in OpenThread's version string) are the
+# commit's, not the clock's, so the same sources and settings always make the same image
+if [ -z "${SOURCE_DATE_EPOCH:-}" ]; then
+    if SOURCE_DATE_EPOCH="$(git -C "$REPO" log -1 --format=%ct 2>/dev/null)" && [ -n "$SOURCE_DATE_EPOCH" ]; then
+        export SOURCE_DATE_EPOCH
+    else
+        unset SOURCE_DATE_EPOCH
+    fi
+fi
+
 "$NRFUTIL" toolchain-manager launch --ncs-version "$NCS_VERSION" --chdir "$REPO" -- \
     west build -p always -d "$BUILD_DIR" application -- ${VARIANT_ARGS[@]+"${VARIANT_ARGS[@]}"} "$@"
 

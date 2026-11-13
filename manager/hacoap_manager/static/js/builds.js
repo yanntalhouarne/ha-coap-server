@@ -201,19 +201,24 @@ export function renderBuildStatus(build) {
     `${build.profile} (${build.variant}) `, build.message || '');
 }
 
-export async function startBuild(allowDevelopmentKey = false) {
+export async function startBuild(allowDevelopmentKey = false, force = false) {
   if (!builds.profile) return;
+  const signWith = document.getElementById('build-sign-with').value;
   try {
-    const signWith = document.getElementById('build-sign-with').value;
     const fleetTakes = document.getElementById('build-sign-hint').textContent.includes('development key');
     if (signWith === 'development' && !allowDevelopmentKey && !fleetTakes && !confirm('Sign with MCUboot\'s public development key? '
       + 'Only boards whose bootloader still has the development key take this image; anyone can sign one like it.')) return;
     const build = await api('POST', '/api/firmware-builds', { profile: builds.profile.name,
-      allow_development_key: allowDevelopmentKey || signWith === 'development', sign_with: signWith }, { quiet: true });
+      allow_development_key: allowDevelopmentKey || signWith === 'development', sign_with: signWith, force }, { quiet: true });
     builds.buildId = build.id;
     document.getElementById('build-log').textContent = '';
     renderBuildStatus(build);
   } catch (error) {
+    // Nothing changed since a build whose image is in the library: the same image again
+    if (!force && error.message.startsWith('Already built') && confirm(`${error.message}\n\nBuild again anyway?`)) {
+      return startBuild(allowDevelopmentKey || signWith === 'development', true);
+    }
+    if (error.message.startsWith('Already built')) return notify(error.message, 'info', 8000);
     if (!allowDevelopmentKey && error.message.startsWith('No private signing key') &&
         confirm(`${error.message}\n\nBuild with the development key?`)) {
       return startBuild(true);

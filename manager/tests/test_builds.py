@@ -211,3 +211,38 @@ async def test_invalid_profile_settings_stop_the_build(runner):
         runner.start("Broken")
     with pytest.raises(BuildError, match="Unknown profile"):
         runner.start("Nope")
+
+
+async def test_nothing_changed_since_the_last_build(runner):
+    """The same commit, changes, settings and key as a build whose image is in the library: said
+    so instead of building it again (unless asked); anything changed: built."""
+    import subprocess
+
+    repo = runner.repository
+    git = lambda *args: subprocess.run(["git", "-C", str(repo), *args], check=True, capture_output=True)  # noqa: E731
+    git("init", "-q")
+    (repo / ".gitignore").write_text("application/build*/\napplication/local.conf\napplication/keys/\n")  # as the real one
+    git("-c", "user.name=t", "-c", "user.email=t@t", "add", ".gitignore", "application/Kconfig", "application/prj.conf", "fake_build.py")
+    git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "firmware")
+    runner.start("Production")
+    first = await asyncio.wait_for(runner.wait(), 30)
+    assert first["result"] == "done"
+    with pytest.raises(builds.AlreadyBuilt, match=f"build {first['id']}") as said:
+        runner.start("Production")
+    assert said.value.build["image_hash"] == first["image_hash"]
+    runner.start("Production", force=True)  # asked for: built anyway
+    assert (await asyncio.wait_for(runner.wait(), 30))["result"] == "done"
+    # A change not committed, other settings, another key, local.conf: built
+    for change in (lambda: (repo / "application" / "prj.conf").write_text("CONFIG_X=y\n", encoding="utf-8"),
+                   lambda: runner.db.save_profile("Production", "battery", {"HACOAP_SENSOR_SAMPLE_PERIOD_S": 600}),
+                   lambda: (repo / "application" / "keys" / "mcuboot-signing-key.pem").write_text("another key"),
+                   lambda: (repo / "application" / "local.conf").write_text('CONFIG_OPENTHREAD_JOINER_PSKD="GHJKLM"\n')):
+        change()
+        runner.start("Production")
+        assert (await asyncio.wait_for(runner.wait(), 30))["result"] == "done"
+    with pytest.raises(builds.AlreadyBuilt):
+        runner.start("Production")  # and then nothing changed again
+    # Its image deleted from the library: built again
+    runner.images.delete(runner.db.builds()[0]["image_hash"])
+    runner.start("Production")
+    assert (await asyncio.wait_for(runner.wait(), 30))["result"] == "done"
