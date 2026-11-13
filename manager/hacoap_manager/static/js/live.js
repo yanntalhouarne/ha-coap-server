@@ -7,6 +7,7 @@ import { loadDevices, removing, renderDevices } from './devices.js';
 import { pulse } from './motion.js';
 import { loadHistory, loadJobs, renderJobs } from './updates.js';
 import { loadNetwork, net, pulseBoard, showNodeDetails } from './network.js';
+import { trafficPulse, updateTraffic } from './netlive.js';
 import { loadWallSoon } from './pages.js';
 import { onBuild, onBuildLog, onSetup, onSetupLog } from './builds.js';
 import { onConsoleLine, onConsoleState } from './console.js';
@@ -73,7 +74,10 @@ export function connectEvents(delay = 1000) {
       onBuild(event);
       state.build = event.build;
       renderActivity();
+    } else if (event.type === 'traffic') {
+      trafficPulse(event.device_id, event.what);
     } else if (event.type === 'job') {
+      updateTraffic(event.job);
       const finished = ['running', 'paused'].includes(state.jobs.get(event.job.id)?.state) && !['running', 'paused'].includes(event.job.state);
       state.jobs.set(event.job.id, event.job);
       renderJobs();

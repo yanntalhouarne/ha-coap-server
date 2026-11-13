@@ -5,6 +5,7 @@
 import { ago, api, busy, h, notify, state, svg, when } from './core.js';
 import { hoverNode, linkMargin, linkStrength, marginLabel, loadNetwork, meshTree, net, nodeLabel, nodeShape, nodeStyle, selectNode, shownTopology,
   signalBars, wayLink, weakness } from './network.js';
+import { radioFigure, renderRadio, renderWeakPoints } from './netlive.js';
 
 // ------------------------------------------------------------------ the figures
 
@@ -49,6 +50,7 @@ function renderFigures(topology) {
       h('span', { class: 'net-figure-value' }, value),
       h('span', { class: 'net-figure-note' }, note));
   const weakQuality = weakest ? linkStrength(weakest.link).quality : null;
+  const radio = radioFigure();
   box.replaceChildren(
     figure('routers', count.routers, 'the border router included', { icon: 'radio-tower' }),
     figure('children', count.children, `${count.sleepy} sleepy`, { icon: 'moon' }),
@@ -59,7 +61,9 @@ function renderFigures(topology) {
       { kind: tone(average > 20 ? 3 : average > 10 ? 2 : 1), icon: 'activity' }) : null,
     figure('changes', changes, 'parent changes, 24 h', { kind: changes > 3 ? 'warn' : '', icon: 'history',
       onclick: () => { showMore('changes'); document.querySelector('.net-more').scrollIntoView({ behavior: 'smooth', block: 'nearest' }); },
-      title: 'Show the changes' }));
+      title: 'Show the changes' }),
+    radio ? figure(radio.label, radio.value, radio.note, { kind: radio.kind, icon: 'radio', onclick: radio.onclick,
+      title: 'Show the radios\' health' }) : null);
 }
 
 // ------------------------------------------------------------------ the node list
@@ -160,7 +164,7 @@ document.getElementById('network-empty-settings').addEventListener('click', (eve
 // ------------------------------------------------------------------ changes and channels, under the map
 
 export function showMore(which) {
-  for (const name of ['changes', 'channels']) {
+  for (const name of ['changes', 'weak', 'radio', 'channels']) {
     const tab = document.getElementById(`net-more-${name}`);
     tab.classList.toggle('active', name === which);
     tab.setAttribute('aria-selected', String(name === which));
@@ -171,6 +175,8 @@ export function showMore(which) {
 
 document.getElementById('net-more-changes').addEventListener('click', () => showMore('changes'));
 document.getElementById('net-more-channels').addEventListener('click', () => showMore('channels'));
+document.getElementById('net-more-weak').addEventListener('click', () => { showMore('weak'); renderWeakPoints(); });
+document.getElementById('net-more-radio').addEventListener('click', () => { showMore('radio'); renderRadio(); });
 
 export function renderNetworkEvents(events = []) {
   const dayAgo = Date.now() / 1000 - 86400;

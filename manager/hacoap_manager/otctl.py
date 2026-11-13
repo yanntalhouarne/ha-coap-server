@@ -11,6 +11,7 @@ fixes), not from the CLI's text, which changes between versions.
 import ipaddress
 import re
 import shlex
+import struct
 import subprocess
 
 from .otbr import ROUTER_ROLES, BorderRouterError, Topology, _hex16, _mode_kind
@@ -18,6 +19,11 @@ from .otbr import ROUTER_ROLES, BorderRouterError, Topology, _hex16, _mode_kind
 CONTAINER_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
 ALL_ROUTERS = "ff03::2"
 DIAG_TLVS = ("0", "1", "2", "5", "8", "16")  # ext address, RLOC16, mode, route, IPv6 addresses, child table
+MAC_TLVS = ("0", "1", "9")  # ext address, RLOC16, MAC counters: asked of the routers only (mains-powered)
+# The MAC Counters TLV (9): nine 32-bit counters, in this order
+MAC_COUNTERS = ("in_unknown_protos", "in_errors", "out_errors", "in_ucast", "in_broadcast", "in_discards",
+                "out_ucast", "out_broadcast", "out_discards")
+COUNTER_LINE = re.compile(r"^\s*(\w+):\s*(\d+)\s*$")
 
 # MLE mode bits
 MODE_RX_ON_WHEN_IDLE = 0x08
@@ -78,6 +84,8 @@ def parse_diag_tlvs(hex_text):
                               for rid, b in zip(router_ids, value[9:])]
         elif kind == 8:
             diag["ipv6"] = [str(ipaddress.IPv6Address(value[j:j + 16])) for j in range(0, len(value) - 15, 16)]
+        elif kind == 9 and len(value) == 4 * len(MAC_COUNTERS):
+            diag["mac"] = dict(zip(MAC_COUNTERS, struct.unpack(f">{len(MAC_COUNTERS)}I", value)))
         elif kind == 16:
             children = []
             for j in range(0, len(value) - 2, 3):
@@ -216,7 +224,34 @@ class CliBorderRouter:
         for node in list(topology.nodes.values()):
             if node["kind"] == "router" and node["rloc16"] not in answers:
                 topology.warnings.append(f"No diagnostics from router {node['rloc16_hex']}")
+        self._add_radio_health(topology, me)
         return topology
+
+    def _add_radio_health(self, topology, me):
+        """How well the radios do, from mains-powered devices only (nothing is asked of a sleepy
+        board): the routers' MAC counters (network diagnostics to all routers), and the border
+        router's own (channel busy, messages its sleepy children never collected). Each one
+        optional: a border router that doesn't answer one still gives the map. (No noise reading
+        on the network's own channel: it mostly hears the network's own messages.)"""
+        try:
+            for line in self.run("networkdiagnostic", "get", ALL_ROUTERS, *MAC_TLVS):
+                match = DIAG_ANSWER.match(line)
+                diag = parse_diag_tlvs(match.group(2)) if match else {}
+                node = topology.node(diag.get("rloc16"), diag.get("ext_address")) if diag.get("mac") else None
+                if node is not None:
+                    node["mac"] = diag["mac"]
+        except BorderRouterError:
+            pass
+        try:
+            counters = {}
+            for line in self.run("counters", "mac"):
+                match = COUNTER_LINE.match(line)
+                if match:
+                    counters[match.group(1)] = int(match.group(2))
+            if counters:
+                me["mac_br"] = counters
+        except BorderRouterError:
+            pass
 
     @staticmethod
     def _add_router_diagnostics(topology, diag):

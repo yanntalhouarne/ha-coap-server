@@ -221,7 +221,7 @@ LINK_ALLOWED = [
     (("POST",), re.compile(r"^/api/alerts/(dismiss|\d+/dismiss)$")),
     (("PATCH",), re.compile(r"^/api/devices/[^/]+$")),  # its plant's name only (edit_device)
 ]
-LINK_EVENTS = {"device", "devices", "alert", "alerts", "network"}  # what its page is told live
+LINK_EVENTS = {"device", "devices", "alert", "alerts", "network", "traffic"}  # what its page is told live
 # What a view-only link may still ask with a POST: it only looks
 VIEW_ONLY_POSTS = {"/api/network/refresh"}
 LINK_NETWORK_GAP_S = 60  # from a link, a network reading this soon after the last one is that one

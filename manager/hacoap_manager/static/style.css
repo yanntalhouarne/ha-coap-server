@@ -611,6 +611,44 @@ button.net-figure:hover { border-color: var(--t-brand); }
 .avatar.dry .gauge { stroke: var(--t-yellow); }
 .avatar.offline { opacity: .5; }
 .avatar.offline .gauge { stroke: var(--t-text-muted); }
+/* The lens: what a board's ring shows, and how it is */
+.gauge.lens-ok { stroke: var(--t-green); }
+.gauge.lens-warn { stroke: var(--t-yellow); }
+.gauge.lens-bad { stroke: var(--t-red); }
+.gauge.lens-off { stroke: var(--t-text-muted); }
+/* Its heartbeat: a ripple at the rhythm it checks in with its parent */
+.heartbeat { fill: none; stroke: var(--t-brand); stroke-width: 2; transform-box: fill-box; transform-origin: center;
+  animation: heartbeat var(--beat, 3s) ease-out infinite; pointer-events: none; opacity: 0; }
+@keyframes heartbeat { 0% { transform: scale(1); opacity: .55; } 45% { transform: scale(1.32); opacity: 0; } 100% { opacity: 0; } }
+.tracing .node:not(.on-path):not(.selected) .heartbeat { animation: none; }
+/* Live traffic: a dot along a board's way, by what the message is */
+.traffic-dot { pointer-events: none; filter: drop-shadow(0 0 6px currentColor); fill: currentColor; }
+.traffic-dot.push, .traffic-key.push { color: var(--t-green); }
+.traffic-dot.read, .traffic-key.read { color: var(--t-blue); }
+.traffic-dot.command, .traffic-key.command { color: var(--t-orange); }
+.traffic-dot.update, .traffic-key.update { color: var(--t-magenta); }
+.traffic-key { display: inline-block; width: .55rem; height: .55rem; border-radius: 50%; background: currentColor; margin: 0 .2rem 0 .45rem; }
+.traffic-key:first-child { margin-left: 0; }
+.legend-lens { display: inline-block; width: .8rem; height: .8rem; border-radius: 50%; border: 2px solid var(--t-cyan); }
+/* Weak points: the routers boards depend on, and boards that hear their parent weakly */
+.node.spof .select-ring { stroke: var(--t-red); stroke-width: 2.5; stroke-dasharray: 5 4; opacity: 1; }
+.spof-tag rect { fill: color-mix(in srgb, var(--t-red) 22%, var(--t-bg-deep)); stroke: var(--t-red); }
+.spof-tag text { font: 10.5px var(--mono); fill: var(--t-text); }
+.node.weak-link .gauge-track { stroke: var(--t-red); stroke-dasharray: 3 3; }
+.weak-dot { display: inline-block; width: .5rem; height: .5rem; border-radius: 50%; margin-right: .4rem; background: var(--t-yellow); }
+.weak-dot.bad { background: var(--t-red); }
+/* The replay */
+.replay-caption { position: absolute; left: .75rem; bottom: .75rem; z-index: 6; min-width: 13rem; max-width: 22rem; padding: .55rem .7rem;
+  background: color-mix(in srgb, var(--t-surface) 92%, transparent); border: 1px solid var(--t-border-subtle); border-radius: .5rem;
+  font-size: .78rem; box-shadow: 0 6px 20px rgb(0 0 0 / .3); pointer-events: none; }
+.replay-time { font-weight: 600; color: var(--t-text); font-size: .95rem; }
+.replay-bar { height: 3px; background: var(--t-surface-2); border-radius: 2px; margin: .3rem 0 .35rem; overflow: hidden; }
+.replay-bar i { display: block; height: 100%; background: var(--t-brand); transition: width .2s; }
+.replay-line { color: var(--t-text-secondary); }
+.replay-line.ok { color: var(--t-green); } .replay-line.warn { color: var(--t-yellow); } .replay-line.bad { color: var(--t-red); }
+/* Radio health */
+.net-radio td.tone-ok { color: var(--t-green); } .net-radio td.tone-warn { color: var(--t-yellow); } .net-radio td.tone-bad { color: var(--t-red); }
+.map-lens select { width: auto; padding: 0 1.6rem 0 .4rem; height: 1.6rem; font-size: .78rem; background-color: transparent; }
 .node-badge { color: var(--t-text-muted); }
 .node-badge circle { fill: var(--t-bg-deep); stroke: currentColor; stroke-width: 1.5; }
 .node-badge.warn { color: var(--t-yellow); }
