@@ -21,9 +21,10 @@ export const TRAFFIC = {
 };
 const HOP_MS = 420;
 
-// The links from a board to the border router, in order, each with its drawn path (drawn from the
-// node farther from the border router).
+// The links from a board to the border router, in order, each with its drawn path and whether it
+// runs that way (towards the border router): on the mesh, or in the tree.
 function wayOf(deviceId) {
+  if (net.view === 'tree') return treeWay(deviceId);
   const layout = net.layout;
   if (!layout) return null;
   const start = layout.nodes.find((n) => n.node.device_id === deviceId);
@@ -37,7 +38,7 @@ function wayOf(deviceId) {
     const next = towards.get(at);
     const spring = springs.get(linkKey(at, next));
     if (!spring || !spring.path) break;
-    hops.push({ spring, forward: spring.a.id === at });  // the path runs a → b
+    hops.push({ path: spring.path, forward: spring.a.id === at });  // the path runs a → b
     seen.add(next);
     at = next;
   }
@@ -53,8 +54,8 @@ export function trafficPulse(deviceId, what) {
     group.classList.add('pulse');
     setTimeout(() => group.classList.remove('pulse'), 1300);
   }
-  const drawing = document.querySelector('#network-canvas > svg');
-  const hops = net.view === 'mesh' && drawing ? wayOf(deviceId) : null;
+  const drawing = document.querySelector(net.view === 'tree' ? '#tree-view > svg' : '#network-canvas > svg');
+  const hops = (net.view === 'mesh' || net.view === 'tree') && drawing ? wayOf(deviceId) : null;
   if (!hops) return;
   const kind = TRAFFIC[what] ? what : 'read';
   const legs = TRAFFIC[kind].way === 'up' ? [hops] : TRAFFIC[kind].way === 'down' ? [down(hops)] : [down(hops), hops];
@@ -66,10 +67,10 @@ export function trafficPulse(deviceId, what) {
     const t = Math.max(0, now - started) / HOP_MS;  // a frame's time can be from just before it started
     const index = Math.floor(t);
     if (index >= plan.length || !dot.isConnected) return dot.remove();
-    const { spring, forward } = plan[index];
+    const { path, forward } = plan[index];
     const k = t - index;
-    const length = spring.path.getTotalLength();
-    const at = spring.path.getPointAtLength(length * (forward ? k : 1 - k));
+    const length = path.getTotalLength();
+    const at = path.getPointAtLength(length * (forward ? k : 1 - k));
     dot.setAttribute('cx', at.x);
     dot.setAttribute('cy', at.y);
     requestAnimationFrame(step);
@@ -77,7 +78,28 @@ export function trafficPulse(deviceId, what) {
   requestAnimationFrame(step);
 }
 
-const down = (hops) => [...hops].reverse().map((hop) => ({ spring: hop.spring, forward: !hop.forward }));
+const down = (hops) => [...hops].reverse().map((hop) => ({ path: hop.path, forward: !hop.forward }));
+
+// In the tree, each line is drawn from the router down to what's under it.
+function treeWay(deviceId) {
+  const root = document.querySelector('#tree-view > svg');
+  const topology = shownTopology();
+  const start = root && topology && topology.nodes.find((n) => n.device_id === deviceId);
+  if (!start) return null;
+  const { towards } = meshTree(topology);
+  const hops = [];
+  const seen = new Set([String(start.id)]);
+  let at = String(start.id);
+  while (towards.has(at) && !seen.has(towards.get(at))) {
+    const next = towards.get(at);
+    const path = root.querySelector(`.tree-link[data-key="${CSS.escape(linkKey(at, next))}"] path:not(.tree-halo)`);
+    if (!path) break;
+    hops.push({ path, forward: false });
+    seen.add(next);
+    at = next;
+  }
+  return hops.length ? hops : null;
+}
 
 // An update in progress: a dot down to the board now and then, while it uploads.
 const lastUpdatePulse = new Map();
@@ -231,7 +253,7 @@ export function markWeakPoints(root, layout) {
     const group = root.querySelector(`[data-node="${CSS.escape(String(point.node.id))}"]`);
     if (!group || !point.boards.length) continue;
     group.classList.add('spof');
-    group.append(svg('g', { class: 'spof-tag', transform: `translate(0,${-((n && 30) || 30)})` },
+    group.append(svg('g', { class: 'spof-tag', transform: 'translate(0,-46)' },  // above the node and its fold button
       svg('rect', { x: -44, y: -11, width: 88, height: 20, rx: 10 }),
       svg('text', { x: 0, y: 3.5, 'text-anchor': 'middle' }, `${point.boards.length} board${point.boards.length === 1 ? '' : 's'} on it`)));
   }

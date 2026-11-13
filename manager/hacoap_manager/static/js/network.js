@@ -9,7 +9,7 @@ import { deviceName, devicePath, imageStatus, otherName, pingDevice } from './de
 import { startPumping, waitForBoard } from './motion.js';
 import { renderChannelScan, renderFloorplan } from './floorplan.js';
 import { renderNetFrame, renderNetworkEvents } from './netframe.js';
-import { renderTree } from './tree.js';
+import { initTree, renderTree } from './tree.js';
 import { initNetLive, markWeakPoints, radioDetails, renderRadio, renderWeakPoints } from './netlive.js';
 import { drawTrails, drawWhatIf, flyTo, initNetPlus, linkHistory, loadSignalHistory, noteMoves, whatIfSamples } from './netplus.js';
 
@@ -19,7 +19,8 @@ import { drawTrails, drawWhatIf, flyTo, initNetPlus, linkHistory, loadSignalHist
 export const net = { state: null, positions: new Map(), dragged: new Set(), selected: null, hover: null, layout: null, zoom: {},
   viewing: null, history: [], heatmap: false, allNames: false, allLinks: false, view: 'mesh', lens: 'battery', weakPoints: false,
   batteryLife: new Map(),  // device_id → days its battery lasts (its trend over two weeks), for the battery lens
-  showLog: true, whatIf: null, signalHistory: {}, lastParents: null };
+  showLog: true, whatIf: null, signalHistory: {}, lastParents: null, lastMoved: [],
+  treeFolded: new Set(), treeSideways: false, treePositions: null };
 // The reading on screen: the latest, or an earlier one picked on the history slider.
 export const shownTopology = () => (net.viewing ? net.viewing.topology : net.state && net.state.topology);
 export const nodeStyles = {
@@ -422,6 +423,7 @@ export function renderNetwork() {
   canvas.querySelector(':scope > svg')?.remove();  // the map itself (the empty note and zoom buttons have icons)
   // Boards that moved to another router since the drawing before: logged, and (on the mesh) a trail
   const moved = topology ? noteMoves(topology, before.size ? before : null) : [];
+  net.lastMoved = moved;  // for the tree, drawn after
   if (!topology || net.view !== 'mesh') return;
 
   const aspect = canvas.clientWidth && canvas.clientHeight ? canvas.clientWidth / canvas.clientHeight : 1.8;
@@ -1028,7 +1030,7 @@ export function redrawMeshHeatmap() {
 }
 
 export function renderHeatmapNote() {
-  const shown = net.heatmap && (net.view === 'mesh' ? !!shownTopology() : net.view === 'floorplan' && !!(net.state && net.state.floorplan));
+  const shown = net.heatmap && (net.view === 'mesh' || net.view === 'tree' ? !!shownTopology() : net.view === 'floorplan' && !!(net.state && net.state.floorplan));
   document.getElementById('heatmap-note').classList.toggle('d-none', !shown);
   document.getElementById('heat-scale').classList.toggle('d-none', !shown);
 }
@@ -1067,6 +1069,7 @@ export function pulseBoard(deviceId) {
 
 initNetLive();
 initNetPlus();
+initTree();
 
 // The lens: what the boards' rings show
 try { net.lens = localStorage.getItem('hacoap-map-lens') || 'battery'; } catch (error) { /* the default */ }

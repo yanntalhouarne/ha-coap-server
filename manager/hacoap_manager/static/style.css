@@ -554,7 +554,8 @@ button.net-figure:hover { border-color: var(--t-brand); }
 .map-tool:hover, .map-seg button:not(.active):hover { color: var(--t-text); background: var(--t-surface-2); }
 .map-tool:has(input:checked) { color: var(--t-brand); background: color-mix(in srgb, var(--t-brand) 14%, transparent); }
 .map-tool:has(input:focus-visible), .map-seg button:focus-visible { outline: 2px solid var(--t-brand); outline-offset: 1px; }
-.map-wrap[data-view="tree"] .map-tool:has(#heatmap-toggle) { display: none; }  /* no heatmap on the tree */
+.map-wrap:not([data-view="tree"]) .map-tool:has(#sideways-toggle) { display: none; }  /* the tree's own */
+.map-wrap[data-view="tree"] .map-tool:has(#whatif-toggle) { display: none; }  /* places mean nothing in the tree */
 .zoom-controls { position: absolute; z-index: 3; top: .7rem; right: .7rem; display: flex; flex-direction: column; padding: .2rem; }
 .zoom-controls button { border: 0; background: transparent; color: var(--t-text-secondary); width: 2rem; height: 2rem;
   display: flex; align-items: center; justify-content: center; border-radius: .35rem; font-size: 1rem; }
@@ -758,6 +759,22 @@ body.net-wall .net-log { width: min(30rem, 34%); font-size: .82rem; max-height: 
 .tree-card .card-bg { fill: var(--t-surface); stroke: var(--t-border-subtle); transition: stroke .15s; }
 .tree-card:hover .card-bg, .tree-card.on-path .card-bg { stroke: var(--t-brand); }
 .tree-card .select-ring { stroke-width: 2; }
+/* The tree's tint (the heatmap switch): each line haloed, each card washed, by its own signal */
+.tree-halo { fill: none; stroke-width: 12; stroke-linecap: round; stroke-linejoin: round; pointer-events: none; }
+.tree.tinted .card-bg { stroke-opacity: .6; }
+/* Folding a router's children */
+.tree-fold { cursor: pointer; }
+.tree-fold circle { fill: var(--t-surface-2); stroke: var(--t-border-strong); }
+.tree-fold text { font: 600 10px var(--mono); fill: var(--t-text-secondary); pointer-events: none; }
+.tree-fold:hover circle, .tree-fold:focus-visible circle { stroke: var(--t-brand); }
+.tree-fold.folded circle { fill: color-mix(in srgb, var(--t-brand) 25%, var(--t-surface)); stroke: var(--t-brand); }
+.tree-fold.folded text { fill: var(--t-text); }
+.tree-summary .card-bg { stroke-dasharray: 5 4; }
+.tree-summary { cursor: pointer; }
+.tree-card .card-sub.weak { fill: var(--t-yellow); }
+.tree-link.fold path { stroke-dasharray: 4 5; }
+.links.fade-in { animation: links-in .6s ease-out; }
+@keyframes links-in { from { opacity: 0; } }
 .card-name { font: 600 12px var(--mono); fill: var(--t-text); }
 .card-sub, .card-margin { font: 10.5px var(--mono); fill: var(--t-text-muted); }
 .card-margin { fill: var(--t-text-secondary); }

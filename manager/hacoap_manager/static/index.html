@@ -433,6 +433,8 @@
           </div>
           <label class="map-tool" title="Shades the signal estimated from each node's strongest link">
             <input type="checkbox" id="heatmap-toggle"><svg class="icon"><use href="#i-layers"/></svg>heatmap</label>
+          <label class="map-tool" title="The tree from left to right instead of top to bottom">
+            <input type="checkbox" id="sideways-toggle"><svg class="icon"><use href="#i-list-tree"/></svg>sideways</label>
           <label class="map-tool" title="Names under every node, not only your boards">
             <input type="checkbox" id="labels-toggle"><svg class="icon"><use href="#i-tag"/></svg>all names</label>
           <label class="map-tool" title="Every link between routers, not only each one's way to the border router">
@@ -475,7 +477,8 @@
     </div>
     <p class="small text-body-secondary mt-2 mb-0 d-none" id="heatmap-note">Heatmap: the signal estimated from each node's
       strongest link, fading out away from the nodes. On the floor plan it maps your home: place more nodes for a
-      better estimate. On the mesh, it shows the weak parts of the mesh. A guide to dead zones, not a measurement.</p>
+      better estimate. On the mesh, it shows the weak parts of the mesh. In the tree (where places mean nothing), it tints
+      each card and line by its own signal instead. A guide to dead zones, not a measurement.</p>
     <!-- Below the map: what changed, and the radio channels -->
     <div class="card net-more mt-3">
       <div class="card-header net-more-head">
