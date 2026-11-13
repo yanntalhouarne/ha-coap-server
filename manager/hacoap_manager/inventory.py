@@ -603,9 +603,11 @@ class Inventory:
                     await coap.ping(device["address"], beep=False, **options)
                 except (coap.CoapError, TimeoutError, OSError) as exc:
                     self._traffic(device["device_id"], "lost")
+                    self.db.add_round_trip(device["device_id"], None)
                     return {"device_id": device["device_id"], "ok": False, "ms": None, "error": str(exc) or type(exc).__name__}
                 ms = round((time.monotonic() - started) * 1000)
                 self._traffic(device["device_id"], "pong", ms=ms)
+                self.db.add_round_trip(device["device_id"], ms)  # its round-trip history
                 self._changed(self.db.upsert_device(device["device_id"], last_seen=time.time()))
                 return {"device_id": device["device_id"], "ok": True, "ms": ms, "error": ""}
 

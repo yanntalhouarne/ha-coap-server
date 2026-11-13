@@ -11,7 +11,8 @@ import { renderChannelScan, renderFloorplan } from './floorplan.js';
 import { renderNetFrame, renderNetworkEvents } from './netframe.js';
 import { initTree, renderTree } from './tree.js';
 import { initNetLive, markWeakPoints, radioDetails, renderRadio, renderWeakPoints } from './netlive.js';
-import { drawTrails, drawWhatIf, flyTo, initNetPlus, linkHistory, loadSignalHistory, noteMoves, whatIfSamples } from './netplus.js';
+import { drawTrails, drawWhatIf, flyTo, initNetPlus, linkHistory, loadRoundTrips, loadSignalHistory, noteMoves, roundTripDetails,
+  whatIfSamples } from './netplus.js';
 
 // ------------------------------------------------------------------ network
 
@@ -744,6 +745,7 @@ export function showNodeDetails(node, reveal = false) {
         : (node.ipv6 || []).join(', ')],
     ]),
     links.length ? h('div', { class: 'mt-2' }, h('b', {}, 'Links'), h('ul', { class: 'list-unstyled net-links mb-0' }, links)) : null,
+    node.device_id ? roundTripDetails(node.device_id) : null,
     radioDetails(node),
   ].filter(Boolean));  // replaceChildren would write out a null
   // On a phone the details sit under the map: bring them up after a click.
@@ -866,6 +868,7 @@ export async function loadBatteryLife() {
 export async function loadNetwork() {
   loadBatteryLife().catch(() => {});
   loadSignalHistory().then(() => renderNetFrame(), () => {});
+  loadRoundTrips().catch(() => {});
   net.state = await api('GET', '/api/network');
   document.getElementById('border-router-url').value = net.state.border_router_url || '';
   document.getElementById('border-router-container').value = net.state.border_router_container || '';

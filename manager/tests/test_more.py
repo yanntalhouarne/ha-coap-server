@@ -1,6 +1,7 @@
 """The watering forecast and pump effect, the photo timeline, the weekly summary, the wall
 display, and the demo."""
 
+import asyncio
 import io
 import time
 import zipfile
@@ -174,6 +175,7 @@ async def test_demo(services, client):
         found = (await client.post("/api/discover", headers=CHANGE)).json()["found"]
         assert [d["device_id"] for d in found] == [device_id]
         await client.post(f"/api/devices/{device_id}/pump", json={"on": True}, headers=CHANGE)
+        await asyncio.sleep(1.3)   # the run (1 s) is over before the read: it still watered the plant
         refreshed = (await client.post(f"/api/devices/{device_id}/refresh", headers=CHANGE)).json()
         assert refreshed["soil_moisture"] >= 70                    # the pump watered it
     finally:

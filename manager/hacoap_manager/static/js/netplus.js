@@ -3,7 +3,7 @@
 // signal over the week, boards gliding to their new router when they move, and flying to a node.
 // Nothing here asks a board for anything.
 
-import { api, closeButton, h, notify, state, svg } from './core.js';
+import { ago, api, closeButton, h, notify, state, svg } from './core.js';
 import { currentRoute } from './tabs.js';
 import { deviceName } from './devices.js';
 import { LENSES, calm, linkMargin, meshTree, net, nodeLabel, redrawNetwork, selectNode, shownTopology } from './network.js';
@@ -52,6 +52,7 @@ export async function pingAll(button) {
     const summary = `${ok.length} of ${results.length} answered${times.length ? ` · fastest ${Math.min(...times).toFixed(1)} s, slowest ${Math.max(...times).toFixed(1)} s` : ''}` +
       (missing.length ? ` · no answer: ${missing.join(', ')}` : '');
     notify(summary, missing.length ? 'warning' : 'success', 8000);
+    loadRoundTrips().then(() => { if (net.selected) selectNode(net.selected); }, () => {});  // its details' history
   } finally {
     button.disabled = false;
   }
@@ -203,6 +204,51 @@ export function signalSpark(deviceId, { width = 64, height = 18, axis = false } 
   svg('title', {}, `Signal to its parent over the week: now ${last} dB, from ${Math.min(...points.map((p) => p[1]))} to ${Math.max(...points.map((p) => p[1]))} dB${lows ? ` (weak ${lows} h)` : ''}`),
   axis ? svg('line', { x1: 0, x2: width, y1: y(10), y2: y(10), class: 'spark-weak' }) : null,
   svg('polyline', { points: line }));
+}
+
+// ------------------------------------------------------------------ round trips: a board's silent pings over the week
+
+export async function loadRoundTrips() {
+  net.roundTrips = await api('GET', '/api/network/round-trips?days=7', undefined, { quiet: true }).catch(() => ({}));
+}
+
+const seconds = (ms) => `${(ms / 1000).toFixed(1)} s`;
+
+// A board's pings over the week, in its details: each answer a dot (its round trip), each ping it
+// didn't answer a red tick at the bottom; the dashed line is a sleepy board's poll (3 s).
+export function roundTripDetails(deviceId) {
+  const entry = (net.roundTrips || {})[deviceId];
+  const head = h('b', {}, 'Round trip over the week');
+  if (!entry || !entry.points.length) {
+    return h('div', { class: 'mt-2 round-trip' }, head, h('div', { class: 'small text-body-secondary' },
+      'No pings yet: ping all (above the map), or turn on Ping every in Settings → Network and timing, to see whether it gets slower.'));
+  }
+  const W = 300, H = 70, t1 = Date.now() / 1000, t0 = t1 - 7 * 86400;
+  const answered = entry.points.filter((p) => p[1] !== null);
+  const hi = Math.max(4000, ...answered.map((p) => p[1]));
+  const x = (t) => Math.max(0, Math.min(W, ((t - t0) / (t1 - t0)) * W));
+  const y = (ms) => H - 4 - (ms / hi) * (H - 10);
+  const chart = svg('svg', { class: 'rtt-chart', viewBox: `0 0 ${W} ${H}`, preserveAspectRatio: 'none',
+    'aria-label': `round trip over the week, median ${entry.median_ms === null ? 'none' : seconds(entry.median_ms)}` },
+  svg('line', { class: 'rtt-poll', x1: 0, x2: W, y1: y(3000), y2: y(3000) }),
+  ...entry.points.map(([t, ms]) => (ms === null
+    ? svg('line', { class: 'rtt-lost', x1: x(t), x2: x(t), y1: H - 7, y2: H }, svg('title', {}, `${ago(t)}: no answer`))
+    : svg('line', { class: `rtt-dot${ms > 3500 ? ' slow' : ''}`, x1: x(t), x2: x(t), y1: y(ms), y2: y(ms) + 0.01 }, svg('title', {}, `${ago(t)}: ${seconds(ms)}`)))));
+  const last = entry.last;
+  // Slower lately: the last day's median against the week's
+  const dayAgo = t1 - 86400;
+  const lastDay = answered.filter((p) => p[0] >= dayAgo).map((p) => p[1]).sort((a, b) => a - b);
+  const dayMedian = lastDay.length >= 3 ? lastDay[Math.floor(lastDay.length / 2)] : null;
+  const slower = dayMedian !== null && entry.median_ms && dayMedian > entry.median_ms * 1.5 && dayMedian - entry.median_ms > 700;
+  return h('div', { class: 'mt-2 round-trip' }, head,
+    h('div', { class: 'small text-body-secondary' },
+      entry.median_ms === null ? 'It answered none of its pings.' : `Usually ${seconds(entry.median_ms)}`,
+      ` · answered ${entry.answered_pct} % of ${entry.points.length} ping${entry.points.length === 1 ? '' : 's'}`,
+      ` · last ${last.ms === null ? 'no answer' : seconds(last.ms)}, ${ago(last.time)}`),
+    slower ? h('div', { class: 'small rtt-slower' }, `Slower over the last day (${seconds(dayMedian)}): its link, or its router, may be getting worse.`) : null,
+    h('div', { class: 'link-week' }, chart),
+    h('div', { class: 'd-flex justify-content-between small text-body-secondary' }, h('span', {}, '7 days ago'),
+      h('span', {}, 'dashed: its poll (3 s) · red: no answer'), h('span', {}, 'now')));
 }
 
 // The week's signal in a link's details (a board's link to its parent).

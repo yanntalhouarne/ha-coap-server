@@ -64,6 +64,25 @@ def radio_rates(before, after):
                              "undelivered_to_sleepy": d.get("TxIndirectMaxRetryExpiry", 0)}
 
 
+def round_trip_history(rows, now=None, days=7):
+    """Each board's silent pings over the last days: {device_id: {points: [[time, ms or None]],
+    median_ms, answered_pct, last: {time, ms}}}. None in points: no answer."""
+    now = now or time.time()
+    since = now - days * 86400
+    result = {}
+    for row in rows:
+        if row["time"] < since:
+            continue
+        entry = result.setdefault(row["device_id"], {"points": []})
+        entry["points"].append([round(row["time"]), row["ms"]])
+    for entry in result.values():
+        answered = sorted(ms for _, ms in entry["points"] if ms is not None)
+        entry["median_ms"] = answered[len(answered) // 2] if answered else None
+        entry["answered_pct"] = round(100 * len(answered) / len(entry["points"]))
+        entry["last"] = {"time": entry["points"][-1][0], "ms": entry["points"][-1][1]}
+    return result
+
+
 def signal_history(samples, now=None, days=7, bucket_s=3600):
     """Each board's link to its parent over the last days, an hourly average: {device_id: [[time,
     margin dB]]}. A sample without a margin counts by its RSSI (above the radio's noise floor, -100
@@ -96,6 +115,7 @@ class NetworkService:
         self.scan_cache = self.data_dir / "channel-scan.json"
         self.floorplan_file = self.data_dir / "floorplan.img"
         self.floorplan_meta = self.data_dir / "floorplan.json"
+        self.gone_file = self.data_dir / "routers-gone.json"
         self.db = db
         self.settings = settings
         self.events = events
@@ -189,6 +209,7 @@ class NetworkService:
             self._name_boards(topology)
             radio_rates(self.last(), topology)
             self._log_changes(self.last(), topology)
+            self._note_routers_gone(self.last(), topology)
             self._record_links(topology)
             text = json.dumps(topology)
             self.cache.write_text(text, encoding="utf-8")
@@ -281,6 +302,42 @@ class NetworkService:
                                                      f"{describe(previous)} to {describe(parent)}")
         for device_id in set(old) - set(new):
             self.db.add_network_event(device_id, f"{device_id}: not in the network any more")
+
+    def routers_gone(self):
+        """The routers boards went through that weren't in the readings since (unplugged, their PC
+        asleep): {node_id: {label, rloc16, boards: [device_id], names: [name], since, times_this_week}}."""
+        return self._read(self.gone_file) or {}
+
+    def _note_routers_gone(self, before, after):
+        """A router that boards went through in the last reading and isn't in this one went away (a
+        network event, and an alert while it lasts); one back in a reading is back."""
+        gone = self.routers_gone()
+        here = {n["id"] for n in after["nodes"]}
+        changed = False
+        for node_id in [i for i in gone if i in here]:
+            self.db.add_network_event("", f"{gone.pop(node_id)['label']} is back")
+            changed = True
+        if before:
+            boards = {}
+            for node in before["nodes"]:
+                if node.get("device_id") and node.get("parent"):
+                    boards.setdefault(node["parent"], []).append(node)
+            for node in before["nodes"]:
+                if node["id"] in here or node["id"] in gone or node.get("border_router") or node.get("kind") != "router"                         or not boards.get(node["id"]):
+                    continue
+                label = node.get("hostname") or f"router {node.get('rloc16_hex') or node['id']}"
+                children = boards[node["id"]]
+                names = [c.get("name") or c["device_id"] for c in children]
+                self.db.add_network_event("", f"{label} went away (it was the router of {', '.join(names)})")
+                week = time.time() - 7 * 86400
+                times = sum(1 for e in self.db.network_events_between(week, time.time() + 1)
+                            if e["message"].startswith(f"{label} went away"))
+                gone[node["id"]] = {"label": label, "rloc16": node.get("rloc16_hex") or "",
+                                    "boards": [c["device_id"] for c in children], "names": names,
+                                    "since": after.get("fetched") or time.time(), "times_this_week": times}
+                changed = True
+        if changed:
+            self.gone_file.write_text(json.dumps(gone), encoding="utf-8")
 
     async def find_border_router(self, timeout=4.0):
         """Looks for border routers on the LAN (mDNS). Returns their REST URLs, best first."""

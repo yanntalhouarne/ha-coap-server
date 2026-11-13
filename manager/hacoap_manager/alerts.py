@@ -1,7 +1,8 @@
 """Alerts: a device that stopped answering, a low battery, a plant that needs water, a failed
 update, a board that crashed (or was restarted by its watchdog), the border router down (or its
 radio unplugged, or off the Thread network), every board silent at once, a board whose link
-stays weak for hours, one that keeps changing routers, and one that answers but stopped sampling. They're raised when
+stays weak for hours, one that keeps changing routers, one that answers but stopped sampling, and a router
+boards went through that went away (unplugged, or its PC asleep). They're raised when
 the condition starts and cleared when it ends (or dismissed), and each new one is sent to the
 page, which can show it as a browser notification.
 
@@ -24,6 +25,10 @@ WEAK_READINGS = 3     # ...from this many readings
 SWITCHES = 3          # a board that changed routers this many times in the last day: an alert
 SWITCH_HOURS = 24
 NOT_SAMPLING_S = 2 * 3600  # a board that answers but took no sample for this long: an alert
+
+
+def _nth(n):
+    return f"{n}{'th' if 10 <= n % 100 <= 20 else {1: 'st', 2: 'nd', 3: 'rd'}.get(n % 10, 'th')}"
 
 
 def weak_link(samples):
@@ -51,6 +56,7 @@ class AlertService:
         self.border_router = {}  # its problems now ({key: message}), as check_border_router() last found
         self.problems = {}       # other problems the app found: {key: (kind, message)} (a backup copy that failed)
         self._seen_once = {}     # problems found once: an alert only if they're still there next time
+        self.network = None      # the NetworkService: its routers that went away
 
     def set_problem(self, key, problem):
         """A problem found elsewhere: (kind, message), or None once it's gone."""
@@ -84,6 +90,12 @@ class AlertService:
         if self.inventory.refreshed and len(known) >= 2 and not any(d["online"] for d in known):
             found["network:silent"] = ("network", "", f"None of the {len(known)} boards answer: the border router "
                                                       f"or the Thread network is probably down")
+        for node_id, router in (self.network.routers_gone() if self.network else {}).items():
+            names = router["names"]
+            who = names[0] if len(names) == 1 else f"{', '.join(names[:-1])} and {names[-1]}"
+            often = f" It's the {_nth(router['times_this_week'])} time this week." if router.get("times_this_week", 0) > 1 else ""
+            found[f"router-gone:{node_id}"] = ("network", "", f"{router['label'].capitalize()} went away: {who} went "
+                                                              f"through it. Is it unplugged, or is its computer asleep?{often}")
         now = time.time()
         switches = {}
         for event in self.db.network_events_between(now - SWITCH_HOURS * 3600, now + 1):

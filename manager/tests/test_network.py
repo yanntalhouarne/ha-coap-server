@@ -140,3 +140,57 @@ def test_a_bigger_fleet(border, mode):
     if mode == "api":   # only the current API gives children's addresses
         found = {a for n in sleepy for a in n["ipv6"]}
         assert set(addresses) <= found
+
+
+async def test_a_router_boards_went_through_goes_away(tmp_path, border):
+    """A router that a board went through, gone from the next reading (unplugged, its PC asleep):
+    a network event, an alert while it lasts, and both again when it's back."""
+    services = create_services(tmp_path / "data", discover=None)
+    services.db.upsert_device("1a2b3c4d", name="basil", address="fd11:22::1")
+    services.db.upsert_device("5e6f7a8b", name="mint", address="fd11:22::2")
+    net = scenario()
+    services.settings.border_router_url = border("api", net).url
+    network, alerts = services.network, services.alerts
+    await network.refresh()
+    assert network.routers_gone() == {}
+
+    # The plug (0x6800, mint's router) goes away: mint finds the border router
+    plug = next(r for r in net["routers"] if r["rloc16"] == 0x6800)
+    net["routers"].remove(plug)
+    links = list(net["router_links"])
+    net["router_links"][:] = [l for l in links if 0x6800 not in l[:2]]
+    mint = next(c for c in net["children"] if c["parent"] == 0x6800)
+    mint.update(parent=0x5000, rloc16=0x5004)
+    await network.refresh()
+    [(node_id, gone)] = network.routers_gone().items()
+    assert gone["names"] == ["mint"] and gone["rloc16"] == "0x6800" and gone["times_this_week"] == 1
+    alerts.scan()
+    [alert] = [a for a in services.db.open_alerts() if a["key"].startswith("router-gone:")]
+    assert "went away: mint went through it" in alert["message"] and "this week" not in alert["message"]
+    assert any("went away" in e["message"] for e in services.db.network_events())
+
+    # Still away in the next reading: the same alert, not a new one
+    await network.refresh()
+    alerts.scan()
+    assert len([a for a in services.db.open_alerts() if a["key"].startswith("router-gone:")]) == 1
+
+    # It's back: the alert clears
+    net["routers"].append(plug)
+    net["router_links"][:] = links
+    await network.refresh()
+    alerts.scan()
+    assert network.routers_gone() == {}
+    assert not [a for a in services.db.open_alerts() if a["key"].startswith("router-gone:")]
+    assert services.db.network_events()[0]["message"].endswith("is back")
+
+    # Away a second time this week: the alert says so
+    mint.update(parent=0x6800, rloc16=0x6801)
+    await network.refresh()
+    net["routers"].remove(plug)
+    net["router_links"][:] = [l for l in links if 0x6800 not in l[:2]]
+    mint.update(parent=0x5000, rloc16=0x5004)
+    await network.refresh()
+    alerts.scan()
+    [alert] = [a for a in services.db.open_alerts() if a["key"].startswith("router-gone:")]
+    assert "the 2nd time this week" in alert["message"]
+    services.db.close()

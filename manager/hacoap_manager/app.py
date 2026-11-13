@@ -39,6 +39,7 @@ from .events import EventBus
 from .images import ImageLibrary, build_commit, build_images, changes, find_repository
 from .inventory import Inventory, InventoryError
 from .network import NetworkError, NetworkService
+from .network import round_trip_history
 from .network import signal_history as network_signal_history_of
 from .pictures import PhotoStore, PictureError
 from .setup_tools import SetupError, SetupRunner
@@ -111,6 +112,7 @@ def create_services(data_dir, discover=discovery.discover):
     builds.other_busy = setup.busy                                                 # one script at a time
     setup.other_busy = lambda: "build" if builds.running() else None
     alerts = AlertService(db, inventory, settings, events)
+    alerts.network = network
     updates.on_failure = lambda job, target: alerts.update_failed(job.id, target.device_id, target.label, target.message)
     inventory.on_restart = alerts.restarted
     inventory.on_pushed = lambda device: alerts.scan()  # a plant that needs water, a board unplugged: at once
@@ -213,7 +215,7 @@ LINK_ALLOWED = [
     (("PUT",), re.compile(r"^/api/away$")),  # going away (or back): it only sets the date the plants are checked for
     (("GET", "HEAD"), re.compile(r"^/api/devices/[^/]+/(details|photo)$")),
     # Read-only: the network's map (mesh, tree, floor plan) and its history, and the charts
-    (("GET", "HEAD"), re.compile(r"^/api/(network|network/history|network/signal-history|network/floorplan|graph|readings\.csv)$")),
+    (("GET", "HEAD"), re.compile(r"^/api/(network|network/history|network/signal-history|network/round-trips|network/floorplan|graph|readings\.csv)$")),
     (("GET", "HEAD"), re.compile(r"^/api/network/history/[^/]+$")),
     (("POST",), re.compile(r"^/api/devices/[^/]+/(pump|ping|tank/refilled)$")),
     (("GET", "HEAD"), re.compile(r"^/api/devices/[^/]+/care$")),
@@ -270,6 +272,7 @@ def create_app(services, background_tasks=True, on_quit=None, port=None):
         if background_tasks:
             tasks = [asyncio.create_task(_auto_refresh(services)), asyncio.create_task(_auto_backup(services)),
                      asyncio.create_task(_auto_alerts(services)), asyncio.create_task(_watch_border_router(services)),
+                     asyncio.create_task(_auto_ping(services)),
                      asyncio.create_task(autowater_watch(services.autowater))]
             if port and services.remote is not None:
                 listener = remote.RemoteListener(app, port)
@@ -1111,6 +1114,7 @@ def create_app(services, background_tasks=True, on_quit=None, port=None):
     def _ha_plants():
         now = time.time()
         result = []
+        round_trips = s.db.last_round_trips()
         for device in s.inventory.devices():
             on_usb = device["power"] in fleet.ON_USB
             readings = s.db.readings(device["device_id"], since=now - fleet.FORECAST_WINDOW_DAYS * DAY_S)
@@ -1124,13 +1128,16 @@ def create_app(services, background_tasks=True, on_quit=None, port=None):
                 "care": [{key: task[key] for key in ("id", "what", "every_days", "due", "last_done")}
                          for task in s.db.care_tasks(device["device_id"])],
                 "photo": device["photo"],  # when its newest photo was added (/api/devices/<id>/photo), or None
+                # Its last silent ping (Ping all, or the timed ones): {time, ms (None: no answer)}, or None
+                "round_trip": round_trips.get(device["device_id"]),
             })
         return {"devices": result}
 
     @app.get("/api/ha/plants")
     async def ha_plants():
         """Each plant's water tank (None: not tracked), its battery's days left (None: on USB, or
-        no clear trend yet), its care tasks, and when its photo was added (None: none)."""
+        no clear trend yet), its care tasks, when its photo was added (None: none), and its last
+        silent ping's round trip (None: never pinged)."""
         return await asyncio.to_thread(_ha_plants)
 
     @app.post("/api/ha/update")
@@ -1203,6 +1210,14 @@ def create_app(services, background_tasks=True, on_quit=None, port=None):
         days = max(1, min(30, days))
         samples = await asyncio.to_thread(s.db.all_link_samples, time.time() - days * 86400)
         return network_signal_history_of(samples, days)
+
+    @app.get("/api/network/round-trips")
+    async def network_round_trips(days: int = 7):
+        """Each board's silent pings (Ping all, and every 'ping_every_minutes' when that's on) over
+        the last days: {device_id: {points: [[time, ms or null]], median_ms, answered_pct, last}}."""
+        days = max(1, min(30, days))
+        rows = await asyncio.to_thread(s.db.round_trips, time.time() - days * 86400)
+        return round_trip_history(rows, days=days)
 
     @app.get("/api/network/history/{snapshot_id}")
     async def network_snapshot(snapshot_id: int):
@@ -1867,10 +1882,25 @@ async def _auto_refresh(services):
             if services.network.configured():
                 try:
                     await services.network.refresh()
+                    services.alerts.scan()  # a router that went away
                 except NetworkError as exc:
                     log.info("automatic network reading: %s", exc)
                 except Exception:  # noqa: BLE001
                     log.exception("automatic network reading")
+        await asyncio.sleep(max(minutes, 1) * 60)
+
+
+async def _auto_ping(services):
+    """A silent ping to every board every 'ping_every_minutes' (0: off), for each one's round-trip
+    history: a board getting slower shows before it drops off. Not during an update."""
+    await asyncio.sleep(30)
+    while True:
+        minutes = services.settings.ping_every_minutes
+        if minutes > 0 and services.updates.running_job() is None:
+            try:
+                await services.inventory.ping_all()
+            except Exception:  # noqa: BLE001 - try again next time
+                log.exception("timed ping")
         await asyncio.sleep(max(minutes, 1) * 60)
 
 

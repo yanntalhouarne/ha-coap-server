@@ -16,6 +16,7 @@ export const settingLabels = {
   discovery_timeout_s: ['Discovery time (s)', 'How long Find devices listens'],
   online_minutes: ['Online for (min)', 'A device that answered within this time shows as online'],
   auto_refresh_minutes: ['Automatic refresh (min)', 'Refreshes every device\'s status while the app runs. 0 turns it off.'],
+  ping_every_minutes: ['Ping every (min)', 'A silent ping (no beep) to every board this often, for each one\'s round trip over the week (the Network tab, a board\'s details): a board getting slower shows before it drops off. Each ping is one small message a board answers at its next poll: at 60 min, 24 a day per board. 0: off (Ping all still records them).'],
   reboot_timeout_s: ['Reboot timeout (s)', 'How long an updated device has to come back'],
   border_router_url: ['Border router REST API', 'For the Network page, such as http://192.168.1.20:8081 (the ot-br-posix REST server). Empty: not used.'],
   min_battery_for_update: ['Lowest battery for an update (%)', 'Over the air, a device whose battery is under this is skipped (an update can include it anyway). 0: no check.'],
@@ -30,7 +31,7 @@ export const settingLabels = {
 export const SETTINGS_ELSEWHERE = new Set(['home_assistant_url']);  // set in their own cards
 export const SETTING_GROUPS = [
   ['Devices and plants', ['online_minutes', 'auto_refresh_minutes', 'water_below_default', 'pump_flow_ml_s', 'min_battery_for_update']],
-  ['Network and timing', ['border_router_url', 'coap_port', 'smp_port', 'udp_mtu', 'serial_buffer', 'coap_timeout_s',
+  ['Network and timing', ['border_router_url', 'ping_every_minutes', 'coap_port', 'smp_port', 'udp_mtu', 'serial_buffer', 'coap_timeout_s',
     'mcumgr_timeout_s', 'discovery_timeout_s', 'reboot_timeout_s']],
   ['Keeping data', ['keep_readings_days', 'keep_network_readings', 'keep_backups', 'backup_copy_dir']],
   ['App', ['check_app_updates']],

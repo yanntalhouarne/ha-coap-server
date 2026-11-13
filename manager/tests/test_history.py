@@ -231,3 +231,24 @@ async def test_a_silent_ping_to_every_board(client, services, start_sim):
     services.settings.coap_timeout_s = 0.5
     [result] = (await client.post("/api/network/ping-all", headers=CHANGE)).json()
     assert not result["ok"] and result["ms"] is None
+    # Both pings are its round-trip history (the answer, then none), and Home Assistant gets the last
+    history = (await client.get("/api/network/round-trips")).json()["1a2b3c4d"]
+    assert [ms is None for _, ms in history["points"]] == [False, True]
+    assert history["answered_pct"] == 50 and history["median_ms"] >= 0 and history["last"]["ms"] is None
+    [plant] = (await client.get("/api/ha/plants")).json()["devices"]
+    assert plant["round_trip"]["ms"] is None and plant["round_trip"]["time"] > 0
+
+
+def test_round_trip_history():
+    from hacoap_manager.network import round_trip_history
+    now = 1_000_000
+    rows = [{"device_id": "a", "time": now - 8 * 86400, "ms": 9000},   # older than the week: left out
+            {"device_id": "a", "time": now - 3600 * 3, "ms": 1000},
+            {"device_id": "a", "time": now - 3600 * 2, "ms": None},
+            {"device_id": "a", "time": now - 3600, "ms": 3000},
+            {"device_id": "b", "time": now - 60, "ms": None}]
+    history = round_trip_history(rows, now=now)
+    assert history["a"]["points"] == [[now - 10800, 1000], [now - 7200, None], [now - 3600, 3000]]
+    assert (history["a"]["median_ms"], history["a"]["answered_pct"]) == (3000, 67)
+    assert history["b"] == {"points": [[now - 60, None]], "median_ms": None, "answered_pct": 0,
+                            "last": {"time": now - 60, "ms": None}}
