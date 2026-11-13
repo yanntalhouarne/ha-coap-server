@@ -11,6 +11,7 @@ export const builds = { schema: [], variants: [], profiles: [], profile: null, b
 export async function loadBuildsTab() {
   const [schema, profiles, checks, history] = await Promise.all([
     api('GET', '/api/kconfig'), api('GET', '/api/profiles'), api('GET', '/api/build-checks'), api('GET', '/api/firmware-builds')]);
+  api('GET', '/api/firmware-builds/key', undefined, { quiet: true }).then(suggestKey, () => {});
   builds.schema = schema.schema;
   builds.variants = schema.variants;
   builds.profiles = profiles;
@@ -27,6 +28,16 @@ export async function loadBuildsTab() {
   const running = history.find((b) => b.result === 'running');
   if (running) showBuildLog(running.id);
 }
+
+// The key the boards' bootloaders take, judged from the images they run: chosen for the next build,
+// unless it was chosen here already
+function suggestKey(key) {
+  const select = document.getElementById('build-sign-with');
+  if (!select.dataset.chosen) select.value = key.sign_with;
+  document.getElementById('build-sign-hint').textContent = key.why ? `${key.why}.` : '';
+}
+
+document.getElementById('build-sign-with').addEventListener('change', (event) => { event.target.dataset.chosen = '1'; });
 
 export function showProfile(name) {
   builds.profile = builds.profiles.find((p) => p.name === name) || null;
@@ -194,7 +205,8 @@ export async function startBuild(allowDevelopmentKey = false) {
   if (!builds.profile) return;
   try {
     const signWith = document.getElementById('build-sign-with').value;
-    if (signWith === 'development' && !allowDevelopmentKey && !confirm('Sign with MCUboot\'s public development key? '
+    const fleetTakes = document.getElementById('build-sign-hint').textContent.includes('development key');
+    if (signWith === 'development' && !allowDevelopmentKey && !fleetTakes && !confirm('Sign with MCUboot\'s public development key? '
       + 'Only boards whose bootloader still has the development key take this image; anyone can sign one like it.')) return;
     const build = await api('POST', '/api/firmware-builds', { profile: builds.profile.name,
       allow_development_key: allowDevelopmentKey || signWith === 'development', sign_with: signWith }, { quiet: true });

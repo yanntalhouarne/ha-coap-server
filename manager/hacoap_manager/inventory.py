@@ -37,6 +37,11 @@ REDISCOVER_INTERVAL_S = 300
 HISTORY_READS = 8      # answers read at most at a refresh (54 samples each: more than the board keeps)
 SAMPLE_MARGIN_S = 1    # a sample this close after the last reading kept is that one again (its time is to the second)
 BUTTON = "its button"   # who ran its pump, in the activity, when it was its button
+ELSEWHERE = "another app, such as Home Assistant"  # ... when neither this app nor its button did
+ELSEWHERE_MIN_MS = 1000  # pump time ('diag' pump_ms) no run explains: a run started elsewhere from this long
+ABSORBED_MS = 500        # a run that ran this much shorter than noted: timing, not a run still going
+MAX_RUN_MS = 10_000      # longer than any run (9 s at most): pump time missing beyond it isn't a run still going
+OWN_RUN_WAIT_S = 15      # after this app starts a run: its pump time isn't counted until the run, and its note, are done
 
 
 def same_board(reported, device_id):
@@ -74,7 +79,8 @@ class Inventory:
         self.on_restart = None  # called with (device, cause, fault) after a restart that's a problem
         self.on_pushed = None   # called with the device after it pushed new samples
         self.observer = None    # observes the boards' 'hist' (coap.Observer), from the first refresh
-        self._push_tasks = set()  # reads after a push without samples (a setting changed)
+        self._push_tasks = set()  # reads after a push without samples (a setting changed, a pump run ended)
+        self._pump_started = {}   # device_id: when this app last started its pump (before its activity notes it)
 
     def _changed(self, device):
         self.events.publish("device", device=self.describe(device))
@@ -240,8 +246,9 @@ class Inventory:
         newest = self._store_samples(device["device_id"], history, time.time())
         if newest is None:
             if not history.samples:
-                # A push without samples: its settings changed (its pump's run time, set in Home Assistant)
-                task = asyncio.get_running_loop().create_task(self._pump_s_changed(device["device_id"], host))
+                # A push without samples: something changed (its pump's run time, set in Home
+                # Assistant; a pump run ended)
+                task = asyncio.get_running_loop().create_task(self._after_change(device["device_id"], host))
                 self._push_tasks.add(task)
                 task.add_done_callback(self._push_tasks.discard)
             return
@@ -255,14 +262,25 @@ class Inventory:
         if self.on_pushed is not None:
             self.on_pushed(device)
 
-    async def _pump_s_changed(self, device_id, host):
+    async def _after_change(self, device_id, host):
+        """After a push without samples: its 'diag' again (its pump's run time, a pump run started
+        elsewhere), or its 'pumpdc' (firmware without pump_s in 'diag')."""
+        options = self._coap_options()
         try:
-            seconds = await coap.get_pump_duration(host, **self._coap_options())
+            diag = await coap.get_diag(host, **options)
         except (coap.CoapError, TimeoutError, OSError):
-            return  # seen at the next refresh ('diag')
+            diag = None
         device = self.db.device(device_id)
-        if device is not None and device["pump_s"] != seconds:
-            self._changed(self.db.upsert_device(device_id, pump_s=seconds, last_seen=time.time()))
+        if device is None:
+            return
+        fields = self._diagnostics(device, diag) if diag is not None else {}
+        if fields.get("pump_s") is None:
+            try:
+                fields["pump_s"] = await coap.get_pump_duration(host, **options)
+            except (coap.CoapError, TimeoutError, OSError):
+                if not fields:
+                    return  # seen at the next refresh
+        self._changed(self.db.upsert_device(device_id, last_seen=time.time(), **fields))
 
     async def refresh(self, device_id, rediscover=True):
         """Reads 'info', 'data' and (newer firmware) 'diag' and 'hist' over CoAP. A board that
@@ -321,8 +339,15 @@ class Inventory:
     def _diagnostics(self, device, diag):
         """The fields 'diag' sets, after recording any restart since the last answer."""
         now = time.time()
+        # As it is now: a push may have been read while this answer came (its runs counted once)
+        device = self.db.device(device["device_id"]) or device
         previous = device["boots"]
-        if previous is not None and diag.boots != previous:
+        restarted = previous is not None and diag.boots != previous
+        # An answer older than one already read (a refresh's, overtaken by a push's): it would set
+        # its counts back
+        if not restarted and device["uptime_s"] is not None and diag.uptime_s < device["uptime_s"]:
+            return {}
+        if restarted:
             # Several restarts between two refreshes: only the last one's cause is known.
             count = diag.boots - previous if diag.boots > previous else 1  # a lower count: its flash was erased
             message = f"Restarted: {reset_text(diag.reset, diag.fault)}"
@@ -332,7 +357,7 @@ class Inventory:
             if diag.reset in BAD_RESETS and self.on_restart is not None:
                 self.on_restart(device, diag.reset, diag.fault)
         # Its power now, not as the refresh started: a sample it pushed meanwhile may have told already
-        power = (self.db.device(device["device_id"]) or device)["power"]
+        power = device["power"]
         if diag.power and power and diag.power != power and diag.power in POWER_CHANGES:
             self.db.add_activity(device["device_id"], "power", POWER_CHANGES[diag.power], actor="")
         fields = dict(boots=diag.boots, reset_cause=diag.reset, fault=diag.fault, uptime_s=diag.uptime_s,
@@ -341,14 +366,39 @@ class Inventory:
         if diag.button_s is not None:
             # Its pump's runs with its button since the last answer (all of them since boot after a
             # restart), for its water tank. Not known before the first answer.
-            restarted = previous is not None and diag.boots != previous
             ran = diag.button_s if restarted else diag.button_s - (device["button_s"] or 0)
             if device["button_s"] is not None and ran > 0:
                 self.db.add_activity(device["device_id"], "pump", f"Pump run with its button ({ran} s)", actor=BUTTON)
             fields["button_s"] = diag.button_s
+        if diag.pump_ms is not None:
+            fields.update(self._runs_elsewhere(device, diag, restarted, now))
         if diag.pump_s is not None:
             fields["pump_s"] = diag.pump_s
         return fields
+
+    def _runs_elsewhere(self, device, diag, restarted, now):
+        """Its pump's runs that neither this app nor its button started (Home Assistant...),
+        noted for its water tank: how long its pump ran ('diag' pump_ms) since the runs noted
+        last time, less the runs noted since (this app's, its button's). Returns the fields that
+        keep the count: none while a run this app started may not be noted yet."""
+        if now - self._pump_started.get(device["device_id"], float("-inf")) < OWN_RUN_WAIT_S:
+            return {}  # counted at an answer after it
+        seen, since = device["pump_ms_seen"], device["pump_ms_time"]
+        noted_until = time.time()  # the runs noted until now are counted (the button's just now too)
+        if seen is None or since is None:
+            return {"pump_ms_seen": diag.pump_ms, "pump_ms_time": noted_until}  # the first answer: from now
+        rows = [r for r in self.db.activity_kind_since(device["device_id"], "pump", since) if r["actor"] != ELSEWHERE]
+        accounted = (0 if restarted else seen) + sum(s for _, s in fleet.pump_runs(rows)) * 1000
+        left = diag.pump_ms - accounted
+        if left >= ELSEWHERE_MIN_MS:
+            seconds = round(left / 1000)
+            self.db.add_activity(device["device_id"], "pump", f"Pump run from another app ({seconds} s)", when=now,
+                                 actor=ELSEWHERE)
+        elif -MAX_RUN_MS <= left <= -ABSORBED_MS and not restarted:
+            # A run still going (its button's: noted whole as it starts): the rest of it is noted already
+            return {"pump_ms_seen": accounted, "pump_ms_time": noted_until}
+        # Else timing, runs lost in a restart, or a run that didn't happen
+        return {"pump_ms_seen": diag.pump_ms, "pump_ms_time": noted_until}
 
     async def refresh_all(self, concurrency=4):
         semaphore = asyncio.Semaphore(concurrency)
@@ -512,6 +562,8 @@ class Inventory:
         """Sets the run time and/or starts or stops the pump. Returns the pump's state."""
         address = self._address(device_id)
         options = self._coap_options()
+        if on:
+            self._pump_started[device_id] = time.time()  # before it runs: its 'diag' may come first
         try:
             if seconds is not None:
                 await coap.set_pump_duration(address, int(seconds), **options)

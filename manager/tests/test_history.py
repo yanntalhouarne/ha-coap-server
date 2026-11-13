@@ -130,6 +130,31 @@ async def test_a_pump_run_time_set_elsewhere_shows_at_once(client, services, sta
     assert services.db.device("1a2b3c4d")["pump_s"] == 8
 
 
+
+async def test_a_pump_run_from_another_app_is_counted(client, services, start_sim, monkeypatch):
+    from hacoap_manager import inventory
+    monkeypatch.setattr(inventory, "OWN_RUN_WAIT_S", 1.5)
+    server = await start_sim(dynamic=False)
+    await add_board(client, services, server)         # its pump time so far: before the app knew it
+    pumped = lambda: [a["message"] for a in services.db.activity("1a2b3c4d") if a["kind"] == "pump"]
+    # Started by Home Assistant: when the run ends the board pushes, the app reads its 'diag'
+    await coap.set_pump("127.0.0.1", True, **services.inventory._coap_options())
+    await until(lambda: pumped() == ["Pump run from another app (1 s)"])
+    assert services.inventory.describe(services.db.device("1a2b3c4d"))["tank"] is None  # no tank: just noted
+    # Started from the app: its own note, not another app's
+    response = await client.post("/api/devices/1a2b3c4d/pump", json={"on": True}, headers=CHANGE)
+    assert response.status_code == 200
+    await asyncio.sleep(1.7)                          # the run, its push, and the wait for its note
+    await refresh(client)
+    assert pumped() == ["Pump run from another app (1 s)", "Pump started from the app (1 s)"]
+    # Its button: noted as its button's
+    server.device.press_button()
+    await asyncio.sleep(0.3)
+    await refresh(client)                             # while it runs: the rest of it is noted already
+    await asyncio.sleep(1.2)
+    await refresh(client)
+    assert pumped()[2:] == ["Pump run with its button (1 s)"]
+
 async def test_after_a_restart_its_samples_start_again(client, services, start_sim):
     server = await start_sim(dynamic=False)
     await add_board(client, services, server)

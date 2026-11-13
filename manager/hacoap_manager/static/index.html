@@ -691,6 +691,7 @@
               </select>
               <span id="build-status" class="small"></span>
             </div>
+            <div class="form-text mb-1" id="build-sign-hint"></div>
             <div class="form-text mb-2">Runs <code>scripts/build</code>, like a terminal would (about 2 minutes), into
               the variant's usual build folder, then adds the image to the library. A board takes an update signed
               with the key its bootloader was made with: <b>your key</b> once its bootloader is yours, <b>the
@@ -1121,7 +1122,8 @@
                 <input class="form-check-input" type="checkbox" id="remote-link-ha">
                 <label class="form-check-label" for="remote-link-ha">For the HA CoAP integration: its key lets Home
                   Assistant read the boards' firmware and update a board to the release image (Home Assistant's
-                  Updates), nothing else. Paste the address and key in the integration's "Connect the fleet manager".</label>
+                  Updates), read the plants' water tanks, battery forecasts and care tasks, mark a tank refilled and a
+                  care task done, nothing else. Paste the address and key in the integration's "Connect the fleet manager".</label>
               </div>
               <div id="remote-link-new" class="small"></div>
               <div id="remote-links" class="small"></div>

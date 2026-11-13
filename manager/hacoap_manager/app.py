@@ -232,10 +232,13 @@ def _link_allows(method, path):
 
 
 # What a link for the HA CoAP integration opens: the boards' firmware, and updating one of them
-# to the release image (never another image, nothing else)
+# to the release image (never another image); the plants' water tanks, battery forecasts and care
+# tasks, with a tank refilled and a care task done (adding or removing them: the full app)
 HA_LINK_ALLOWED = [
-    (("GET", "HEAD"), re.compile(r"^/api/ha/firmware$")),
+    (("GET", "HEAD"), re.compile(r"^/api/ha/(firmware|plants)$")),
     (("POST",), re.compile(r"^/api/ha/update$")),
+    (("POST",), re.compile(r"^/api/devices/[^/]+/tank/refilled$")),
+    (("POST",), re.compile(r"^/api/care/\d+/done$")),
 ]
 
 
@@ -981,6 +984,29 @@ def create_app(services, background_tasks=True, on_quit=None, port=None):
     async def firmware_builds():
         return s.db.builds()
 
+    def _fleet_key():
+        """The key to sign a build with, from the images the boards run: the development key when
+        more of them run images signed with it than with yours (their bootloader most likely
+        still has it, and would refuse your key)."""
+        signers = {}
+        for device in s.db.devices():
+            running = device["image_hash"]
+            if running and s.db.image(running) is not None:
+                signer = _signature(running, None)["signer"]
+                signers.setdefault(signer, []).append(naming.display_name(device))
+        development, yours = signers.get("development", []), signers.get("yours", [])
+        if development and len(development) > len(yours):
+            return {"sign_with": "development", "development": development, "yours": yours,
+                    "why": f"{len(development)} of the boards run an image signed with the development key: their "
+                           "bootloader most likely only accepts that key"}
+        return {"sign_with": "yours", "development": development, "yours": yours,
+                "why": f"{len(yours)} of the boards run an image signed with your key" if yours else ""}
+
+    @app.get("/api/firmware-builds/key")
+    async def build_key():
+        """The key to sign the next build with, from what the boards run."""
+        return await asyncio.to_thread(_fleet_key)
+
     @app.get("/api/firmware-builds/{build_id}")
     async def firmware_build(build_id: int):
         if s.builds.running() and s.builds.current["id"] == build_id:
@@ -1071,6 +1097,30 @@ def create_app(services, background_tasks=True, on_quit=None, port=None):
                          "image_version": d["image_version"], "git_commit": commits.get(d["image_hash"], "") or d["fw_version"],
                          "update": _last_update_of(d["device_id"])} for d in s.db.devices()],
         }
+
+    def _ha_plants():
+        now = time.time()
+        result = []
+        for device in s.inventory.devices():
+            on_usb = device["power"] in fleet.ON_USB
+            readings = s.db.readings(device["device_id"], since=now - fleet.FORECAST_WINDOW_DAYS * DAY_S)
+            forecast = None if on_usb else fleet.battery_forecast(readings)
+            tank = device["tank"]
+            result.append({
+                "device_id": device["device_id"], "name": naming.display_name(device), "on_usb": on_usb,
+                "battery_days_left": round(forecast["days_left"], 1) if forecast else None,
+                "tank": {key: tank[key] for key in ("size_ml", "left_ml", "percent", "low", "per_day_ml", "filled")}
+                | {"days_left": round(tank["days_left"], 1) if tank["days_left"] is not None else None} if tank else None,
+                "care": [{key: task[key] for key in ("id", "what", "every_days", "due", "last_done")}
+                         for task in s.db.care_tasks(device["device_id"])],
+            })
+        return {"devices": result}
+
+    @app.get("/api/ha/plants")
+    async def ha_plants():
+        """Each plant's water tank (None: not tracked), its battery's days left (None: on USB, or
+        no clear trend yet), and its care tasks."""
+        return await asyncio.to_thread(_ha_plants)
 
     @app.post("/api/ha/update")
     async def ha_update(body: dict):

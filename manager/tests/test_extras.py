@@ -437,3 +437,23 @@ def test_bool_settings_from_text():
     assert settings.check_app_updates is False
     settings.update({"check_app_updates": True})
     assert settings.check_app_updates is True
+
+
+async def test_builds_are_signed_with_the_key_the_boards_take(client, services, monkeypatch):
+    """The next build's key: the development key while most boards run images signed with it."""
+    assert (await client.get("/api/firmware-builds/key")).json() == {
+        "sign_with": "yours", "development": [], "yours": [], "why": ""}  # nothing known: your key
+    services.db.add_image(OLD_HASH, "1.0.0", "app_update.bin", 1000, "development")
+    services.db.add_image(NEW_HASH, "1.0.1", "app_update.bin", 1000, "yours")
+    signers = {NEW_HASH: "yours", OLD_HASH: "development"}
+    monkeypatch.setattr(services.signing, "check", lambda image_hash, read, key=None: {
+        "signer": signers.get(image_hash, "unknown"), "detail": ""})
+    services.db.upsert_device("aa", name="basil", image_hash=OLD_HASH)
+    services.db.upsert_device("bb", name="mint", image_hash=OLD_HASH)
+    services.db.upsert_device("cc", name="thyme", image_hash=NEW_HASH)
+    services.db.upsert_device("dd", name="sage")  # its image isn't known
+    key = (await client.get("/api/firmware-builds/key")).json()
+    assert key["sign_with"] == "development" and sorted(key["development"]) == ["basil", "mint"]
+    assert key["why"].startswith("2 of the boards run an image signed with the development key")
+    services.db.upsert_device("bb", image_hash=NEW_HASH)  # half and half: your key
+    assert (await client.get("/api/firmware-builds/key")).json()["sign_with"] == "yours"

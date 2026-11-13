@@ -635,6 +635,8 @@ class SimulatedDevice:
         asyncio.get_running_loop().call_later(self.pump_duration, self._pump_off)
 
     def _pump_off(self):
+        if self.pump_running and self.history:
+            self.notify()  # a run ended: its observers read 'diag' again (pump_ms), as the firmware's push
         self.pump_running = False
 
 

@@ -57,7 +57,9 @@ CREATE TABLE IF NOT EXISTS devices (
     hist_next     INTEGER,                    -- ...and the number of the first one not read yet
     no_hist_fw    TEXT NOT NULL DEFAULT '',   -- the firmware that didn't answer 'hist' (not asked again)
     button_s      INTEGER,                    -- the pump's run time with its button since boot, as last reported ('diag')
-    last_sample   REAL                        -- when its newest sample was taken ('hist'), NULL: not known
+    last_sample   REAL,                       -- when its newest sample was taken ('hist'), NULL: not known
+    pump_ms_seen  INTEGER,                    -- its pump's run time since boot ('diag' pump_ms) its activity accounts for...
+    pump_ms_time  REAL                        -- ...with its pump runs noted until then
 );
 CREATE TABLE IF NOT EXISTS images (
     hash     TEXT PRIMARY KEY,
@@ -178,7 +180,7 @@ DEVICE_FIELDS = ("name", "address", "serial_port", "fw_version", "hw_version", "
                  "tags", "location", "plant", "water_below", "photo", "boots", "reset_cause", "fault", "uptime_s",
                  "role", "rloc16", "parent_rloc16", "parent_rssi", "link_quality", "soil_mv", "diag_time",
                  "no_diag_fw", "pump_s", "srp_state", "power", "tank_ml", "tank_filled", "pump_ml_s", "watering",
-                 "hist_boot", "hist_next", "no_hist_fw", "button_s", "last_sample")
+                 "hist_boot", "hist_next", "no_hist_fw", "button_s", "last_sample", "pump_ms_seen", "pump_ms_time")
 
 # Columns added after the first version: (table, column, definition), added to older databases
 ADDED_COLUMNS = [
@@ -216,6 +218,8 @@ ADDED_COLUMNS = [
     ("devices", "button_s", "INTEGER"),
     ("activity", "actor", "TEXT NOT NULL DEFAULT ''"),
     ("devices", "last_sample", "REAL"),
+    ("devices", "pump_ms_seen", "INTEGER"),
+    ("devices", "pump_ms_time", "REAL"),
 ]
 
 

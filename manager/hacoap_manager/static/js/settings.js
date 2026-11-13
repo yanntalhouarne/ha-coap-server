@@ -355,7 +355,7 @@ function renderLinks(st) {
   list.replaceChildren(h('ul', { class: 'list-unstyled mb-0' }, st.links.map((link) => h('li', { class: 'd-flex align-items-center gap-2 py-1' },
     h('div', { class: 'flex-grow-1 text-truncate' }, h('b', {}, link.name),
       link.view_only ? h('span', { class: 'tag ms-2' }, 'view only') : null,
-      link.kind === 'home_assistant' ? h('span', { class: 'tag ms-2' }, 'HA CoAP: firmware') : null,
+      link.kind === 'home_assistant' ? h('span', { class: 'tag ms-2' }, 'HA CoAP: firmware, tanks, care') : null,
       h('div', { class: 'text-body-secondary' }, `made ${when(link.created)}, `,
         link.last_used ? `last used ${when(link.last_used)} from ${link.address}` : 'never used yet')),
     h('button', { class: 'btn btn-sm btn-outline-danger text-nowrap', type: 'button', onclick: (e) => {

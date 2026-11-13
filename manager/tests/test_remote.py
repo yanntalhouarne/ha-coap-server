@@ -503,3 +503,39 @@ async def test_a_home_assistant_link_reads_and_updates_the_firmware_only(service
     # A dashboard link doesn't reach them
     async with client_for(services, "192.168.50.30", SERVER) as dashboard:
         assert (await dashboard.get("/api/ha/firmware", headers={remote.KEY_HEADER: dashboard_key})).status_code == 403
+
+
+async def test_a_home_assistant_link_reads_the_plants_tanks_and_care(services):
+    """The HA CoAP integration's link: each plant's water tank, battery forecast and care tasks,
+    a tank refilled and a care task done; not adding or removing care tasks."""
+    await allow_home_network(services)
+    now = time.time()
+    services.db.upsert_device("1a2b3c4d", plant="basil", address="fd11::1", tank_ml=1000, tank_filled=now - 3 * 86400,
+                              power="battery")
+    services.db.upsert_device("5e6f7a8b", plant="mint", address="fd11::2", power="usb")
+    for hours in range(0, 48, 4):  # its battery drops 2 % a day
+        services.db.add_reading("1a2b3c4d", 80 - hours / 12, 40, 50, 21, when=now - (48 - hours) * 3600)
+    services.db.add_activity("1a2b3c4d", "pump", "Pump started from the app (5 s)", when=now - 86400)
+    task = services.db.add_care_task("1a2b3c4d", "Fertilize", 14, now - 3600)
+    async with client_for(services) as local:
+        key = (await local.post("/api/remote-access/links", json={"name": "Home Assistant", "kind": "home_assistant"},
+                                headers=CHANGE)).json()["link"]["key"]
+    async with client_for(services, "192.168.50.40", SERVER) as ha:
+        header = {remote.KEY_HEADER: key, **CHANGE}
+        plants = {d["device_id"]: d for d in (await ha.get("/api/ha/plants", headers=header)).json()["devices"]}
+        basil, mint = plants["1a2b3c4d"], plants["5e6f7a8b"]
+        assert basil["name"] == "basil" and not basil["on_usb"]
+        assert 30 < basil["battery_days_left"] < 45
+        assert basil["tank"]["left_ml"] == 900 and basil["tank"]["percent"] == 90  # 5 s at 20 ml/s
+        assert basil["care"] == [{"id": task["id"], "what": "Fertilize", "every_days": 14, "due": task["due"],
+                                  "last_done": None}]
+        assert mint["on_usb"] and mint["battery_days_left"] is None and mint["tank"] is None and mint["care"] == []
+        done = await ha.post(f"/api/care/{task['id']}/done", headers=header)
+        assert done.status_code == 200 and done.json()["due"] > now + 13 * 86400
+        refilled = await ha.post("/api/devices/1a2b3c4d/tank/refilled", headers=header)
+        assert refilled.status_code == 200 and refilled.json()["tank"]["percent"] == 100
+        for method, path in [("POST", "/api/devices/1a2b3c4d/care"), ("DELETE", f"/api/care/{task['id']}"),
+                             ("PATCH", f"/api/care/{task['id']}"), ("PATCH", "/api/devices/1a2b3c4d")]:
+            assert (await ha.request(method, path, headers=header, json={"what": "x"})).status_code == 403, path
+    timeline = services.db.activity("1a2b3c4d")
+    assert {(a["kind"], a["actor"]) for a in timeline if a["kind"] in ("care", "tank")} ==         {("care", "the link “Home Assistant”"), ("tank", "the link “Home Assistant”")}
