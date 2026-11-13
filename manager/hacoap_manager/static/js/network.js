@@ -16,7 +16,8 @@ import { initNetLive, markWeakPoints, radioDetails, renderRadio, renderWeakPoint
 
 // Node IDs are kept as strings everywhere (they're also the elements' data-node).
 export const net = { state: null, positions: new Map(), dragged: new Set(), selected: null, hover: null, layout: null, zoom: {},
-  viewing: null, history: [], heatmap: false, allNames: false, allLinks: false, view: 'mesh', lens: 'soil', weakPoints: false };
+  viewing: null, history: [], heatmap: false, allNames: false, allLinks: false, view: 'mesh', lens: 'battery', weakPoints: false,
+  batteryLife: new Map() };  // device_id → days its battery lasts (its trend over two weeks), for the battery lens
 // The reading on screen: the latest, or an earlier one picked on the history slider.
 export const shownTopology = () => (net.viewing ? net.viewing.topology : net.state && net.state.topology);
 export const nodeStyles = {
@@ -42,9 +43,10 @@ export const iconUse = (name, size, attrs = {}) => svg('use', { href: `#i-${name
 export const AVATAR_R = 20;
 export let clipIds = 0;
 
-// What a board's ring shows (Lens on the map's toolbar): its soil (the default), its battery, its
-// firmware against the release, its signal to its parent, or how long ago it was heard from.
-export const LENSES = [['soil', 'soil'], ['battery', 'battery'], ['firmware', 'firmware'], ['signal', 'signal'], ['heard', 'last heard']];
+// What a board's ring shows (Lens on the map's toolbar): how long its battery lasts (the default),
+// its soil, its firmware against the release, its signal to its parent, or how long ago it was heard from.
+export const LENSES = [['battery', 'battery life'], ['soil', 'soil'], ['firmware', 'firmware'], ['signal', 'signal'], ['heard', 'last heard']];
+const FULL_LIFE_DAYS = 180;  // the battery lens's ring is full from six months left
 const POLL_S = { battery: 3, usb: 0.5 };  // how often a board checks in with its parent: the default poll period, or on USB
 
 // The ring's share (0-1, null: none) and tone (ok, warn, bad, off; '' the default colour), and in words.
@@ -54,9 +56,14 @@ export function lensRing(node, device) {
   const off = !device.online && net.lens !== 'heard';
   let ring;
   if (net.lens === 'battery') {
+    // How long it lasts: red under two weeks, amber under six; on USB, full. No trend yet: its %
     const b = device.battery;
-    ring = b === null || b === undefined ? { fraction: null, tone: 'off', text: 'battery unknown' }
-      : { fraction: clamp(b / 100), tone: onUsb(device) ? 'ok' : b <= LOW_BATTERY ? 'bad' : b <= 40 ? 'warn' : 'ok', text: `battery ${pct(b)}` };
+    const days = net.batteryLife.get(device.device_id);
+    const lasts = days === undefined || days === null ? null : days >= 60 ? `≈ ${Math.round(days / 30)} months left` : `≈ ${Math.round(days)} days left`;
+    ring = onUsb(device) ? { fraction: 1, tone: 'ok', text: `battery ${pct(b)} · ${powerText(device)}` }
+      : lasts ? { fraction: clamp(days / FULL_LIFE_DAYS), tone: days < 14 ? 'bad' : days < 42 ? 'warn' : 'ok', text: `battery ${pct(b)} · ${lasts}` }
+        : b === null || b === undefined ? { fraction: null, tone: 'off', text: 'battery unknown' }
+          : { fraction: clamp(b / 100), tone: b <= LOW_BATTERY ? 'bad' : b <= 40 ? 'warn' : 'ok', text: `battery ${pct(b)} (no trend yet)` };
   } else if (net.lens === 'firmware') {
     const status = imageStatus(device);
     ring = { fraction: 1, tone: { current: 'ok', outdated: 'warn' }[status] || 'off',
@@ -838,7 +845,15 @@ export function renderNetworkLegend() {
     help);
 }
 
+// How long each battery lasts (the simple view's figures), for the battery lens
+export async function loadBatteryLife() {
+  const plants = await api('GET', '/api/wall', undefined, { quiet: true });
+  net.batteryLife = new Map(plants.map((p) => [p.device_id, p.battery_forecast ? p.battery_forecast.days_left : null]));
+  if (net.lens === 'battery') redrawNetwork();
+}
+
 export async function loadNetwork() {
+  loadBatteryLife().catch(() => {});
   net.state = await api('GET', '/api/network');
   document.getElementById('border-router-url').value = net.state.border_router_url || '';
   document.getElementById('border-router-container').value = net.state.border_router_container || '';
@@ -1043,11 +1058,11 @@ export function pulseBoard(deviceId) {
 initNetLive();
 
 // The lens: what the boards' rings show
-try { net.lens = localStorage.getItem('hacoap-map-lens') || 'soil'; } catch (error) { /* the default */ }
+try { net.lens = localStorage.getItem('hacoap-map-lens') || 'battery'; } catch (error) { /* the default */ }
 {
   const select = document.getElementById('lens-select');
   select.replaceChildren(...LENSES.map(([key, label]) => h('option', { value: key }, label)));
-  select.value = LENSES.some(([key]) => key === net.lens) ? net.lens : 'soil';
+  select.value = LENSES.some(([key]) => key === net.lens) ? net.lens : 'battery';
   net.lens = select.value;
   select.addEventListener('change', () => {
     net.lens = select.value;
