@@ -245,7 +245,7 @@ export function renderWeakPoints() {
   const { routers, links } = weakPoints(topology);
   const name = (n) => (n ? nodeLabel(n) : '?');
   const jump = (n, text) => h('button', { class: 'btn btn-link btn-sm p-0 align-baseline', type: 'button',
-    onclick: () => selectNode(String(n.id), true) }, text);
+    onclick: () => selectNode(String(n.id), true, true) }, text);
   const items = [];
   for (const point of routers.filter((p) => p.boards.length)) {
     items.push(h('li', {}, h('span', { class: 'weak-dot bad' }), jump(point.node, name(point.node)), ': ',
@@ -299,7 +299,7 @@ export function renderRadio() {
     h('thead', {}, h('tr', {}, ...['Router', 'Sent', 'Received', 'Sends failed', 'Received in error', 'Channel busy', 'Not collected by sleepy boards']
       .map((t) => h('th', {}, t)))),
     h('tbody', {}, ...rows.map(({ node, radio }) => h('tr', {},
-      h('td', {}, h('button', { class: 'btn btn-link btn-sm p-0', type: 'button', onclick: () => selectNode(String(node.id), true) }, nodeLabel(node)),
+      h('td', {}, h('button', { class: 'btn btn-link btn-sm p-0', type: 'button', onclick: () => selectNode(String(node.id), true, true) }, nodeLabel(node)),
         h('div', { class: 'text-body-secondary' }, window_(radio.window_s))),
       h('td', {}, radio.sent), h('td', {}, radio.received),
       h('td', { class: `tone-${tone(radio.send_failed_pct, 2, 10)}` }, pctText(radio.send_failed_pct)),

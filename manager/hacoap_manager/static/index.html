@@ -375,7 +375,9 @@
           <button class="btn btn-sm btn-outline-secondary" id="history-play" type="button"></button>
           <button class="btn btn-sm btn-outline-secondary d-none" id="history-latest" type="button">back to latest</button>
         </span>
-        <button class="btn btn-primary ms-auto" id="network-refresh" type="button"><svg class="icon" aria-hidden="true"><use href="#i-refresh-cw"/></svg> Read the network</button>
+        <button class="btn btn-outline-secondary ms-auto" id="net-wall-button" type="button" title="Full screen, for a spare monitor: the lens changes by itself, live messages, a clock (Esc to leave)">
+          <svg class="icon" aria-hidden="true"><use href="#i-monitor"/></svg> wall</button>
+        <button class="btn btn-primary" id="network-refresh" type="button"><svg class="icon" aria-hidden="true"><use href="#i-refresh-cw"/></svg> Read the network</button>
         <div class="dropdown">
           <button class="btn btn-outline-secondary net-gear" id="net-settings-button" type="button" data-bs-toggle="dropdown"
             data-bs-auto-close="outside" aria-expanded="false" title="Border router and floor plan" aria-label="Border router and floor plan">
@@ -437,6 +439,10 @@
             <input type="checkbox" id="links-toggle"><svg class="icon"><use href="#i-spline"/></svg>all links</label>
           <label class="map-tool" title="Rings the routers your boards depend on, and marks the boards that hear their parent weakly">
             <input type="checkbox" id="weakpoints-toggle"><svg class="icon"><use href="#i-triangle-alert"/></svg>weak points</label>
+          <label class="map-tool" title="A router you can drag around: which boards it would reach, and what it would change">
+            <input type="checkbox" id="whatif-toggle"><svg class="icon"><use href="#i-plus"/></svg>what if</label>
+          <label class="map-tool" title="The messages to and from your boards, live, beside the map">
+            <input type="checkbox" id="log-toggle"><svg class="icon"><use href="#i-terminal"/></svg>log</label>
           <label class="map-tool map-lens" title="What your boards' rings show">
             <svg class="icon"><use href="#i-eye"/></svg>lens
             <select class="form-select form-select-sm" id="lens-select" aria-label="Lens: what your boards' rings show"></select></label>

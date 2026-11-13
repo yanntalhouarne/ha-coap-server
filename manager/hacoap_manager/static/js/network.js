@@ -11,13 +11,15 @@ import { renderChannelScan, renderFloorplan } from './floorplan.js';
 import { renderNetFrame, renderNetworkEvents } from './netframe.js';
 import { renderTree } from './tree.js';
 import { initNetLive, markWeakPoints, radioDetails, renderRadio, renderWeakPoints } from './netlive.js';
+import { drawTrails, drawWhatIf, flyTo, initNetPlus, linkHistory, loadSignalHistory, noteMoves, whatIfSamples } from './netplus.js';
 
 // ------------------------------------------------------------------ network
 
 // Node IDs are kept as strings everywhere (they're also the elements' data-node).
 export const net = { state: null, positions: new Map(), dragged: new Set(), selected: null, hover: null, layout: null, zoom: {},
   viewing: null, history: [], heatmap: false, allNames: false, allLinks: false, view: 'mesh', lens: 'battery', weakPoints: false,
-  batteryLife: new Map() };  // device_id → days its battery lasts (its trend over two weeks), for the battery lens
+  batteryLife: new Map(),  // device_id → days its battery lasts (its trend over two weeks), for the battery lens
+  showLog: true, whatIf: null, signalHistory: {}, lastParents: null };
 // The reading on screen: the latest, or an earlier one picked on the history slider.
 export const shownTopology = () => (net.viewing ? net.viewing.topology : net.state && net.state.topology);
 export const nodeStyles = {
@@ -418,6 +420,8 @@ export function renderNetwork() {
   document.getElementById('network-empty').classList.toggle('d-none', !!topology);
   const before = net.layout ? new Map(net.layout.nodes.map((n) => [n.id, { x: n.x, y: n.y }])) : new Map();
   canvas.querySelector(':scope > svg')?.remove();  // the map itself (the empty note and zoom buttons have icons)
+  // Boards that moved to another router since the drawing before: logged, and (on the mesh) a trail
+  const moved = topology ? noteMoves(topology, before.size ? before : null) : [];
   if (!topology || net.view !== 'mesh') return;
 
   const aspect = canvas.clientWidth && canvas.clientHeight ? canvas.clientWidth / canvas.clientHeight : 1.8;
@@ -458,6 +462,9 @@ export function renderNetwork() {
   }
   enableZoom(canvas, drawing, box, 'mesh');
   markWeakPoints(drawing, layout);
+  const placed = new Map(layout.nodes.map((n) => [n.id, { x: n.x, y: n.y, placed: true }]));
+  drawWhatIf(drawing, 'mesh', placed);
+  drawTrails(drawing, moved.map((m) => ({ ...m, to: placed.get(m.id) })));
 
   // Glide from where the nodes were (after a new reading), else just place them
   const moving = layout.nodes.filter((n) => before.has(n.id) &&
@@ -557,10 +564,11 @@ export function showTip(id) {
 }
 
 // Selecting a node (a click in any view or the list): its details, and the highlight kept.
-export function selectNode(id, reveal = false) {
+export function selectNode(id, reveal = false, fly = false) {
   const topology = shownTopology();
   const node = topology && meshTree(topology).byId.get(String(id));
   if (node) showNodeDetails(node, reveal);
+  if (node && fly) flyTo(String(id));  // from the list, the log, the weak points: the map glides there
 }
 
 // The scroll wheel (or a trackpad pinch) zooms around the pointer, dragging the background
@@ -814,7 +822,7 @@ export function showLinkDetails(spring) {
       ['Link quality in / out', spring.link.link_quality_in !== null && spring.link.link_quality_in !== undefined
         ? `${spring.link.link_quality_in} / ${spring.link.link_quality_out ?? '?'} (of 3)` : ''],
       ['Measured by', spring.link.from_board ? 'the board itself (the border router gave no signal for it)' : ''],
-    ]));
+    ]), ...[linkHistory(spring)].filter(Boolean));
 }
 
 export function renderNetworkLegend() {
@@ -830,7 +838,8 @@ export function renderNetworkLegend() {
     'background to move around, double-click to fit. Lens recolours your boards\' rings (soil, battery, firmware, ',
     'signal, last heard). Each board ripples at the rhythm it checks in with its parent (every 3 s, faster on USB). ',
     'Dots run along a board\'s way when it talks: green when it pushes, blue when the app reads it, amber for a ',
-    'command, violet for an update. Weak points rings the routers your boards depend on.');
+    'command, violet for an update. Weak points rings the routers your boards depend on. What if puts a router you ',
+    'can drag around, to see which boards it would reach. Arrow keys hop from the selected node to the next one.');
   document.getElementById('network-legend').replaceChildren(
     pill(mini(nodeShape({ border_router: true }).el), 'border router'),
     pill(mini(nodeShape({ kind: 'router' }, 1, 3).el), 'router'),
@@ -854,6 +863,7 @@ export async function loadBatteryLife() {
 
 export async function loadNetwork() {
   loadBatteryLife().catch(() => {});
+  loadSignalHistory().then(() => renderNetFrame(), () => {});
   net.state = await api('GET', '/api/network');
   document.getElementById('border-router-url').value = net.state.border_router_url || '';
   document.getElementById('border-router-container').value = net.state.border_router_container || '';
@@ -952,8 +962,8 @@ document.getElementById('history-latest').addEventListener('click', showLatestNe
 // link quality 0-3 as a rough margin), blended by distance (nearer nodes weigh more), and the
 // colour fades out within 'reach' of every node. A guide to dead zones, not a measurement.
 // area is [x, y, width, height] in map units; bands: colour in steps of 5 dB (contours), else smooth.
-export function heatmapLayer(topology, points, [x0, y0, W, H], reach = Math.max(W, H) * 0.3, bands = true) {
-  const samples = [];
+export function heatmapLayer(topology, points, [x0, y0, W, H], reach = Math.max(W, H) * 0.3, bands = true, extra = []) {
+  const samples = [...extra];  // and a "what if" router's
   for (const node of topology.nodes) {
     const p = points.get(String(node.id));
     if (!p || !p.placed) continue;
@@ -1004,7 +1014,7 @@ export function meshHeatmap() {
   const r = MESH_HEAT_REACH;
   const area = [Math.min(...xs, box[0]) - r, Math.min(...ys, box[1]) - r,
     Math.max(...xs, box[0] + box[2]) - Math.min(...xs, box[0]) + 2 * r, Math.max(...ys, box[1] + box[3]) - Math.min(...ys, box[1]) + 2 * r];
-  return heatmapLayer(shownTopology(), points, area, r);
+  return heatmapLayer(shownTopology(), points, area, r, true, whatIfSamples('mesh'));
 }
 
 // After a node is dragged on the mesh, the heatmap follows.
@@ -1056,6 +1066,7 @@ export function pulseBoard(deviceId) {
 }
 
 initNetLive();
+initNetPlus();
 
 // The lens: what the boards' rings show
 try { net.lens = localStorage.getItem('hacoap-map-lens') || 'battery'; } catch (error) { /* the default */ }

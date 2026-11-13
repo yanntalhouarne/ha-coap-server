@@ -17,6 +17,7 @@ forecasts and the battery drain table have something to show.
 import asyncio
 import json
 import math
+import random
 import socket
 import subprocess
 import sys
@@ -177,6 +178,14 @@ class Demo:
             rows.append((device_id, t, *self._reading(model, t)))
             t += 1800
         db.add_readings(rows)
+        # Its link to its parent, hourly: a level of its own, a little worse in the evening (Wi-Fi), and noise
+        level = 8 + (int(device_id[:4], 16) % 30)
+        t = max(model.start, now - 14 * 86400)
+        while t < now - 600:
+            hour = (t % 86400) / 3600
+            margin = level - (4 if 18 <= hour <= 23 else 0) + 2 * math.sin(t / 5400) + random.uniform(-1.5, 1.5)
+            db.add_link_sample(device_id, "", round(max(1, margin)), None, 3 if margin > 20 else 2 if margin > 10 else 1, when=t)
+            t += 3600
         for i, watered in enumerate(model.waterings):
             if model.start <= watered < now and i % 2 == 0:   # half from the app, half by hand
                 db.add_activity(device_id, "pump", "Pump started from the app (3 s)", when=watered)

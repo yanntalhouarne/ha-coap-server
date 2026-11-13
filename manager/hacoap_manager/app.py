@@ -39,6 +39,7 @@ from .events import EventBus
 from .images import ImageLibrary, build_commit, build_images, changes, find_repository
 from .inventory import Inventory, InventoryError
 from .network import NetworkError, NetworkService
+from .network import signal_history as network_signal_history_of
 from .pictures import PhotoStore, PictureError
 from .setup_tools import SetupError, SetupRunner
 from .updates import UpdateError, UpdateManager
@@ -212,7 +213,7 @@ LINK_ALLOWED = [
     (("PUT",), re.compile(r"^/api/away$")),  # going away (or back): it only sets the date the plants are checked for
     (("GET", "HEAD"), re.compile(r"^/api/devices/[^/]+/(details|photo)$")),
     # Read-only: the network's map (mesh, tree, floor plan) and its history, and the charts
-    (("GET", "HEAD"), re.compile(r"^/api/(network|network/history|network/floorplan|graph|readings\.csv)$")),
+    (("GET", "HEAD"), re.compile(r"^/api/(network|network/history|network/signal-history|network/floorplan|graph|readings\.csv)$")),
     (("GET", "HEAD"), re.compile(r"^/api/network/history/[^/]+$")),
     (("POST",), re.compile(r"^/api/devices/[^/]+/(pump|ping|tank/refilled)$")),
     (("GET", "HEAD"), re.compile(r"^/api/devices/[^/]+/care$")),
@@ -1190,6 +1191,13 @@ def create_app(services, background_tasks=True, on_quit=None, port=None):
     @app.get("/api/network/history")
     async def network_history():
         return s.network.history()
+
+    @app.get("/api/network/signal-history")
+    async def network_signal_history(days: int = 7):
+        """Each board's link to its parent over the last days (hourly): {device_id: [[time, dB]]}."""
+        days = max(1, min(30, days))
+        samples = await asyncio.to_thread(s.db.all_link_samples, time.time() - days * 86400)
+        return network_signal_history_of(samples, days)
 
     @app.get("/api/network/history/{snapshot_id}")
     async def network_snapshot(snapshot_id: int):

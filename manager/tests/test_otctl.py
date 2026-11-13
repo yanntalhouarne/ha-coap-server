@@ -257,3 +257,17 @@ def test_radio_health_from_mains_powered_devices_only():
     # A border router without these commands: the map as before
     plain = CliBorderRouter("otbr", run=fake_ot_ctl()).topology().as_dict()
     assert not any("mac" in n or "mac_br" in n for n in plain["nodes"])
+
+
+def test_signal_history_is_hourly_per_board():
+    from hacoap_manager.network import signal_history
+
+    now = 300 * 3600.0  # on the hour: the first two samples are in one hour
+    samples = [{"device_id": "aa", "time": now - 3 * 3600 + 10, "link_margin": 20, "link_quality": 3},
+               {"device_id": "aa", "time": now - 3 * 3600 + 900, "link_margin": 30, "link_quality": 3},
+               {"device_id": "aa", "time": now - 600, "link_margin": None, "link_quality": 1},  # quality only: about 15 dB
+               {"device_id": "bb", "time": now - 600, "link_margin": None, "link_quality": None},  # nothing: skipped
+               {"device_id": "aa", "time": now - 9 * 86400, "link_margin": 5, "link_quality": 1}]  # too old
+    history = signal_history(samples, now=now)
+    assert set(history) == {"aa"}
+    assert [value for _, value in history["aa"]] == [25.0, 15]
