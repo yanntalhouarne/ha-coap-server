@@ -1,7 +1,0 @@
-# Web updater dependencies (Python 3.9 or newer). Install in a virtual environment:
-#   python -m venv .venv  &&  .venv/bin/pip install -r requirements.txt   (Windows: .venv\Scripts\pip)
-Flask~=3.1
-Flask-SocketIO~=5.7
-simple-websocket~=1.1
-# Device discovery on every OS (on Linux, avahi-browse also works without it)
-zeroconf~=0.151

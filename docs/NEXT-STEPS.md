@@ -36,8 +36,7 @@ Start here when you come back. To pick up with Claude, say: *"Resume from docs/N
 
 - Old branches, all merged into `main` (or abandoned): `build-issue`, `mcu-boot-usb-dual-slots`, `mcu-mgr-udp-ota`, `pwm_integration`, `claude`, `updatehub` and `updatehub-2` (never merged). In the integration's repository: `branch`, `hacs-repo`, `main`, `new-setup`, `signed-temperature`, `v2`, `v2.1`, `zeroconf_discovery`.
 - The integration's tag `v2.1.2` was pushed by mistake (it's v2.1.1's commit): never publish it; delete it on GitHub (Tags).
-- `firmware-updater/` (the old web updater): the fleet manager replaced it, so it can go once you no longer want it.
-- The macOS run of the fleet manager's tests fails now and then (since 2026-11-10, also on commits that change no code): a flaky test, not found yet. Rerunning the job passes.
+- The macOS run of the fleet manager's tests fails now and then (since 2026-11-10, also on commits that change no code): a flaky test, not found yet. Rerunning the job passes. Since 2026-11-13 CI shows a failing test as an annotation (its name and why), readable without the job's log: the next failure names it.
 
 ## Where the details are
 

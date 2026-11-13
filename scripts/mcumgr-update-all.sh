@@ -14,7 +14,7 @@ source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hacoap-common.sh"
 # ----------------------
 # Non-interactive mode
 # ----------------------
-# Used by the web updater (../firmware-updater). Set HACOAP_NON_INTERACTIVE=true
+# For automation (and the tests in scripts/tests). Set HACOAP_NON_INTERACTIVE=true
 # and pass the settings through these environment variables instead of prompts:
 #   HACOAP_BUILD_DIR      build directory containing zephyr/app_update.bin
 #                         (default: application/build in this repository)
@@ -1377,7 +1377,7 @@ function main() {
     
     total_devices=${#SELECTED_INDICES[@]}
     
-    # Confirm before proceeding (the web updater asks for confirmation itself)
+    # Confirm before proceeding (a non-interactive run was confirmed by whoever started it)
     if [ "$NON_INTERACTIVE" != true ]; then
         echo ""
         echo -e "${YELLOW}? You are about to update firmware on ${total_devices} devices. Continue? (y/n):${NC} "

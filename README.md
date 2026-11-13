@@ -315,7 +315,6 @@ The update scripts run on Linux, macOS and Windows (in Git Bash), from any folde
 
 - `scripts/mcumgr-dfu.sh`: guided update of one device, over USB or over the air.
 - `scripts/mcumgr-update-all.sh`: updates several devices at once, with upload retries and stall detection. It also runs non-interactively from environment variables (`HACOAP_NON_INTERACTIVE`, `HACOAP_DEVICES`, `HACOAP_UPDATE_MODE`, …; see the top of the script).
-- `firmware-updater/`: a web interface that drives `mcumgr-update-all.sh` (older: the [fleet manager](manager/README.md) replaces it). See [firmware-updater/README.md](firmware-updater/README.md).
 
 What they need:
 
@@ -366,7 +365,6 @@ Older versions of this repository had a Thread network key and network name in `
 | `application/keys/` | Your signing key, created by `scripts/keygen` (not in git) |
 | `application/tests/unit/` | Unit tests of the firmware's logic, run on a PC |
 | `scripts/` | Setup, key generation, build and firmware update scripts |
-| `firmware-updater/` | Web interface for batch updates (older: the fleet manager replaces it) |
 | `manager/` | The fleet manager app (inventory, updates, builds, network map, plants; see its README) |
 | `docs/` | Schematic, code and power reviews (PDF), the fleet manager plan, and where things stand (`NEXT-STEPS.md`) |
 | `external/` | The SDK, fetched by the setup script (not in git) |
