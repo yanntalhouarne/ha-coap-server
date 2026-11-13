@@ -66,7 +66,8 @@ def radio_rates(before, after):
 
 def signal_history(samples, now=None, days=7, bucket_s=3600):
     """Each board's link to its parent over the last days, an hourly average: {device_id: [[time,
-    margin dB]]}. A sample without a margin counts by its link quality (0-3 as about 5-35 dB)."""
+    margin dB]]}. A sample without a margin counts by its RSSI (above the radio's noise floor, -100
+    dBm, as the map does), else by its link quality (0-3 as about 5-35 dB)."""
     now = now or time.time()
     since = now - days * 86400
     buckets = {}
@@ -74,6 +75,8 @@ def signal_history(samples, now=None, days=7, bucket_s=3600):
         if row["time"] < since:
             continue
         margin = row["link_margin"]
+        if margin is None and row.get("average_rssi") is not None:
+            margin = max(0, row["average_rssi"] + 100)
         if margin is None and row["link_quality"] is not None:
             margin = row["link_quality"] * 10 + 5
         if margin is None:
