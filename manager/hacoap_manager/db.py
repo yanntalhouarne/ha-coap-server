@@ -117,6 +117,13 @@ CREATE TABLE IF NOT EXISTS link_samples (
     link_quality INTEGER                       -- 0 to 3
 );
 CREATE INDEX IF NOT EXISTS link_samples_device_time ON link_samples (device_id, time);
+CREATE TABLE IF NOT EXISTS round_trips (
+    id        INTEGER PRIMARY KEY AUTOINCREMENT,
+    device_id TEXT NOT NULL,
+    time      REAL NOT NULL,
+    ms        INTEGER                          -- a silent ping's round trip; NULL: no answer
+);
+CREATE INDEX IF NOT EXISTS round_trips_device_time ON round_trips (device_id, time);
 CREATE TABLE IF NOT EXISTS floorplan_positions (
     node_key TEXT PRIMARY KEY,                 -- a device ID, or a router's extended address
     x        REAL NOT NULL,                    -- 0 to 1, across the floor plan picture
@@ -171,7 +178,8 @@ CREATE TABLE IF NOT EXISTS builds (
     message    TEXT NOT NULL DEFAULT '',
     image_hash TEXT NOT NULL DEFAULT '',
     signing    TEXT NOT NULL DEFAULT '',       -- private, development, unknown
-    log        TEXT NOT NULL DEFAULT ''
+    log        TEXT NOT NULL DEFAULT '',
+    recipe     TEXT NOT NULL DEFAULT ''        -- what it was made from (builds.recipe), '' when not known
 );
 """
 
@@ -220,6 +228,7 @@ ADDED_COLUMNS = [
     ("devices", "last_sample", "REAL"),
     ("devices", "pump_ms_seen", "INTEGER"),
     ("devices", "pump_ms_time", "REAL"),
+    ("builds", "recipe", "TEXT NOT NULL DEFAULT ''"),
 ]
 
 
@@ -388,10 +397,16 @@ class Database:
     def _build(row):
         return {**row, "settings": json.loads(row["settings"])}
 
-    def add_build(self, profile, variant, settings):
-        cursor = self._execute("INSERT INTO builds (profile, variant, settings, started, result) VALUES (?, ?, ?, ?, ?)",
-                               (profile, variant, json.dumps(settings), time.time(), "running"))
+    def add_build(self, profile, variant, settings, recipe=""):
+        cursor = self._execute("INSERT INTO builds (profile, variant, settings, started, result, recipe) VALUES (?, ?, ?, ?, ?, ?)",
+                               (profile, variant, json.dumps(settings), time.time(), "running", recipe or ""))
         return cursor.lastrowid
+
+    def build_made_from(self, recipe):
+        """The newest build that succeeded from this recipe, or None."""
+        rows = self._query(f"SELECT {self.BUILD_COLUMNS} FROM builds WHERE recipe = ? AND result = 'done' AND image_hash != '' "
+                           "ORDER BY id DESC LIMIT 1", (recipe,))
+        return self._build(rows[0]) if rows else None
 
     def build(self, build_id, with_log=False):
         columns = self.BUILD_COLUMNS + (", log" if with_log else "")
@@ -417,6 +432,20 @@ class Database:
     def add_network_event(self, device_id, message):
         self._execute("INSERT INTO network_events (time, device_id, message) VALUES (?, ?, ?)",
                       (time.time(), device_id, message))
+
+    def add_round_trip(self, device_id, ms, when=None):
+        """A silent ping's round trip (ms), or None: no answer."""
+        self._execute("INSERT INTO round_trips (device_id, time, ms) VALUES (?, ?, ?)", (device_id, when or time.time(), ms))
+
+    def round_trips(self, since):
+        """Every board's pings since then, oldest first: [{device_id, time, ms}]."""
+        return self._query("SELECT device_id, time, ms FROM round_trips WHERE time >= ? ORDER BY time", (since,))
+
+    def last_round_trips(self):
+        """Each board's last ping: {device_id: {time, ms}}."""
+        rows = self._query("SELECT r.device_id, r.time, r.ms FROM round_trips r JOIN (SELECT device_id, MAX(time) AS time "
+                           "FROM round_trips GROUP BY device_id) m ON r.device_id = m.device_id AND r.time = m.time")
+        return {r["device_id"]: {"time": r["time"], "ms": r["ms"]} for r in rows}
 
     def network_events(self, limit=50):
         return self._query("SELECT * FROM network_events ORDER BY id DESC LIMIT ?", (limit,))
@@ -452,7 +481,7 @@ class Database:
                            "WHERE device_id = ? AND time >= ? ORDER BY time", (device_id, since))
 
     def all_link_samples(self, since=0):
-        return self._query("SELECT device_id, time, link_margin, link_quality FROM link_samples WHERE time >= ? ORDER BY time",
+        return self._query("SELECT device_id, time, link_margin, average_rssi, link_quality FROM link_samples WHERE time >= ? ORDER BY time",
                            (since,))
 
     def network_events_for(self, device_id, limit=50):
@@ -554,7 +583,7 @@ class Database:
         Returns how many rows went."""
         removed = 0
         with self._lock:
-            for table in ("readings", "link_samples", "activity", "network_events"):
+            for table in ("readings", "link_samples", "activity", "network_events", "round_trips"):
                 removed += self._conn.execute(f"DELETE FROM {table} WHERE time < ?", (before,)).rowcount
             self._conn.commit()
         return removed

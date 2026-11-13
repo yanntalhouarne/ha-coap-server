@@ -25,13 +25,13 @@ from fastapi.staticfiles import StaticFiles
 import re
 
 from . import (__version__, autostart, backup, coap, config, demo, discovery, feed, fleet, homeassistant, housekeeping,
-               kconfig, mcuboot, naming, otctl, remote, report, serial_ports, signing, summary, swd)
+               kconfig, keybackup, mcuboot, naming, otctl, remote, report, serial_ports, signing, summary, swd)
 from .alerts import AlertService
 from .autowater import AutoWatering, RuleError, checked_rule, rule_of
 from .autowater import watch as autowater_watch
 from .appupdate import UpdateCheck
 from .borderrouter import BorderRouterService, BorderRouterSetupError
-from .builds import VARIANTS, BuildError, BuildRunner
+from .builds import VARIANTS, AlreadyBuilt, BuildError, BuildRunner
 from .console import ConsoleError, SerialConsole
 from .db import Database, current_actor
 from .doctor import Doctor
@@ -39,6 +39,8 @@ from .events import EventBus
 from .images import ImageLibrary, build_commit, build_images, changes, find_repository
 from .inventory import Inventory, InventoryError
 from .network import NetworkError, NetworkService
+from .network import round_trip_history
+from .network import signal_history as network_signal_history_of
 from .pictures import PhotoStore, PictureError
 from .setup_tools import SetupError, SetupRunner
 from .updates import UpdateError, UpdateManager
@@ -110,6 +112,7 @@ def create_services(data_dir, discover=discovery.discover):
     builds.other_busy = setup.busy                                                 # one script at a time
     setup.other_busy = lambda: "build" if builds.running() else None
     alerts = AlertService(db, inventory, settings, events)
+    alerts.network = network
     updates.on_failure = lambda job, target: alerts.update_failed(job.id, target.device_id, target.label, target.message)
     inventory.on_restart = alerts.restarted
     inventory.on_pushed = lambda device: alerts.scan()  # a plant that needs water, a board unplugged: at once
@@ -212,7 +215,7 @@ LINK_ALLOWED = [
     (("PUT",), re.compile(r"^/api/away$")),  # going away (or back): it only sets the date the plants are checked for
     (("GET", "HEAD"), re.compile(r"^/api/devices/[^/]+/(details|photo)$")),
     # Read-only: the network's map (mesh, tree, floor plan) and its history, and the charts
-    (("GET", "HEAD"), re.compile(r"^/api/(network|network/history|network/floorplan|graph|readings\.csv)$")),
+    (("GET", "HEAD"), re.compile(r"^/api/(network|network/history|network/signal-history|network/round-trips|network/floorplan|graph|readings\.csv)$")),
     (("GET", "HEAD"), re.compile(r"^/api/network/history/[^/]+$")),
     (("POST",), re.compile(r"^/api/devices/[^/]+/(pump|ping|tank/refilled)$")),
     (("GET", "HEAD"), re.compile(r"^/api/devices/[^/]+/care$")),
@@ -221,7 +224,7 @@ LINK_ALLOWED = [
     (("POST",), re.compile(r"^/api/alerts/(dismiss|\d+/dismiss)$")),
     (("PATCH",), re.compile(r"^/api/devices/[^/]+$")),  # its plant's name only (edit_device)
 ]
-LINK_EVENTS = {"device", "devices", "alert", "alerts", "network"}  # what its page is told live
+LINK_EVENTS = {"device", "devices", "alert", "alerts", "network", "traffic"}  # what its page is told live
 # What a view-only link may still ask with a POST: it only looks
 VIEW_ONLY_POSTS = {"/api/network/refresh"}
 LINK_NETWORK_GAP_S = 60  # from a link, a network reading this soon after the last one is that one
@@ -232,10 +235,11 @@ def _link_allows(method, path):
 
 
 # What a link for the HA CoAP integration opens: the boards' firmware, and updating one of them
-# to the release image (never another image); the plants' water tanks, battery forecasts and care
-# tasks, with a tank refilled and a care task done (adding or removing them: the full app)
+# to the release image (never another image); the plants' water tanks, battery forecasts, care
+# tasks and photos, with a tank refilled and a care task done (adding or removing them: the full app)
 HA_LINK_ALLOWED = [
     (("GET", "HEAD"), re.compile(r"^/api/ha/(firmware|plants)$")),
+    (("GET", "HEAD"), re.compile(r"^/api/devices/[^/]+/photo$")),
     (("POST",), re.compile(r"^/api/ha/update$")),
     (("POST",), re.compile(r"^/api/devices/[^/]+/tank/refilled$")),
     (("POST",), re.compile(r"^/api/care/\d+/done$")),
@@ -268,6 +272,7 @@ def create_app(services, background_tasks=True, on_quit=None, port=None):
         if background_tasks:
             tasks = [asyncio.create_task(_auto_refresh(services)), asyncio.create_task(_auto_backup(services)),
                      asyncio.create_task(_auto_alerts(services)), asyncio.create_task(_watch_border_router(services)),
+                     asyncio.create_task(_auto_ping(services)),
                      asyncio.create_task(autowater_watch(services.autowater))]
             if port and services.remote is not None:
                 listener = remote.RemoteListener(app, port)
@@ -794,6 +799,11 @@ def create_app(services, background_tasks=True, on_quit=None, port=None):
             raise HTTPException(404, "Unknown device")
         return await s.doctor.check(device_id)
 
+    @app.post("/api/network/ping-all")
+    async def ping_all():
+        """A silent ping to every board at once (no beep), for its way on the map: [{device_id, ok, ms, error}]."""
+        return await s.inventory.ping_all()
+
     @app.post("/api/devices/{device_id}/ping")
     async def ping(device_id: str):
         try:
@@ -1018,9 +1028,12 @@ def create_app(services, background_tasks=True, on_quit=None, port=None):
 
     @app.post("/api/firmware-builds")
     async def start_build(body: dict):
+        """409 when nothing changed since a build whose image is in the library ('force' builds anyway)."""
         try:
             return s.builds.start(str(body.get("profile", "")), bool(body.get("allow_development_key", False)),
-                                  str(body.get("sign_with", "yours")))
+                                  str(body.get("sign_with", "yours")), bool(body.get("force", False)))
+        except AlreadyBuilt as exc:
+            raise HTTPException(409, str(exc))
         except (BuildError, kconfig.KconfigError, OSError) as exc:
             raise _bad_request(exc)
 
@@ -1101,6 +1114,7 @@ def create_app(services, background_tasks=True, on_quit=None, port=None):
     def _ha_plants():
         now = time.time()
         result = []
+        round_trips = s.db.last_round_trips()
         for device in s.inventory.devices():
             on_usb = device["power"] in fleet.ON_USB
             readings = s.db.readings(device["device_id"], since=now - fleet.FORECAST_WINDOW_DAYS * DAY_S)
@@ -1113,13 +1127,17 @@ def create_app(services, background_tasks=True, on_quit=None, port=None):
                 | {"days_left": round(tank["days_left"], 1) if tank["days_left"] is not None else None} if tank else None,
                 "care": [{key: task[key] for key in ("id", "what", "every_days", "due", "last_done")}
                          for task in s.db.care_tasks(device["device_id"])],
+                "photo": device["photo"],  # when its newest photo was added (/api/devices/<id>/photo), or None
+                # Its last silent ping (Ping all, or the timed ones): {time, ms (None: no answer)}, or None
+                "round_trip": round_trips.get(device["device_id"]),
             })
         return {"devices": result}
 
     @app.get("/api/ha/plants")
     async def ha_plants():
         """Each plant's water tank (None: not tracked), its battery's days left (None: on USB, or
-        no clear trend yet), and its care tasks."""
+        no clear trend yet), its care tasks, when its photo was added (None: none), and its last
+        silent ping's round trip (None: never pinged)."""
         return await asyncio.to_thread(_ha_plants)
 
     @app.post("/api/ha/update")
@@ -1185,6 +1203,21 @@ def create_app(services, background_tasks=True, on_quit=None, port=None):
     @app.get("/api/network/history")
     async def network_history():
         return s.network.history()
+
+    @app.get("/api/network/signal-history")
+    async def network_signal_history(days: int = 7):
+        """Each board's link to its parent over the last days (hourly): {device_id: [[time, dB]]}."""
+        days = max(1, min(30, days))
+        samples = await asyncio.to_thread(s.db.all_link_samples, time.time() - days * 86400)
+        return network_signal_history_of(samples, days)
+
+    @app.get("/api/network/round-trips")
+    async def network_round_trips(days: int = 7):
+        """Each board's silent pings (Ping all, and every 'ping_every_minutes' when that's on) over
+        the last days: {device_id: {points: [[time, ms or null]], median_ms, answered_pct, last}}."""
+        days = max(1, min(30, days))
+        rows = await asyncio.to_thread(s.db.round_trips, time.time() - days * 86400)
+        return round_trip_history(rows, days=days)
 
     @app.get("/api/network/history/{snapshot_id}")
     async def network_snapshot(snapshot_id: int):
@@ -1368,6 +1401,48 @@ def create_app(services, background_tasks=True, on_quit=None, port=None):
         name = f"hacoap-manager-backup-{time.strftime('%Y%m%d-%H%M')}.zip"
         return Response(data, media_type="application/zip",
                         headers={"Content-Disposition": f'attachment; filename="{name}"'})
+
+    # Your private signing key, encrypted with a passphrase, in the backups (keybackup.py)
+
+    def _key_error(exc):
+        return _bad_request(str(exc))
+
+    @app.get("/api/signing-key/backup")
+    async def signing_key_backup():
+        return await asyncio.to_thread(keybackup.status, s.repository, s.data_dir)
+
+    @app.post("/api/signing-key/backup")
+    async def save_signing_key_backup(body: dict):
+        """Encrypts your key with the passphrase into the backups (the passphrase isn't kept)."""
+        if body.get("passphrase") != body.get("again"):
+            raise _bad_request("The two passphrases differ")
+        try:
+            result = await asyncio.to_thread(keybackup.save, s.repository, s.data_dir, str(body.get("passphrase") or ""))
+        except keybackup.KeyBackupError as exc:
+            raise _key_error(exc)
+        await asyncio.to_thread(backup.auto_backup, s.data_dir, s.db, s.settings, min_age_hours=0)  # in a backup now
+        return result
+
+    @app.delete("/api/signing-key/backup")
+    async def remove_signing_key_backup():
+        keybackup.remove(s.data_dir)
+        return await asyncio.to_thread(keybackup.status, s.repository, s.data_dir)
+
+    @app.get("/api/signing-key/backup/file")
+    async def signing_key_backup_file():
+        path = s.data_dir / keybackup.FILE
+        if not path.is_file():
+            raise HTTPException(404, "No encrypted signing key yet")
+        return Response(path.read_bytes(), media_type="application/json",
+                        headers={"Content-Disposition": f'attachment; filename="hacoap-{keybackup.FILE}"'})
+
+    @app.post("/api/signing-key/restore")
+    async def restore_signing_key(body: dict):
+        """Puts your key back from its encrypted copy (after restoring a backup on a new computer)."""
+        try:
+            return await asyncio.to_thread(keybackup.restore, s.repository, s.data_dir, str(body.get("passphrase") or ""))
+        except keybackup.KeyBackupError as exc:
+            raise _key_error(exc)
 
     @app.get("/api/backups")
     async def saved_backups():
@@ -1807,10 +1882,25 @@ async def _auto_refresh(services):
             if services.network.configured():
                 try:
                     await services.network.refresh()
+                    services.alerts.scan()  # a router that went away
                 except NetworkError as exc:
                     log.info("automatic network reading: %s", exc)
                 except Exception:  # noqa: BLE001
                     log.exception("automatic network reading")
+        await asyncio.sleep(max(minutes, 1) * 60)
+
+
+async def _auto_ping(services):
+    """A silent ping to every board every 'ping_every_minutes' (0: off), for each one's round-trip
+    history: a board getting slower shows before it drops off. Not during an update."""
+    await asyncio.sleep(30)
+    while True:
+        minutes = services.settings.ping_every_minutes
+        if minutes > 0 and services.updates.running_job() is None:
+            try:
+                await services.inventory.ping_all()
+            except Exception:  # noqa: BLE001 - try again next time
+                log.exception("timed ping")
         await asyncio.sleep(max(minutes, 1) * 60)
 
 

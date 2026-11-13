@@ -88,7 +88,7 @@ OUTPUTS = {
     ("neighbor", "table"): NEIGHBOR_TABLE,
     ("child", "table"): CHILD_TABLE,
     ("childip",): CHILD_IP,
-    ("networkdiagnostic", "get", "ff03::2", "0", "1", "2", "5", "8", "16"): DIAG_GET,
+    ("networkdiagnostic", "get", "ff03::2", "0", "1", "2", "5", "8", "9", "16"): DIAG_GET,
     ("scan", "energy", "100"): SCAN,
 }
 
@@ -155,13 +155,14 @@ def test_topology():
     assert (mesh["average_rssi"], mesh["link_quality_in"], mesh["link_quality_out"]) == (-51, 3, 3)
     assert len([l for l in topology["links"] if l["kind"] == "mesh"]) == 1
     assert not topology["warnings"]
-    # One diagnostic query to every router, not one per router
-    assert sum(1 for c in run.calls if c[0] == "networkdiagnostic") == 1
+    # One diagnostic query to every router at once (their radio counters in it), not one per router
+    queries = [c for c in run.calls if c[0] == "networkdiagnostic"]
+    assert len(queries) == 1 and queries[0][2] == "ff03::2" and "9" in queries[0]
 
 
 def test_a_router_that_does_not_answer():
     outputs = dict(OUTPUTS)
-    outputs[("networkdiagnostic", "get", "ff03::2", "0", "1", "2", "5", "8", "16")] = \
+    outputs[("networkdiagnostic", "get", "ff03::2", "0", "1", "2", "5", "8", "9", "16")] = \
         DIAG_GET.split("DIAG_GET.rsp/ans from fd84:b787:982b:adb3:0:ff:fe00:f800")[0] + "Done\n"
     topology = CliBorderRouter("otbr", run=fake_ot_ctl(outputs)).topology().as_dict()
     assert topology["warnings"] == ["No diagnostics from router 0xf800"]
@@ -202,3 +203,73 @@ async def test_the_container_setting_wins(tmp_path, monkeypatch):
     assert config.load_settings(tmp_path).border_router_container == "otbr"
     assert services.network.configured()
     services.db.close()
+
+
+COUNTERS_MAC = """\
+TxTotal: {tx}
+    TxUnicast: 30
+    TxRetry: 0
+    TxErrCca: {cca}
+    TxErrBusyChannel: {cca}
+    TxErrAbort: 0
+    TxDirectMaxRetryExpiry: {retry}
+    TxIndirectMaxRetryExpiry: {retry}
+RxTotal: {rx}
+    RxErrNoFrame: 0
+    RxErrFcs: {fcs}
+    RxErrOther: 0
+Done
+"""
+def radio_outputs(leader_counters, tx, retry, cca, rx, fcs):
+    """The map's diagnostics with the leader's MAC counters in its answer, and the border router's own."""
+    counters = "0924" + "".join(f"{c:08x}" for c in leader_counters)
+    return {**OUTPUTS,
+            ("networkdiagnostic", "get", "ff03::2", "0", "1", "2", "5", "8", "9", "16"):
+                DIAG_GET.replace(LEADER_DIAG, LEADER_DIAG + counters),
+            ("counters", "mac"): COUNTERS_MAC.format(tx=tx, retry=retry, cca=cca, rx=rx, fcs=fcs)}
+
+
+def test_radio_health_from_mains_powered_devices_only():
+    """The routers' MAC counters and the border router's own; rates between two readings.
+    Nothing is asked of a sleepy board."""
+    from hacoap_manager.network import radio_rates
+
+    first = CliBorderRouter("otbr", run=fake_ot_ctl(radio_outputs([0, 1, 2, 10, 5, 0, 100, 20, 0], 100, 5, 1, 80, 2))).topology().as_dict()
+    later_run = fake_ot_ctl(radio_outputs([0, 1, 7, 110, 15, 0, 180, 40, 0], 300, 25, 3, 280, 6))
+    later = CliBorderRouter("otbr", run=later_run).topology().as_dict()
+    later["fetched"] = first["fetched"] + 900
+    nodes = by_rloc(later)
+    assert nodes["0xf800"]["mac"]["out_ucast"] == 180 and nodes["0x4000"]["mac_br"]["TxIndirectMaxRetryExpiry"] == 25
+    radio_rates(first, later)
+    leader, own = by_rloc(later)["0xf800"]["radio"], by_rloc(later)["0x4000"]["radio"]
+    assert leader["sent"] == 100 and leader["send_failed_pct"] == round(100 * 5 / 105, 1)  # 5 errors in 100 sent
+    assert leader["received"] == 110 and leader["window_s"] == 900
+    # 200 sent: the channel busy 2 + 2 times, 20 failed after retries; 20 never collected by sleepy children
+    assert own["channel_busy_pct"] == 2.0 and own["send_failed_pct"] == 10.0 and own["receive_errors_pct"] == 2.0
+    assert own["undelivered_to_sleepy"] == 20
+    # Only the routers are asked (all at once, with the map's diagnostics), and no child
+    asked = [c for c in later_run.calls if c[0] == "networkdiagnostic"]
+    assert len(asked) == 1 and asked[0][2] == "ff03::2"
+    # A restart (the counters went back): no rate rather than a wrong one
+    restarted = CliBorderRouter("otbr", run=fake_ot_ctl(radio_outputs([0] * 9, 1, 0, 0, 1, 0))).topology().as_dict()
+    radio_rates(later, restarted)
+    assert "radio" not in by_rloc(restarted)["0xf800"]
+    # A border router without these commands: the map as before
+    plain = CliBorderRouter("otbr", run=fake_ot_ctl()).topology().as_dict()
+    assert not any("mac" in n or "mac_br" in n for n in plain["nodes"])
+
+
+def test_signal_history_is_hourly_per_board():
+    from hacoap_manager.network import signal_history
+
+    now = 300 * 3600.0  # on the hour: the first two samples are in one hour
+    samples = [{"device_id": "aa", "time": now - 3 * 3600 + 10, "link_margin": 20, "link_quality": 3},
+               {"device_id": "aa", "time": now - 3 * 3600 + 900, "link_margin": 30, "link_quality": 3},
+               {"device_id": "aa", "time": now - 600, "link_margin": None, "link_quality": 1},  # quality only: about 15 dB
+               {"device_id": "cc", "time": now - 600, "link_margin": None, "average_rssi": -72, "link_quality": 3},  # its RSSI: 28 dB
+               {"device_id": "bb", "time": now - 600, "link_margin": None, "link_quality": None},  # nothing: skipped
+               {"device_id": "aa", "time": now - 9 * 86400, "link_margin": 5, "link_quality": 1}]  # too old
+    history = signal_history(samples, now=now)
+    assert set(history) == {"aa", "cc"}
+    assert [value for _, value in history["aa"]] == [25.0, 15]
+    assert [value for _, value in history["cc"]] == [28]

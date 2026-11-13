@@ -28,6 +28,7 @@ class Settings:
     discovery_timeout_s: float = 4.0
     online_minutes: int = 30        # a device that answered within this time is online
     auto_refresh_minutes: int = 15  # refresh every device's status while the app runs (0: never)
+    ping_every_minutes: int = 0     # a silent ping to every board this often, for its round-trip history (0: off)
     reboot_timeout_s: float = 180.0  # how long an updated device has to come back
     border_router_url: str = ""     # the border router's REST API, such as http://192.168.1.20:8081
     border_router_container: str = ""  # a border router in Docker on this machine (such as otbr): read through its ot-ctl

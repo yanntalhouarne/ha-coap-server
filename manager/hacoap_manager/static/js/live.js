@@ -7,10 +7,12 @@ import { loadDevices, removing, renderDevices } from './devices.js';
 import { pulse } from './motion.js';
 import { loadHistory, loadJobs, renderJobs } from './updates.js';
 import { loadNetwork, net, pulseBoard, showNodeDetails } from './network.js';
+import { trafficPulse, updateTraffic } from './netlive.js';
+import { onlineLine, trafficLine } from './netplus.js';
 import { loadWallSoon } from './pages.js';
 import { onBuild, onBuildLog, onSetup, onSetupLog } from './builds.js';
 import { onConsoleLine, onConsoleState } from './console.js';
-import { renderDevicePhoto, renderDeviceStatus } from './device.js';
+import { renderDevicePhoto, renderDeviceStatus, updateDeviceControls } from './device.js';
 import { refreshSimple } from './simple.js';
 import { borderRouterChanged } from './borderrouter.js';
 
@@ -37,6 +39,7 @@ export function connectEvents(delay = 1000) {
       if (removing.has(event.device.device_id)) return; // off the list, for now (undo)
       const answered = before && event.device.last_seen && event.device.last_seen !== before.last_seen;
       if (answered) pulseBoard(event.device.device_id);
+      onlineLine(before, event.device);
       state.devices.set(event.device.device_id, event.device);
       if (currentRoute() === 'wall') loadWallSoon();
       refreshSimple(event.device.device_id);
@@ -44,6 +47,7 @@ export function connectEvents(delay = 1000) {
       if (currentRoute() === `device/${encodeURIComponent(event.device.device_id)}`) {
         renderDeviceStatus(event.device);
         renderDevicePhoto(event.device);
+        updateDeviceControls(event.device);
       }
       if (net.selectedNode && net.selectedNode.device_id === event.device.device_id) showNodeDetails(net.selectedNode);
       if (answered) pulse(event.device.device_id); // its card, row and page, once drawn again
@@ -72,7 +76,11 @@ export function connectEvents(delay = 1000) {
       onBuild(event);
       state.build = event.build;
       renderActivity();
+    } else if (event.type === 'traffic') {
+      trafficPulse(event.device_id, event.what, event);
+      trafficLine(event.device_id, event.what, event);
     } else if (event.type === 'job') {
+      updateTraffic(event.job);
       const finished = ['running', 'paused'].includes(state.jobs.get(event.job.id)?.state) && !['running', 'paused'].includes(event.job.state);
       state.jobs.set(event.job.id, event.job);
       renderJobs();

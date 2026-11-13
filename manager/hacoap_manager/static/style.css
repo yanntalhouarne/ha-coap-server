@@ -554,7 +554,8 @@ button.net-figure:hover { border-color: var(--t-brand); }
 .map-tool:hover, .map-seg button:not(.active):hover { color: var(--t-text); background: var(--t-surface-2); }
 .map-tool:has(input:checked) { color: var(--t-brand); background: color-mix(in srgb, var(--t-brand) 14%, transparent); }
 .map-tool:has(input:focus-visible), .map-seg button:focus-visible { outline: 2px solid var(--t-brand); outline-offset: 1px; }
-.map-wrap[data-view="tree"] .map-tool:has(#heatmap-toggle) { display: none; }  /* no heatmap on the tree */
+.map-wrap:not([data-view="tree"]) .map-tool:has(#sideways-toggle) { display: none; }  /* the tree's own */
+.map-wrap[data-view="tree"] .map-tool:has(#whatif-toggle) { display: none; }  /* places mean nothing in the tree */
 .zoom-controls { position: absolute; z-index: 3; top: .7rem; right: .7rem; display: flex; flex-direction: column; padding: .2rem; }
 .zoom-controls button { border: 0; background: transparent; color: var(--t-text-secondary); width: 2rem; height: 2rem;
   display: flex; align-items: center; justify-content: center; border-radius: .35rem; font-size: 1rem; }
@@ -611,6 +612,127 @@ button.net-figure:hover { border-color: var(--t-brand); }
 .avatar.dry .gauge { stroke: var(--t-yellow); }
 .avatar.offline { opacity: .5; }
 .avatar.offline .gauge { stroke: var(--t-text-muted); }
+/* The lens: what a board's ring shows, and how it is */
+.gauge.lens-ok { stroke: var(--t-green); }
+.gauge.lens-warn { stroke: var(--t-yellow); }
+.gauge.lens-bad { stroke: var(--t-red); }
+.gauge.lens-off { stroke: var(--t-text-muted); }
+/* Its heartbeat: a ripple at the rhythm it checks in with its parent */
+.heartbeat { fill: none; stroke: var(--t-brand); stroke-width: 2; transform-box: fill-box; transform-origin: center;
+  animation: heartbeat var(--beat, 3s) ease-out infinite; pointer-events: none; opacity: 0; }
+@keyframes heartbeat { 0% { transform: scale(1); opacity: .55; } 45% { transform: scale(1.32); opacity: 0; } 100% { opacity: 0; } }
+.tracing .node:not(.on-path):not(.selected) .heartbeat { animation: none; }
+/* Live traffic: a dot along a board's way, by what the message is */
+.traffic-dot { pointer-events: none; filter: drop-shadow(0 0 6px currentColor); fill: currentColor; }
+.traffic-dot.push, .traffic-key.push { color: var(--t-green); }
+.traffic-dot.read, .traffic-key.read { color: var(--t-blue); }
+.traffic-dot.command, .traffic-key.command { color: var(--t-orange); }
+.traffic-dot.update, .traffic-key.update { color: var(--t-magenta); }
+.traffic-dot.ping, .traffic-dot.pong { color: var(--t-cyan); }
+.traffic-dot.pong { r: 6; }
+/* A ping's round trip, by the board */
+.rtt-bubble { pointer-events: none; animation: rtt-in .3s ease-out; }
+@keyframes rtt-in { from { opacity: 0; transform: translate(26px, -22px); } }
+.rtt-bubble rect { fill: color-mix(in srgb, var(--t-cyan) 20%, var(--t-bg-deep)); stroke: var(--t-cyan); }
+.rtt-bubble text { font: 600 10.5px var(--mono); fill: var(--t-text); }
+.rtt-bubble.bad rect { fill: color-mix(in srgb, var(--t-red) 20%, var(--t-bg-deep)); stroke: var(--t-red); }
+.net-log-line.pong .net-log-arrow { color: var(--t-cyan); }
+.traffic-key { display: inline-block; width: .55rem; height: .55rem; border-radius: 50%; background: currentColor; margin: 0 .2rem 0 .45rem; }
+.traffic-key:first-child { margin-left: 0; }
+.legend-lens { display: inline-block; width: .8rem; height: .8rem; border-radius: 50%; border: 2px solid var(--t-cyan); }
+/* Weak points: the routers boards depend on, and boards that hear their parent weakly */
+.node.spof .select-ring { stroke: var(--t-red); stroke-width: 2.5; stroke-dasharray: 5 4; opacity: 1; }
+.spof-tag rect { fill: color-mix(in srgb, var(--t-red) 22%, var(--t-bg-deep)); stroke: var(--t-red); }
+.spof-tag text { font: 10.5px var(--mono); fill: var(--t-text); }
+.node.weak-link .gauge-track { stroke: var(--t-red); stroke-dasharray: 3 3; }
+.weak-dot { display: inline-block; width: .5rem; height: .5rem; border-radius: 50%; margin-right: .4rem; background: var(--t-yellow); }
+.weak-dot.bad { background: var(--t-red); }
+/* The replay */
+.replay-caption { position: absolute; left: .75rem; bottom: .75rem; z-index: 6; min-width: 13rem; max-width: 22rem; padding: .55rem .7rem;
+  background: color-mix(in srgb, var(--t-surface) 92%, transparent); border: 1px solid var(--t-border-subtle); border-radius: .5rem;
+  font-size: .78rem; box-shadow: 0 6px 20px rgb(0 0 0 / .3); pointer-events: none; }
+.replay-time { font-weight: 600; color: var(--t-text); font-size: .95rem; }
+.replay-bar { height: 3px; background: var(--t-surface-2); border-radius: 2px; margin: .3rem 0 .35rem; overflow: hidden; }
+.replay-bar i { display: block; height: 100%; background: var(--t-brand); transition: width .2s; }
+.replay-line { color: var(--t-text-secondary); }
+.replay-line.ok { color: var(--t-green); } .replay-line.warn { color: var(--t-yellow); } .replay-line.bad { color: var(--t-red); }
+/* Radio health */
+.net-radio td.tone-ok { color: var(--t-green); } .net-radio td.tone-warn { color: var(--t-yellow); } .net-radio td.tone-bad { color: var(--t-red); }
+/* The live message log, beside the map */
+.net-log { position: absolute; z-index: 3; right: .7rem; bottom: .7rem; width: min(24rem, 46%); max-height: 45%; overflow: hidden;
+  padding: .35rem .45rem; border: 1px solid var(--t-border-subtle); border-radius: .5rem; font: .72rem var(--mono);
+  background: color-mix(in srgb, var(--t-bg-deep) 88%, transparent); backdrop-filter: blur(4px); }
+.map-wrap:has(.map-drawer.open) .net-log { display: none; }
+.net-log-head { display: flex; align-items: center; gap: .35rem; color: var(--t-text-muted); margin-bottom: .15rem; text-transform: uppercase; letter-spacing: .06em; font-size: .65rem; }
+.net-log-head .icon { width: .8rem; height: .8rem; }
+.net-log-head::after { content: ''; width: .4rem; height: .4rem; border-radius: 50%; background: var(--t-green); margin-left: .15rem; animation: live-dot 1.6s ease-in-out infinite; }
+@keyframes live-dot { 50% { opacity: .25; } }
+.net-log-line { display: grid; grid-template-columns: auto 1rem 1fr; gap: .4rem; width: 100%; padding: .05rem .15rem; border: 0; background: none;
+  text-align: left; color: var(--t-text-secondary); border-radius: .25rem; opacity: calc(1 - var(--age, 0) * .1); animation: log-in .35s ease-out; }
+.net-log-line:first-of-type { animation: log-in .35s ease-out; }
+@keyframes log-in { from { transform: translateY(-4px); opacity: 0; } }
+.net-log-line:hover { background: var(--t-surface-2); }
+.net-log-line.empty { color: var(--t-text-muted); display: block; }
+.net-log-time { color: var(--t-text-muted); }
+.net-log-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.net-log-line.push .net-log-arrow { color: var(--t-green); } .net-log-line.read .net-log-arrow { color: var(--t-blue); }
+.net-log-line.command .net-log-arrow { color: var(--t-orange); } .net-log-line.update .net-log-arrow { color: var(--t-magenta); }
+.net-log-line.move .net-log-arrow, .net-log-line.move .net-log-text { color: var(--t-yellow); }
+.net-log-line.offline .net-log-arrow, .net-log-line.offline .net-log-text { color: var(--t-red); }
+.net-log-line.online .net-log-arrow { color: var(--t-green); }
+/* A board that moved: a trail from where it was */
+.move-trail { fill: none; stroke: var(--t-yellow); stroke-width: 2.5; stroke-dasharray: 6 6; pointer-events: none;
+  animation: trail-fade 3s ease-out forwards; }
+@keyframes trail-fade { from { opacity: .95; stroke-dashoffset: 0; } to { opacity: 0; stroke-dashoffset: -60; } }
+.node.moved .select-ring { stroke: var(--t-yellow); animation: ring-pulse 1.2s ease-out 3; }
+/* The week's signal: in the node list, and a link's details */
+.signal-spark { flex: none; overflow: visible; }
+.signal-spark polyline { fill: none; stroke-width: 1.5; vector-effect: non-scaling-stroke; stroke-linejoin: round; }
+.signal-spark.ok polyline { stroke: var(--t-green); } .signal-spark.warn polyline { stroke: var(--t-yellow); } .signal-spark.bad polyline { stroke: var(--t-red); }
+.signal-spark.big { width: 100%; height: 70px; }
+.signal-spark .spark-weak { stroke: var(--t-red); stroke-dasharray: 3 4; vector-effect: non-scaling-stroke; opacity: .6; }
+.link-week { padding: .3rem 0; }
+/* A board's round trip over the week */
+.rtt-chart { width: 100%; height: 70px; overflow: visible; }
+.rtt-dot { stroke: var(--t-cyan); stroke-width: 3.5; stroke-linecap: round; vector-effect: non-scaling-stroke; opacity: .75; }
+.rtt-dot.slow { stroke: var(--t-yellow); }
+.rtt-lost { stroke: var(--t-red); stroke-width: 1.5; vector-effect: non-scaling-stroke; }
+.rtt-poll { stroke: var(--t-text-muted); stroke-dasharray: 3 4; vector-effect: non-scaling-stroke; opacity: .6; }
+.rtt-slower { color: var(--t-yellow); }
+/* What if: a router to drag around */
+.what-if-reach { fill: color-mix(in srgb, var(--t-brand) 7%, transparent); stroke: var(--t-brand); stroke-dasharray: 6 8; stroke-width: 1.5;
+  vector-effect: non-scaling-stroke; pointer-events: none; }
+.what-if-link { stroke-width: 1.5; stroke-dasharray: 4 5; vector-effect: non-scaling-stroke; pointer-events: none; }
+.what-if-link.ok { stroke: var(--t-green); } .what-if-link.warn { stroke: var(--t-yellow); } .what-if-link.bad { stroke: var(--t-red); }
+.what-if-router { cursor: grab; }
+.what-if-router circle { fill: var(--t-surface); stroke: var(--t-brand); stroke-width: 2.5; stroke-dasharray: 4 3; }
+.what-if-router use { color: var(--t-brand); }
+.what-if-router text { font: 11px var(--mono); fill: var(--t-brand); stroke: var(--t-bg-deep); stroke-width: 4px; paint-order: stroke; }
+.what-if-note { position: absolute; z-index: 3; top: 3.6rem; left: .7rem; max-width: min(22rem, 60%); padding: .45rem .6rem; font-size: .78rem;
+  background: color-mix(in srgb, var(--t-surface) 94%, transparent); border: 1px solid var(--t-brand); border-radius: .5rem; color: var(--t-text-secondary); }
+.what-if-note b { color: var(--t-text); } .what-if-note .ok { color: var(--t-green); }
+/* The × of a box over the map */
+.panel-close { float: right; width: .55rem; height: .55rem; padding: .3rem; margin: -.1rem -.15rem .2rem .5rem; background-size: .55rem;
+  opacity: .6; pointer-events: auto; }
+.panel-close:hover, .panel-close:focus-visible { opacity: 1; }
+.net-log-head .panel-close { margin: 0 0 0 auto; float: none; order: 2; }
+/* Wall mode: the map alone, full screen */
+body.net-wall .topbar, body.net-wall .statusbar, body.net-wall .demo-banner, body.net-wall .net-list, body.net-wall .net-more,
+body.net-wall .net-actions, body.net-wall #network-warnings, body.net-wall .map-toolbar, body.net-wall .zoom-controls,
+body.net-wall #heatmap-note, body.net-wall .simple-top, body.net-wall .simple-nav { display: none !important; }
+body.net-wall main { padding: 0 !important; max-width: none; }
+body.net-wall #tab-network { position: fixed; inset: 0; z-index: 1000; background: var(--t-bg-deep); padding: 4.2rem 1rem 1rem; display: flex; flex-direction: column; }
+body.net-wall .net-head { order: 2; margin: .6rem 0 0; }
+body.net-wall .net-body { display: block; flex: 1; min-height: 0; order: 1; }
+body.net-wall .map-wrap { height: 100% !important; }
+body.net-wall .net-log { width: min(30rem, 34%); font-size: .82rem; max-height: 60%; }
+.net-wall-top { position: fixed; top: 0; left: 0; right: 0; z-index: 1001; display: flex; align-items: center; gap: 1.2rem; padding: .7rem 1.1rem; }
+.net-wall-clock { font: 600 2rem var(--mono); color: var(--t-text); letter-spacing: .04em; }
+.net-wall-lens { font: .85rem var(--mono); color: var(--t-text-muted); }
+.net-wall-banner { font-size: 1.05rem; padding: .35rem .9rem; border-radius: 999px; opacity: 0; transform: translateY(-6px); transition: opacity .4s, transform .4s; }
+.net-wall-banner.show { opacity: 1; transform: none; background: var(--t-surface-2); color: var(--t-text); }
+.net-wall-banner.move { color: var(--t-yellow); } .net-wall-banner.offline { color: var(--t-red); } .net-wall-banner.online { color: var(--t-green); }
+.map-lens select { width: auto; padding: 0 1.6rem 0 .4rem; height: 1.6rem; font-size: .78rem; background-color: transparent; }
 .node-badge { color: var(--t-text-muted); }
 .node-badge circle { fill: var(--t-bg-deep); stroke: currentColor; stroke-width: 1.5; }
 .node-badge.warn { color: var(--t-yellow); }
@@ -658,6 +780,22 @@ button.net-figure:hover { border-color: var(--t-brand); }
 .tree-card .card-bg { fill: var(--t-surface); stroke: var(--t-border-subtle); transition: stroke .15s; }
 .tree-card:hover .card-bg, .tree-card.on-path .card-bg { stroke: var(--t-brand); }
 .tree-card .select-ring { stroke-width: 2; }
+/* The tree's tint (the heatmap switch): each line haloed, each card washed, by its own signal */
+.tree-halo { fill: none; stroke-width: 12; stroke-linecap: round; stroke-linejoin: round; pointer-events: none; }
+.tree.tinted .card-bg { stroke-opacity: .6; }
+/* Folding a router's children */
+.tree-fold { cursor: pointer; }
+.tree-fold circle { fill: var(--t-surface-2); stroke: var(--t-border-strong); }
+.tree-fold text { font: 600 10px var(--mono); fill: var(--t-text-secondary); pointer-events: none; }
+.tree-fold:hover circle, .tree-fold:focus-visible circle { stroke: var(--t-brand); }
+.tree-fold.folded circle { fill: color-mix(in srgb, var(--t-brand) 25%, var(--t-surface)); stroke: var(--t-brand); }
+.tree-fold.folded text { fill: var(--t-text); }
+.tree-summary .card-bg { stroke-dasharray: 5 4; }
+.tree-summary { cursor: pointer; }
+.tree-card .card-sub.weak { fill: var(--t-yellow); }
+.tree-link.fold path { stroke-dasharray: 4 5; }
+.links.fade-in { animation: links-in .6s ease-out; }
+@keyframes links-in { from { opacity: 0; } }
 .card-name { font: 600 12px var(--mono); fill: var(--t-text); }
 .card-sub, .card-margin { font: 10.5px var(--mono); fill: var(--t-text-muted); }
 .card-margin { fill: var(--t-text-secondary); }
@@ -1190,6 +1328,11 @@ body.wall-mode .simple-top, body.wall-mode .simple-nav { display: none !importan
 .plant-card-soil { font-size: 1.6rem; font-weight: 700; line-height: 1; color: var(--t-cyan); }
 .plant-card-soil small { font-size: .7rem; font-weight: 400; color: var(--t-text-muted); }
 .plant-card-note { min-height: 1.2em; font-size: .75rem; color: var(--t-text-muted); }
+.plant-card-battery { display: inline-flex; align-items: center; gap: .25rem; font-size: .72rem; color: var(--t-text-secondary); }
+.plant-card-battery .icon { width: .85rem; height: .85rem; }
+.plant-card-battery.usb { color: var(--t-cyan); }
+.plant-card-battery.low { color: var(--t-red); }
+.plant-row-battery small { color: var(--t-text-muted); }
 .plant-card.thirsty .plant-card-soil, .plant-card.thirsty .plant-card-note { color: var(--t-yellow); }
 .simple-empty { grid-column: 1 / -1; padding: 2rem 1rem; text-align: center; color: var(--t-text-secondary); }
 

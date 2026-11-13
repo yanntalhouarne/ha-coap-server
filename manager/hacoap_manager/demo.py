@@ -17,6 +17,7 @@ forecasts and the battery drain table have something to show.
 import asyncio
 import json
 import math
+import random
 import socket
 import subprocess
 import sys
@@ -87,13 +88,13 @@ class PlantModel:
 @dataclass
 class DemoDevice(simdevice.SimulatedDevice):
     model: PlantModel = None
-    _was_pumping: bool = False
+    _pump_ms_seen: int = 0
 
     def readings(self):
         now = time.time()
-        if self.pump_running and not self._was_pumping:
-            self.model.water(now)              # Run the pump waters the plant
-        self._was_pumping = self.pump_running
+        if self.pump_ms > self._pump_ms_seen:   # (it goes back to 0 at a restart)
+            self.model.water(now)              # A pump run (since the last reading) watered the plant,
+        self._pump_ms_seen = self.pump_ms      # even one that ended before this reading
         soil, battery, humidity, temperature = self.model.reading(now)
         return bytes([soil, battery, humidity, temperature & 0xFF])
 
@@ -177,6 +178,24 @@ class Demo:
             rows.append((device_id, t, *self._reading(model, t)))
             t += 1800
         db.add_readings(rows)
+        # Its link to its parent, hourly: a level of its own, a little worse in the evening (Wi-Fi), and noise
+        level = 8 + (int(device_id[:4], 16) % 30)
+        t = max(model.start, now - 14 * 86400)
+        while t < now - 600:
+            hour = (t % 86400) / 3600
+            margin = level - (4 if 18 <= hour <= 23 else 0) + 2 * math.sin(t / 5400) + random.uniform(-1.5, 1.5)
+            db.add_link_sample(device_id, "", round(max(1, margin)), None, 3 if margin > 20 else 2 if margin > 10 else 1, when=t)
+            t += 3600
+        # Its silent pings over the week, hourly: a sleepy board answers within its 3 s poll, a weak link
+        # sometimes doesn't answer (and one board gets slower over the last days)
+        slowing = model.index == 2
+        t = now - 7 * 86400
+        while t < now - 600:
+            days_ago = (now - t) / 86400
+            ms = random.uniform(250, 3000) + max(0, (8 - level) * 120) + (1800 * (2 - days_ago) if slowing and days_ago < 2 else 0)
+            lost = random.random() < (0.12 if level < 14 else 0.02)
+            db.add_round_trip(device_id, None if lost else round(ms), when=t)
+            t += 3600
         for i, watered in enumerate(model.waterings):
             if model.start <= watered < now and i % 2 == 0:   # half from the app, half by hand
                 db.add_activity(device_id, "pump", "Pump started from the app (3 s)", when=watered)

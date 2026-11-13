@@ -3,6 +3,7 @@
 import { ago, api, busy, h, linkMode, photoUrl, state, svg, withKey } from './core.js';
 import { applyFocus, boardAvatar, enableZoom, heatmapLayer, linkKey, linkPath, linkStrength, meshTree, nameChip, net, nodeEvents,
   nodeLabel, nodeShape, qualityColors, renderHeatmapNote, renderNetwork, selectNode, shownName, shownTopology, wayLink } from './network.js';
+import { drawWhatIf, whatIfSamples } from './netplus.js';
 import { showMore } from './netframe.js';
 import { renderTree } from './tree.js';
 
@@ -142,7 +143,7 @@ export function drawFloorplanNodes(stage, img) {
     preserveAspectRatio: 'xMidYMid meet', class: `plan${invert ? ' invert' : ''}${net.allLinks ? ' all-links' : ''}${net.allNames ? ' all-names' : ''}` },
     svg('image', { href: img.src, x: 0, y: 0, width: W, height: H, preserveAspectRatio: 'none', class: 'floorplan-picture' }),
     svg('rect', { x: 0, y: 0, width: W, height: H, class: 'plan-dim' }),
-    net.heatmap ? heatmapLayer(topology, points, [0, 0, W, H], Math.max(W, H) * 0.3, false) : null,
+    net.heatmap ? heatmapLayer(topology, points, [0, 0, W, H], Math.max(W, H) * 0.3, false, whatIfSamples('floorplan')) : null,
     svg('g', { class: 'links' }, links));
   const toMap = (clientX, clientY) => {
     const point = drawing.createSVGPoint();
@@ -193,6 +194,7 @@ export function drawFloorplanNodes(stage, img) {
     drawing.append(group);
   }
   stage.append(drawing);
+  drawWhatIf(drawing, 'floorplan', points, { W, H });
   // In until each of the picture's pixels is 4 screen pixels (at least 3×): beyond, it's only blur
   enableZoom(stage, drawing, box, 'floorplan', { maxIn: Math.max(3, 4 * img.naturalWidth / W), maxOut: 1 });
   stage.dropOnPlan = (node, x, y) => {

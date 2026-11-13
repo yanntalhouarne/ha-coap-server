@@ -505,6 +505,9 @@ async def test_a_home_assistant_link_reads_and_updates_the_firmware_only(service
         assert (await dashboard.get("/api/ha/firmware", headers={remote.KEY_HEADER: dashboard_key})).status_code == 403
 
 
+PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 64
+
+
 async def test_a_home_assistant_link_reads_the_plants_tanks_and_care(services):
     """The HA CoAP integration's link: each plant's water tank, battery forecast and care tasks,
     a tank refilled and a care task done; not adding or removing care tasks."""
@@ -530,6 +533,13 @@ async def test_a_home_assistant_link_reads_the_plants_tanks_and_care(services):
         assert basil["care"] == [{"id": task["id"], "what": "Fertilize", "every_days": 14, "due": task["due"],
                                   "last_done": None}]
         assert mint["on_usb"] and mint["battery_days_left"] is None and mint["tank"] is None and mint["care"] == []
+        assert basil["photo"] is None and (await ha.get("/api/devices/1a2b3c4d/photo", headers=header)).status_code == 404
+        services.photos.add("1a2b3c4d", PNG, 0)
+        services.db.upsert_device("1a2b3c4d", photo=time.time())
+        plants = {d["device_id"]: d for d in (await ha.get("/api/ha/plants", headers=header)).json()["devices"]}
+        assert plants["1a2b3c4d"]["photo"]
+        photo = await ha.get("/api/devices/1a2b3c4d/photo", headers=header)
+        assert photo.status_code == 200 and photo.content == PNG
         done = await ha.post(f"/api/care/{task['id']}/done", headers=header)
         assert done.status_code == 200 and done.json()["due"] > now + 13 * 86400
         refilled = await ha.post("/api/devices/1a2b3c4d/tank/refilled", headers=header)

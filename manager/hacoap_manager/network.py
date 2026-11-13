@@ -24,6 +24,90 @@ class NetworkError(Exception):
     pass
 
 
+def _pct(part, whole):
+    return round(100 * part / whole, 1) if whole > 0 else None
+
+
+def radio_rates(before, after):
+    """How each router did since the reading before, from its MAC counters (they only grow,
+    until it restarts): node["radio"] = {sent, received, send_failed_pct, receive_errors_pct,
+    window_s}, and for the border router also channel_busy_pct (the channel was busy when it
+    tried to send: interference) and undelivered_to_sleepy (messages its sleepy children never
+    collected). Discards aren't errors: they're mostly duplicates."""
+    if not before:
+        return
+    window = (after.get("fetched") or time.time()) - (before.get("fetched") or 0)
+    old_nodes = {n["id"]: n for n in before.get("nodes", [])}
+    for node in after.get("nodes", []):
+        old = old_nodes.get(node["id"])
+        if not old:
+            continue
+        if node.get("mac") and old.get("mac"):
+            d = {k: node["mac"].get(k, 0) - old["mac"].get(k, 0) for k in node["mac"]}
+            if min(d.values()) < 0:
+                continue  # it restarted: counting again from 0
+            sent, received = d["out_ucast"] + d["out_broadcast"], d["in_ucast"] + d["in_broadcast"]
+            node["radio"] = {"sent": sent, "received": received, "window_s": window,
+                             "send_failed_pct": _pct(d["out_errors"], sent + d["out_errors"]),
+                             "receive_errors_pct": _pct(d["in_errors"], received + d["in_errors"])}
+        if node.get("mac_br") and old.get("mac_br"):
+            d = {k: node["mac_br"].get(k, 0) - old["mac_br"].get(k, 0) for k in node["mac_br"]}
+            if min(d.values(), default=0) < 0:
+                continue
+            sent, received = d.get("TxTotal", 0), d.get("RxTotal", 0)
+            busy = d.get("TxErrCca", 0) + d.get("TxErrBusyChannel", 0)
+            failed = d.get("TxDirectMaxRetryExpiry", 0) + d.get("TxErrAbort", 0)
+            bad = d.get("RxErrFcs", 0) + d.get("RxErrNoFrame", 0) + d.get("RxErrOther", 0) + d.get("RxErrSec", 0)
+            node["radio"] = {"sent": sent, "received": received, "window_s": window,
+                             "channel_busy_pct": _pct(busy, sent), "send_failed_pct": _pct(failed, sent),
+                             "receive_errors_pct": _pct(bad, received),
+                             "undelivered_to_sleepy": d.get("TxIndirectMaxRetryExpiry", 0)}
+
+
+def round_trip_history(rows, now=None, days=7):
+    """Each board's silent pings over the last days: {device_id: {points: [[time, ms or None]],
+    median_ms, answered_pct, last: {time, ms}}}. None in points: no answer."""
+    now = now or time.time()
+    since = now - days * 86400
+    result = {}
+    for row in rows:
+        if row["time"] < since:
+            continue
+        entry = result.setdefault(row["device_id"], {"points": []})
+        entry["points"].append([round(row["time"]), row["ms"]])
+    for entry in result.values():
+        answered = sorted(ms for _, ms in entry["points"] if ms is not None)
+        entry["median_ms"] = answered[len(answered) // 2] if answered else None
+        entry["answered_pct"] = round(100 * len(answered) / len(entry["points"]))
+        entry["last"] = {"time": entry["points"][-1][0], "ms": entry["points"][-1][1]}
+    return result
+
+
+def signal_history(samples, now=None, days=7, bucket_s=3600):
+    """Each board's link to its parent over the last days, an hourly average: {device_id: [[time,
+    margin dB]]}. A sample without a margin counts by its RSSI (above the radio's noise floor, -100
+    dBm, as the map does), else by its link quality (0-3 as about 5-35 dB)."""
+    now = now or time.time()
+    since = now - days * 86400
+    buckets = {}
+    for row in samples:
+        if row["time"] < since:
+            continue
+        margin = row["link_margin"]
+        if margin is None and row.get("average_rssi") is not None:
+            margin = max(0, row["average_rssi"] + 100)
+        if margin is None and row["link_quality"] is not None:
+            margin = row["link_quality"] * 10 + 5
+        if margin is None:
+            continue
+        key = (row["device_id"], int(row["time"] // bucket_s))
+        buckets.setdefault(key, []).append(margin)
+    history = {}
+    for (device_id, hour), values in sorted(buckets.items()):
+        history.setdefault(device_id, []).append([hour * bucket_s + bucket_s / 2, round(sum(values) / len(values), 1)])
+    return history
+
+
 class NetworkService:
     def __init__(self, data_dir, db, settings, events):
         self.data_dir = Path(data_dir)
@@ -31,6 +115,7 @@ class NetworkService:
         self.scan_cache = self.data_dir / "channel-scan.json"
         self.floorplan_file = self.data_dir / "floorplan.img"
         self.floorplan_meta = self.data_dir / "floorplan.json"
+        self.gone_file = self.data_dir / "routers-gone.json"
         self.db = db
         self.settings = settings
         self.events = events
@@ -122,7 +207,9 @@ class NetworkService:
             except BorderRouterError as exc:
                 raise NetworkError(str(exc)) from exc
             self._name_boards(topology)
+            radio_rates(self.last(), topology)
             self._log_changes(self.last(), topology)
+            self._note_routers_gone(self.last(), topology)
             self._record_links(topology)
             text = json.dumps(topology)
             self.cache.write_text(text, encoding="utf-8")
@@ -215,6 +302,42 @@ class NetworkService:
                                                      f"{describe(previous)} to {describe(parent)}")
         for device_id in set(old) - set(new):
             self.db.add_network_event(device_id, f"{device_id}: not in the network any more")
+
+    def routers_gone(self):
+        """The routers boards went through that weren't in the readings since (unplugged, their PC
+        asleep): {node_id: {label, rloc16, boards: [device_id], names: [name], since, times_this_week}}."""
+        return self._read(self.gone_file) or {}
+
+    def _note_routers_gone(self, before, after):
+        """A router that boards went through in the last reading and isn't in this one went away (a
+        network event, and an alert while it lasts); one back in a reading is back."""
+        gone = self.routers_gone()
+        here = {n["id"] for n in after["nodes"]}
+        changed = False
+        for node_id in [i for i in gone if i in here]:
+            self.db.add_network_event("", f"{gone.pop(node_id)['label']} is back")
+            changed = True
+        if before:
+            boards = {}
+            for node in before["nodes"]:
+                if node.get("device_id") and node.get("parent"):
+                    boards.setdefault(node["parent"], []).append(node)
+            for node in before["nodes"]:
+                if node["id"] in here or node["id"] in gone or node.get("border_router") or node.get("kind") != "router"                         or not boards.get(node["id"]):
+                    continue
+                label = node.get("hostname") or f"router {node.get('rloc16_hex') or node['id']}"
+                children = boards[node["id"]]
+                names = [c.get("name") or c["device_id"] for c in children]
+                self.db.add_network_event("", f"{label} went away (it was the router of {', '.join(names)})")
+                week = time.time() - 7 * 86400
+                times = sum(1 for e in self.db.network_events_between(week, time.time() + 1)
+                            if e["message"].startswith(f"{label} went away"))
+                gone[node["id"]] = {"label": label, "rloc16": node.get("rloc16_hex") or "",
+                                    "boards": [c["device_id"] for c in children], "names": names,
+                                    "since": after.get("fetched") or time.time(), "times_this_week": times}
+                changed = True
+        if changed:
+            self.gone_file.write_text(json.dumps(gone), encoding="utf-8")
 
     async def find_border_router(self, timeout=4.0):
         """Looks for border routers on the LAN (mDNS). Returns their REST URLs, best first."""

@@ -16,6 +16,7 @@ export const settingLabels = {
   discovery_timeout_s: ['Discovery time (s)', 'How long Find devices listens'],
   online_minutes: ['Online for (min)', 'A device that answered within this time shows as online'],
   auto_refresh_minutes: ['Automatic refresh (min)', 'Refreshes every device\'s status while the app runs. 0 turns it off.'],
+  ping_every_minutes: ['Ping every (min)', 'A silent ping (no beep) to every board this often, for each one\'s round trip over the week (the Network tab, a board\'s details): a board getting slower shows before it drops off. Each ping is one small message a board answers at its next poll: at 60 min, 24 a day per board. 0: off (Ping all still records them).'],
   reboot_timeout_s: ['Reboot timeout (s)', 'How long an updated device has to come back'],
   border_router_url: ['Border router REST API', 'For the Network page, such as http://192.168.1.20:8081 (the ot-br-posix REST server). Empty: not used.'],
   min_battery_for_update: ['Lowest battery for an update (%)', 'Over the air, a device whose battery is under this is skipped (an update can include it anyway). 0: no check.'],
@@ -30,7 +31,7 @@ export const settingLabels = {
 export const SETTINGS_ELSEWHERE = new Set(['home_assistant_url']);  // set in their own cards
 export const SETTING_GROUPS = [
   ['Devices and plants', ['online_minutes', 'auto_refresh_minutes', 'water_below_default', 'pump_flow_ml_s', 'min_battery_for_update']],
-  ['Network and timing', ['border_router_url', 'coap_port', 'smp_port', 'udp_mtu', 'serial_buffer', 'coap_timeout_s',
+  ['Network and timing', ['border_router_url', 'ping_every_minutes', 'coap_port', 'smp_port', 'udp_mtu', 'serial_buffer', 'coap_timeout_s',
     'mcumgr_timeout_s', 'discovery_timeout_s', 'reboot_timeout_s']],
   ['Keeping data', ['keep_readings_days', 'keep_network_readings', 'keep_backups', 'backup_copy_dir']],
   ['App', ['check_app_updates']],
@@ -107,8 +108,51 @@ document.getElementById('backup-copy-now').addEventListener('click', (event) => 
   await loadBackups();
 }));
 
+// Your signing key in the backups, encrypted with a passphrase (keybackup.py)
+function renderKeyBackup(key) {
+  const box = document.getElementById('signing-key-backup');
+  const input = (id, placeholder) => h('input', { class: 'form-control form-control-sm', type: 'password', id,
+    placeholder, autocomplete: 'new-password', style: 'max-width: 18rem' });
+  const encryptForm = (label) => h('div', { class: 'd-flex flex-wrap gap-2 align-items-center' },
+    input('key-pass', 'Passphrase (12 characters or more)'), input('key-pass-again', 'The same again'),
+    h('button', { class: 'btn btn-sm btn-outline-primary', type: 'button', onclick: (e) => busy(e.target, async () => {
+      const result = await api('POST', '/api/signing-key/backup', { passphrase: document.getElementById('key-pass').value,
+        again: document.getElementById('key-pass-again').value });
+      notify('Your key is in the backups, encrypted. Keep the passphrase in your password manager.', 'success', 8000);
+      renderKeyBackup(result);
+      loadBackups();
+    }) }, label));
+  const parts = [];
+  if (key.saved) {
+    parts.push(h('div', { class: key.matches || !key.here ? 'text-success mb-1' : 'text-warning mb-1' },
+      key.matches || !key.here ? `✓ In the backups, encrypted: key ${key.saved.fingerprint}, since ${when(key.saved.created)}.`
+        : `⚠ The backups hold another key (${key.saved.fingerprint}) than this computer's (${key.here}): add this one again.`),
+    h('div', { class: 'd-flex flex-wrap gap-2 mb-2' },
+      h('a', { class: 'btn btn-sm btn-outline-secondary', href: '/api/signing-key/backup/file', download: '' }, 'Download the encrypted key'),
+      h('button', { class: 'btn btn-sm btn-outline-danger', type: 'button', onclick: (e) => {
+        if (!confirm('Remove the encrypted key from the next backups? (Those already made keep it.)')) return;
+        busy(e.target, async () => renderKeyBackup(await api('DELETE', '/api/signing-key/backup')));
+      } }, 'Remove it from the backups')));
+  }
+  if (key.can_restore) {
+    parts.push(h('div', { class: 'mb-1' }, 'This computer has no private key: put it back from the backups.'),
+      h('div', { class: 'd-flex flex-wrap gap-2 align-items-center' }, input('key-restore-pass', 'Its passphrase'),
+        h('button', { class: 'btn btn-sm btn-primary', type: 'button', onclick: (e) => busy(e.target, async () => {
+          const result = await api('POST', '/api/signing-key/restore', { passphrase: document.getElementById('key-restore-pass').value });
+          notify('Your key is back: builds are signed with it again.', 'success', 6000);
+          renderKeyBackup(result);
+        }) }, 'Put the key back')));
+  } else if (key.here && !key.matches) {
+    parts.push(encryptForm(key.saved ? 'Add this key instead' : 'Add it to the backups, encrypted'));
+  } else if (!key.here && !key.saved) {
+    parts.push(h('div', { class: 'text-body-secondary' }, 'This computer has no private signing key (application/keys/).'));
+  }
+  box.replaceChildren(...parts);
+}
+
 export async function loadBackups() {
   api('GET', '/api/backups/copy', undefined, { quiet: true }).then(renderBackupCopy, () => {});
+  api('GET', '/api/signing-key/backup', undefined, { quiet: true }).then(renderKeyBackup, () => {});
   const backups = await api('GET', '/api/backups');
   document.getElementById('backups').replaceChildren(...(backups.length ? backups.map((b) => h('li', {},
     h('a', { href: `/api/backups/${encodeURIComponent(b.name)}`, download: b.name }, b.name),

@@ -5,17 +5,23 @@
 import { ago, api, busy, h, linkMode, notify, onUsb, pct, photoUrl, powerText, state, svg, when } from './core.js';
 import { currentRoute } from './tabs.js';
 import { daysText } from './dashboard.js';
-import { deviceName, devicePath, otherName, pingDevice } from './devices.js';
+import { deviceName, devicePath, imageStatus, otherName, pingDevice } from './devices.js';
 import { startPumping, waitForBoard } from './motion.js';
 import { renderChannelScan, renderFloorplan } from './floorplan.js';
 import { renderNetFrame, renderNetworkEvents } from './netframe.js';
-import { renderTree } from './tree.js';
+import { initTree, renderTree } from './tree.js';
+import { initNetLive, markWeakPoints, radioDetails, renderRadio, renderWeakPoints } from './netlive.js';
+import { drawTrails, drawWhatIf, flyTo, initNetPlus, linkHistory, loadRoundTrips, loadSignalHistory, noteMoves, roundTripDetails,
+  whatIfSamples } from './netplus.js';
 
 // ------------------------------------------------------------------ network
 
 // Node IDs are kept as strings everywhere (they're also the elements' data-node).
 export const net = { state: null, positions: new Map(), dragged: new Set(), selected: null, hover: null, layout: null, zoom: {},
-  viewing: null, history: [], heatmap: false, allNames: false, allLinks: false, view: 'mesh' };
+  viewing: null, history: [], heatmap: false, allNames: false, allLinks: false, view: 'mesh', lens: 'battery', weakPoints: false,
+  batteryLife: new Map(),  // device_id → days its battery lasts (its trend over two weeks), for the battery lens
+  showLog: true, whatIf: null, signalHistory: {}, lastParents: null, lastMoved: [],
+  treeFolded: new Set(), treeSideways: false, treePositions: null };
 // The reading on screen: the latest, or an earlier one picked on the history slider.
 export const shownTopology = () => (net.viewing ? net.viewing.topology : net.state && net.state.topology);
 export const nodeStyles = {
@@ -41,17 +47,66 @@ export const iconUse = (name, size, attrs = {}) => svg('use', { href: `#i-${name
 export const AVATAR_R = 20;
 export let clipIds = 0;
 
+// What a board's ring shows (Lens on the map's toolbar): how long its battery lasts (the default),
+// its soil, its firmware against the release, its signal to its parent, or how long ago it was heard from.
+export const LENSES = [['battery', 'battery life'], ['soil', 'soil'], ['firmware', 'firmware'], ['signal', 'signal'], ['heard', 'last heard']];
+const FULL_LIFE_DAYS = 180;  // the battery lens's ring is full from six months left
+const POLL_S = { battery: 3, usb: 0.5 };  // how often a board checks in with its parent: the default poll period, or on USB
+
+// The ring's share (0-1, null: none) and tone (ok, warn, bad, off; '' the default colour), and in words.
+export function lensRing(node, device) {
+  if (!device) return { fraction: null, tone: '', text: '' };
+  const clamp = (v) => Math.max(0, Math.min(1, v));
+  const off = !device.online && net.lens !== 'heard';
+  let ring;
+  if (net.lens === 'battery') {
+    // How long it lasts: red under two weeks, amber under six; on USB, full. No trend yet: its %
+    const b = device.battery;
+    const days = net.batteryLife.get(device.device_id);
+    const lasts = days === undefined || days === null ? null : days >= 60 ? `≈ ${Math.round(days / 30)} months left` : `≈ ${Math.round(days)} days left`;
+    ring = onUsb(device) ? { fraction: 1, tone: 'ok', text: `battery ${pct(b)} · ${powerText(device)}` }
+      : lasts ? { fraction: clamp(days / FULL_LIFE_DAYS), tone: days < 14 ? 'bad' : days < 42 ? 'warn' : 'ok', text: `battery ${pct(b)} · ${lasts}` }
+        : b === null || b === undefined ? { fraction: null, tone: 'off', text: 'battery unknown' }
+          : { fraction: clamp(b / 100), tone: b <= LOW_BATTERY ? 'bad' : b <= 40 ? 'warn' : 'ok', text: `battery ${pct(b)} (no trend yet)` };
+  } else if (net.lens === 'firmware') {
+    const status = imageStatus(device);
+    ring = { fraction: 1, tone: { current: 'ok', outdated: 'warn' }[status] || 'off',
+      text: { current: 'runs the release', outdated: 'behind the release', unknown: 'firmware not read yet' }[status] || 'no release chosen' };
+  } else if (net.lens === 'signal') {
+    const topology = shownTopology();
+    const link = topology ? wayLink(meshTree(topology), String(node.id)) : null;
+    const margin = link ? linkMargin(link) : null;
+    const quality = link ? linkStrength(link).quality : null;
+    ring = margin !== null ? { fraction: clamp(margin / 40), tone: margin > 20 ? 'ok' : margin > 10 ? 'warn' : 'bad', text: `${margin} dB to its parent` }
+      : quality !== null ? { fraction: quality / 3, tone: quality >= 3 ? 'ok' : quality === 2 ? 'warn' : 'bad', text: `link quality ${quality} of 3` }
+        : { fraction: null, tone: 'off', text: 'signal unknown' };
+  } else if (net.lens === 'heard') {
+    const window_ = ((state.status && state.status.settings && state.status.settings.online_minutes) || 60) * 60;
+    const age = device.last_seen ? Date.now() / 1000 - device.last_seen : Infinity;
+    ring = { fraction: Number.isFinite(age) ? clamp(1 - age / window_) : 0, tone: age < 20 * 60 ? 'ok' : age < window_ ? 'warn' : 'bad',
+      text: device.last_seen ? `heard from ${ago(device.last_seen)}` : 'never heard from' };
+  } else {
+    const soil = device.soil_moisture;
+    ring = soil === null || soil === undefined ? { fraction: null, tone: '', text: '' }
+      : { fraction: clamp(soil / 100), tone: device.needs_water ? 'warn' : '', text: `soil ${pct(soil)}` };
+  }
+  return off ? { ...ring, tone: 'off' } : ring;
+}
+
 export function boardAvatar(node, r) {
   const device = node.device_id ? state.devices.get(node.device_id) : null;
-  const soil = device && device.soil_moisture !== null && device.soil_moisture !== undefined ? device.soil_moisture : null;
+  const lens = lensRing(node, device);
   const ring = r + 5;
   const around = 2 * Math.PI * ring;
   const clip = `avatar-clip-${++clipIds}`;
-  const state_ = !device ? '' : !device.online ? ' offline' : device.needs_water ? ' dry' : '';
+  const state_ = !device ? '' : !device.online ? ' offline' : '';
+  // Its heartbeat: a ripple at the rhythm it checks in with its parent (none while it's offline)
+  const beat = device && device.online && !calmMotion() ? (onUsb(device) ? POLL_S.usb : POLL_S.battery) : null;
   return svg('g', { class: `avatar${state_}` },
+    beat ? svg('circle', { r: ring, class: 'heartbeat', style: `--beat:${beat}s; animation-delay:-${(Math.random() * beat).toFixed(2)}s` }) : null,
     svg('circle', { r: ring, class: 'gauge-track' }),
-    soil !== null ? svg('circle', { r: ring, class: 'gauge', transform: 'rotate(-90)',
-      'stroke-dasharray': `${(Math.max(0, Math.min(100, soil)) / 100) * around} ${around}` }) : null,
+    lens.fraction !== null ? svg('circle', { r: ring, class: `gauge ${lens.tone ? `lens-${lens.tone}` : ''}`, transform: 'rotate(-90)',
+      'stroke-dasharray': `${lens.fraction * around} ${around}` }, lens.text ? svg('title', {}, lens.text) : null) : null,
     svg('clipPath', { id: clip }, svg('circle', { r })),
     svg('circle', { r, class: 'avatar-bg' }),
     device && device.photo
@@ -367,6 +422,9 @@ export function renderNetwork() {
   document.getElementById('network-empty').classList.toggle('d-none', !!topology);
   const before = net.layout ? new Map(net.layout.nodes.map((n) => [n.id, { x: n.x, y: n.y }])) : new Map();
   canvas.querySelector(':scope > svg')?.remove();  // the map itself (the empty note and zoom buttons have icons)
+  // Boards that moved to another router since the drawing before: logged, and (on the mesh) a trail
+  const moved = topology ? noteMoves(topology, before.size ? before : null) : [];
+  net.lastMoved = moved;  // for the tree, drawn after
   if (!topology || net.view !== 'mesh') return;
 
   const aspect = canvas.clientWidth && canvas.clientHeight ? canvas.clientWidth / canvas.clientHeight : 1.8;
@@ -406,6 +464,10 @@ export function renderNetwork() {
     drawing.style.height = `${Math.max(280, Math.min(window.innerHeight * 0.75, canvas.clientWidth * box[3] / box[2]))}px`;
   }
   enableZoom(canvas, drawing, box, 'mesh');
+  markWeakPoints(drawing, layout);
+  const placed = new Map(layout.nodes.map((n) => [n.id, { x: n.x, y: n.y, placed: true }]));
+  drawWhatIf(drawing, 'mesh', placed);
+  drawTrails(drawing, moved.map((m) => ({ ...m, to: placed.get(m.id) })));
 
   // Glide from where the nodes were (after a new reading), else just place them
   const moving = layout.nodes.filter((n) => before.has(n.id) &&
@@ -440,6 +502,9 @@ export function redrawNetwork() {
   renderFloorplan();
   renderNetFrame();
   renderHeatmapNote();
+  renderWeakPoints();
+  renderRadio();
+  renderNetworkLegend();
 }
 
 // ------------------------------------------------------------------ the highlight
@@ -502,10 +567,11 @@ export function showTip(id) {
 }
 
 // Selecting a node (a click in any view or the list): its details, and the highlight kept.
-export function selectNode(id, reveal = false) {
+export function selectNode(id, reveal = false, fly = false) {
   const topology = shownTopology();
   const node = topology && meshTree(topology).byId.get(String(id));
   if (node) showNodeDetails(node, reveal);
+  if (node && fly) flyTo(String(id));  // from the list, the log, the weak points: the map glides there
 }
 
 // The scroll wheel (or a trackpad pinch) zooms around the pointer, dragging the background
@@ -679,6 +745,8 @@ export function showNodeDetails(node, reveal = false) {
         : (node.ipv6 || []).join(', ')],
     ]),
     links.length ? h('div', { class: 'mt-2' }, h('b', {}, 'Links'), h('ul', { class: 'list-unstyled net-links mb-0' }, links)) : null,
+    node.device_id ? roundTripDetails(node.device_id) : null,
+    radioDetails(node),
   ].filter(Boolean));  // replaceChildren would write out a null
   // On a phone the details sit under the map: bring them up after a click.
   const card = document.getElementById('network-details');
@@ -758,7 +826,7 @@ export function showLinkDetails(spring) {
       ['Link quality in / out', spring.link.link_quality_in !== null && spring.link.link_quality_in !== undefined
         ? `${spring.link.link_quality_in} / ${spring.link.link_quality_out ?? '?'} (of 3)` : ''],
       ['Measured by', spring.link.from_board ? 'the board itself (the border router gave no signal for it)' : ''],
-    ]));
+    ]), ...[linkHistory(spring)].filter(Boolean));
 }
 
 export function renderNetworkLegend() {
@@ -771,19 +839,36 @@ export function renderNetworkLegend() {
     'way to the border router is drawn: a router\'s other links show when you point at it, or with "all links". On the ',
     'mesh, the closer a board is to its parent, the stronger its link. Point at a node to see its way to the border ',
     'router, click it for details; drag it to tidy up (Read the network puts it back). Scroll to zoom, drag the ',
-    'background to move around, double-click to fit.');
+    'background to move around, double-click to fit. Lens recolours your boards\' rings (soil, battery, firmware, ',
+    'signal, last heard). Each board ripples at the rhythm it checks in with its parent (every 3 s, faster on USB). ',
+    'Dots run along a board\'s way when it talks: green when it pushes, blue when the app reads it, amber for a ',
+    'command, violet for an update. Weak points rings the routers your boards depend on. What if puts a router you ',
+    'can drag around, to see which boards it would reach. Arrow keys hop from the selected node to the next one.');
   document.getElementById('network-legend').replaceChildren(
     pill(mini(nodeShape({ border_router: true }).el), 'border router'),
     pill(mini(nodeShape({ kind: 'router' }, 1, 3).el), 'router'),
     pill(mini(nodeShape({ device_id: '-' }).el), 'your board'),
     pill(mini(nodeShape({ kind: 'SED', parent: '-' }, 1.3, 3).el), 'other device'),
     pill(h('span', { class: 'legend-strength' }), 'strong → weak'),
+    pill(h('span', { class: 'legend-lens' }), `ring: ${(LENSES.find(([key]) => key === net.lens) || LENSES[0])[1]}`),
+    pill(h('span', { class: 'traffic-key push' }), 'push', h('span', { class: 'traffic-key read' }), 'read',
+      h('span', { class: 'traffic-key command' }), 'command', h('span', { class: 'traffic-key update' }), 'update'),
     h('button', { class: 'legend-info', type: 'button', title: 'How to read the map', 'aria-label': 'How to read the map',
       onclick: () => help.classList.toggle('d-none') }, svg('svg', { class: 'icon' }, svg('use', { href: '#i-info' }))),
     help);
 }
 
+// How long each battery lasts (the simple view's figures), for the battery lens
+export async function loadBatteryLife() {
+  const plants = await api('GET', '/api/wall', undefined, { quiet: true });
+  net.batteryLife = new Map(plants.map((p) => [p.device_id, p.battery_forecast ? p.battery_forecast.days_left : null]));
+  if (net.lens === 'battery') redrawNetwork();
+}
+
 export async function loadNetwork() {
+  loadBatteryLife().catch(() => {});
+  loadSignalHistory().then(() => renderNetFrame(), () => {});
+  loadRoundTrips().catch(() => {});
   net.state = await api('GET', '/api/network');
   document.getElementById('border-router-url').value = net.state.border_router_url || '';
   document.getElementById('border-router-container').value = net.state.border_router_container || '';
@@ -882,8 +967,8 @@ document.getElementById('history-latest').addEventListener('click', showLatestNe
 // link quality 0-3 as a rough margin), blended by distance (nearer nodes weigh more), and the
 // colour fades out within 'reach' of every node. A guide to dead zones, not a measurement.
 // area is [x, y, width, height] in map units; bands: colour in steps of 5 dB (contours), else smooth.
-export function heatmapLayer(topology, points, [x0, y0, W, H], reach = Math.max(W, H) * 0.3, bands = true) {
-  const samples = [];
+export function heatmapLayer(topology, points, [x0, y0, W, H], reach = Math.max(W, H) * 0.3, bands = true, extra = []) {
+  const samples = [...extra];  // and a "what if" router's
   for (const node of topology.nodes) {
     const p = points.get(String(node.id));
     if (!p || !p.placed) continue;
@@ -934,7 +1019,7 @@ export function meshHeatmap() {
   const r = MESH_HEAT_REACH;
   const area = [Math.min(...xs, box[0]) - r, Math.min(...ys, box[1]) - r,
     Math.max(...xs, box[0] + box[2]) - Math.min(...xs, box[0]) + 2 * r, Math.max(...ys, box[1] + box[3]) - Math.min(...ys, box[1]) + 2 * r];
-  return heatmapLayer(shownTopology(), points, area, r);
+  return heatmapLayer(shownTopology(), points, area, r, true, whatIfSamples('mesh'));
 }
 
 // After a node is dragged on the mesh, the heatmap follows.
@@ -948,7 +1033,7 @@ export function redrawMeshHeatmap() {
 }
 
 export function renderHeatmapNote() {
-  const shown = net.heatmap && (net.view === 'mesh' ? !!shownTopology() : net.view === 'floorplan' && !!(net.state && net.state.floorplan));
+  const shown = net.heatmap && (net.view === 'mesh' || net.view === 'tree' ? !!shownTopology() : net.view === 'floorplan' && !!(net.state && net.state.floorplan));
   document.getElementById('heatmap-note').classList.toggle('d-none', !shown);
   document.getElementById('heat-scale').classList.toggle('d-none', !shown);
 }
@@ -982,21 +1067,23 @@ export function pulseBoard(deviceId) {
     group.classList.add('pulse');
     setTimeout(() => group.classList.remove('pulse'), 1300);
   }
-  const n = net.view === 'mesh' && net.layout && net.layout.nodes.find((x) => x.node.device_id === deviceId);
-  const spring = n && net.layout.springs.find((sp) => sp.a === n && sp.link.kind === 'child');
-  const drawing = document.querySelector('#network-canvas > svg');
-  if (!spring || !drawing || !spring.path) return;
-  const length = spring.path.getTotalLength();  // the link runs from the board to its parent
-  const dot = svg('circle', { r: 5, class: 'pulse-dot' });
-  drawing.append(dot);
-  const started = performance.now();
-  const step = (now) => {
-    const k = Math.min(1, (now - started) / 900);
-    const at = spring.path.getPointAtLength(length * k * (2 - k));
-    dot.setAttribute('cx', at.x);
-    dot.setAttribute('cy', at.y);
-    dot.setAttribute('opacity', 1 - k * 0.6);
-    if (k < 1) requestAnimationFrame(step); else dot.remove();
-  };
-  requestAnimationFrame(step);
+  // (the message itself runs along its way: netlive.trafficPulse, from the app's traffic events)
+}
+
+initNetLive();
+initNetPlus();
+initTree();
+
+// The lens: what the boards' rings show
+try { net.lens = localStorage.getItem('hacoap-map-lens') || 'battery'; } catch (error) { /* the default */ }
+{
+  const select = document.getElementById('lens-select');
+  select.replaceChildren(...LENSES.map(([key, label]) => h('option', { value: key }, label)));
+  select.value = LENSES.some(([key]) => key === net.lens) ? net.lens : 'battery';
+  net.lens = select.value;
+  select.addEventListener('change', () => {
+    net.lens = select.value;
+    try { localStorage.setItem('hacoap-map-lens', net.lens); } catch (error) { /* not remembered */ }
+    redrawNetwork();
+  });
 }

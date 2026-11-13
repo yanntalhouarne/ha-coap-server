@@ -5,6 +5,8 @@
 import { ago, api, busy, h, notify, state, svg, when } from './core.js';
 import { hoverNode, linkMargin, linkStrength, marginLabel, loadNetwork, meshTree, net, nodeLabel, nodeShape, nodeStyle, selectNode, shownTopology,
   signalBars, wayLink, weakness } from './network.js';
+import { radioFigure, renderRadio, renderWeakPoints } from './netlive.js';
+import { signalSpark } from './netplus.js';
 
 // ------------------------------------------------------------------ the figures
 
@@ -49,7 +51,8 @@ function renderFigures(topology) {
       h('span', { class: 'net-figure-value' }, value),
       h('span', { class: 'net-figure-note' }, note));
   const weakQuality = weakest ? linkStrength(weakest.link).quality : null;
-  box.replaceChildren(
+  const radio = radioFigure();
+  box.replaceChildren(...[
     figure('routers', count.routers, 'the border router included', { icon: 'radio-tower' }),
     figure('children', count.children, `${count.sleepy} sleepy`, { icon: 'moon' }),
     figure('your boards', count.boards, `${online} of ${state.devices.size} online`, { icon: 'sprout' }),
@@ -59,7 +62,9 @@ function renderFigures(topology) {
       { kind: tone(average > 20 ? 3 : average > 10 ? 2 : 1), icon: 'activity' }) : null,
     figure('changes', changes, 'parent changes, 24 h', { kind: changes > 3 ? 'warn' : '', icon: 'history',
       onclick: () => { showMore('changes'); document.querySelector('.net-more').scrollIntoView({ behavior: 'smooth', block: 'nearest' }); },
-      title: 'Show the changes' }));
+      title: 'Show the changes' }),
+    radio ? figure(radio.label, radio.value, radio.note, { kind: radio.kind, icon: 'radio', onclick: radio.onclick,
+      title: 'Show the radios\' health' }) : null].filter(Boolean));  // replaceChildren would write out a null
 }
 
 // ------------------------------------------------------------------ the node list
@@ -107,10 +112,11 @@ function nodeRow(r, tree) {
   const what = r.node.border_router ? 'border router' : r.device ? (r.device.plant || 'your board') : nodeStyle(r.node).label.split(' (')[0];
   const sub = [what, r.node.border_router ? null : upNode ? `via ${nodeLabel(upNode)}` : 'not linked'].filter(Boolean).join(' · ');
   const row = h('button', { class: `net-row${r.device && !r.device.online ? ' offline' : ''}`, type: 'button', 'data-node': r.id,
-    onclick: () => selectNode(r.id, true), onpointerenter: () => hoverNode(r.id, true), onpointerleave: () => hoverNode(r.id, false),
+    onclick: () => selectNode(r.id, true, true), onpointerenter: () => hoverNode(r.id, true), onpointerleave: () => hoverNode(r.id, false),
     onfocus: () => hoverNode(r.id, true), onblur: () => hoverNode(r.id, false) },
   svg('svg', { class: 'net-row-icon', viewBox: '-32 -32 64 64', 'aria-hidden': 'true' }, nodeShape(r.node, r.node.device_id ? 1 : r.node.border_router ? 1.1 : r.node.parent ? 1.9 : 1.4, strength ? strength.quality : undefined).el),
   h('span', { class: 'net-row-text' }, h('span', { class: 'net-row-name' }, r.name), h('span', { class: 'net-row-sub' }, sub)),
+  r.node.device_id ? signalSpark(r.node.device_id) : null,
   strength ? h('span', { class: 'net-row-signal', title: strength.text }, signalBars(strength.quality),
     h('span', {}, marginLabel(r.link) ?? '')) : null);
   return row;
@@ -160,7 +166,7 @@ document.getElementById('network-empty-settings').addEventListener('click', (eve
 // ------------------------------------------------------------------ changes and channels, under the map
 
 export function showMore(which) {
-  for (const name of ['changes', 'channels']) {
+  for (const name of ['changes', 'weak', 'radio', 'channels']) {
     const tab = document.getElementById(`net-more-${name}`);
     tab.classList.toggle('active', name === which);
     tab.setAttribute('aria-selected', String(name === which));
@@ -171,6 +177,8 @@ export function showMore(which) {
 
 document.getElementById('net-more-changes').addEventListener('click', () => showMore('changes'));
 document.getElementById('net-more-channels').addEventListener('click', () => showMore('channels'));
+document.getElementById('net-more-weak').addEventListener('click', () => { showMore('weak'); renderWeakPoints(); });
+document.getElementById('net-more-radio').addEventListener('click', () => { showMore('radio'); renderRadio(); });
 
 export function renderNetworkEvents(events = []) {
   const dayAgo = Date.now() / 1000 - 86400;
