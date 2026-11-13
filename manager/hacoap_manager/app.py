@@ -796,6 +796,11 @@ def create_app(services, background_tasks=True, on_quit=None, port=None):
             raise HTTPException(404, "Unknown device")
         return await s.doctor.check(device_id)
 
+    @app.post("/api/network/ping-all")
+    async def ping_all():
+        """A silent ping to every board at once (no beep), for its way on the map: [{device_id, ok, ms, error}]."""
+        return await s.inventory.ping_all()
+
     @app.post("/api/devices/{device_id}/ping")
     async def ping(device_id: str):
         try:

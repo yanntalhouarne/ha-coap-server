@@ -208,3 +208,26 @@ async def test_the_buttons_pump_runs_count_in_its_tank(client, services, start_s
     assert device["tank"]["used_ml"] == 300
     await refresh(client)
     assert len(services.db.recent_activity("1a2b3c4d", "pump", 5)) == 1   # counted once
+
+
+async def test_a_silent_ping_to_every_board(client, services, start_sim):
+    """Ping all: each board answers, without beeping, and the map is told each way (ping, pong with
+    its round trip)."""
+    server = await start_sim(dynamic=False)
+    await add_board(client, services, server)
+    with services.events.subscribe() as queue:
+        response = await client.post("/api/network/ping-all", headers=CHANGE)
+        events = []
+        while not queue.empty():
+            events.append(queue.get_nowait())
+    assert response.status_code == 200
+    [result] = response.json()
+    assert result["device_id"] == "1a2b3c4d" and result["ok"] and result["ms"] >= 0
+    assert server.device.pings == 0  # it didn't beep
+    traffic = [(e["what"], e.get("ms") is not None) for e in events if e["type"] == "traffic"]
+    assert traffic == [("ping", False), ("pong", True)]
+    # A board that doesn't answer (nothing at its address): lost
+    services.db.upsert_device("1a2b3c4d", address="127.0.0.9")
+    services.settings.coap_timeout_s = 0.5
+    [result] = (await client.post("/api/network/ping-all", headers=CHANGE)).json()
+    assert not result["ok"] and result["ms"] is None

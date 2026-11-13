@@ -86,10 +86,11 @@ class Inventory:
         self.events.publish("device", device=self.describe(device))
         return device
 
-    def _traffic(self, device_id, kind):
+    def _traffic(self, device_id, kind, **extra):
         """A message to or from a board, for the network map's live traffic: push (it pushed),
-        read (the app read it), command (the app told it something)."""
-        self.events.publish("traffic", device_id=device_id, what=kind)
+        read (the app read it), command (the app told it something), ping (a silent ping sent),
+        pong (answered, with its round trip in ms), lost (no answer)."""
+        self.events.publish("traffic", device_id=device_id, what=kind, **extra)
 
     def describe(self, device):
         """The device as the API returns it, with whether it's online and needs water, its water
@@ -586,6 +587,29 @@ class Inventory:
         self._traffic(device_id, "command")
         self._changed(self.db.upsert_device(device_id, pump_s=duration, last_seen=time.time()))
         return {"running": running, "duration": duration}
+
+    async def ping_all(self, concurrency=8):
+        """A silent ping (the 'ping' resource with 0: no beep) to every board with an address, all at
+        once: [{device_id, ok, ms, error}]. Each is one small message the board takes at its
+        next poll and answers."""
+        semaphore = asyncio.Semaphore(concurrency)
+        options = self._coap_options()
+
+        async def one(device):
+            async with semaphore:
+                self._traffic(device["device_id"], "ping")
+                started = time.monotonic()
+                try:
+                    await coap.ping(device["address"], beep=False, **options)
+                except (coap.CoapError, TimeoutError, OSError) as exc:
+                    self._traffic(device["device_id"], "lost")
+                    return {"device_id": device["device_id"], "ok": False, "ms": None, "error": str(exc) or type(exc).__name__}
+                ms = round((time.monotonic() - started) * 1000)
+                self._traffic(device["device_id"], "pong", ms=ms)
+                self._changed(self.db.upsert_device(device["device_id"], last_seen=time.time()))
+                return {"device_id": device["device_id"], "ok": True, "ms": ms, "error": ""}
+
+        return list(await asyncio.gather(*(one(d) for d in self.db.devices() if d["address"])))
 
     async def ping(self, device_id):
         device = self._device(device_id)

@@ -18,6 +18,8 @@ export const TRAFFIC = {
   read: { label: 'the app read a board', way: 'both' },
   command: { label: 'the app told a board', way: 'down' },
   update: { label: 'an update', way: 'down' },
+  ping: { label: 'a silent ping', way: 'down' },
+  pong: { label: 'its answer', way: 'up' },
 };
 const HOP_MS = 420;
 
@@ -45,9 +47,22 @@ function wayOf(deviceId) {
   return hops.length ? hops : null;
 }
 
-// A dot along a board's way to the border router (or back), coloured by what the message is.
-export function trafficPulse(deviceId, what) {
-  if (calm() || net.viewing || currentRoute().split('/')[0] !== 'network') return;
+// A dot along a board's way to the border router (or back), coloured by what the message is. An
+// answer to a ping says its round trip by the board; no answer marks it.
+const pingSent = new Map();  // device_id → when its ping's dot started down, and how long it takes
+
+export function trafficPulse(deviceId, what, extra = {}) {
+  if (net.viewing || currentRoute().split('/')[0] !== 'network') return;
+  if (what === 'pong' && pingSent.has(deviceId)) {
+    // The answer goes back up once the ping has reached the board (an answer can come back sooner)
+    const { at, ms } = pingSent.get(deviceId);
+    pingSent.delete(deviceId);
+    const wait = at + ms - performance.now();
+    if (wait > 0) return void setTimeout(() => trafficPulse(deviceId, what, extra), wait);
+  }
+  if (what === 'pong' && extra.ms !== undefined) setTimeout(() => roundTrip(deviceId, `${(extra.ms / 1000).toFixed(1)} s`, 'ok'), HOP_MS * 2);
+  if (what === 'lost') return roundTrip(deviceId, 'no answer', 'bad');
+  if (calm()) return;
   for (const group of document.querySelectorAll(`#map-wrap g.node[data-device="${CSS.escape(deviceId)}"]`)) {
     group.classList.remove('pulse');
     void group.getBBox();  // restarts the animation
@@ -62,6 +77,7 @@ export function trafficPulse(deviceId, what) {
   const dot = svg('circle', { r: 5, class: `traffic-dot ${kind}` });
   drawing.append(dot);
   const plan = legs.flat();
+  if (kind === 'ping') pingSent.set(deviceId, { at: performance.now(), ms: plan.length * HOP_MS });
   const started = performance.now();
   const step = (now) => {
     const t = Math.max(0, now - started) / HOP_MS;  // a frame's time can be from just before it started
@@ -76,6 +92,18 @@ export function trafficPulse(deviceId, what) {
     requestAnimationFrame(step);
   };
   requestAnimationFrame(step);
+}
+
+// A bubble by the board for a few seconds: its round trip, or that it didn't answer
+function roundTrip(deviceId, text, tone) {
+  for (const group of document.querySelectorAll(`#map-wrap g.node[data-device="${CSS.escape(deviceId)}"]`)) {
+    group.querySelector('.rtt-bubble')?.remove();
+    const w = text.length * 6.6 + 14;
+    const bubble = svg('g', { class: `rtt-bubble ${tone}`, transform: 'translate(26,-30)' },
+      svg('rect', { x: 0, y: -10, width: w, height: 19, rx: 9.5 }), svg('text', { x: w / 2, y: 3.5, 'text-anchor': 'middle' }, text));
+    group.append(bubble);
+    setTimeout(() => bubble.remove(), 7000);
+  }
 }
 
 const down = (hops) => [...hops].reverse().map((hop) => ({ path: hop.path, forward: !hop.forward }));

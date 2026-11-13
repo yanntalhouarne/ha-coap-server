@@ -628,6 +628,15 @@ button.net-figure:hover { border-color: var(--t-brand); }
 .traffic-dot.read, .traffic-key.read { color: var(--t-blue); }
 .traffic-dot.command, .traffic-key.command { color: var(--t-orange); }
 .traffic-dot.update, .traffic-key.update { color: var(--t-magenta); }
+.traffic-dot.ping, .traffic-dot.pong { color: var(--t-cyan); }
+.traffic-dot.pong { r: 6; }
+/* A ping's round trip, by the board */
+.rtt-bubble { pointer-events: none; animation: rtt-in .3s ease-out; }
+@keyframes rtt-in { from { opacity: 0; transform: translate(26px, -22px); } }
+.rtt-bubble rect { fill: color-mix(in srgb, var(--t-cyan) 20%, var(--t-bg-deep)); stroke: var(--t-cyan); }
+.rtt-bubble text { font: 600 10.5px var(--mono); fill: var(--t-text); }
+.rtt-bubble.bad rect { fill: color-mix(in srgb, var(--t-red) 20%, var(--t-bg-deep)); stroke: var(--t-red); }
+.net-log-line.pong .net-log-arrow { color: var(--t-cyan); }
 .traffic-key { display: inline-block; width: .55rem; height: .55rem; border-radius: 50%; background: currentColor; margin: 0 .2rem 0 .45rem; }
 .traffic-key:first-child { margin-left: 0; }
 .legend-lens { display: inline-block; width: .8rem; height: .8rem; border-radius: 50%; border: 2px solid var(--t-cyan); }

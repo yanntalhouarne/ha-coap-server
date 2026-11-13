@@ -77,8 +77,8 @@ export function connectEvents(delay = 1000) {
       state.build = event.build;
       renderActivity();
     } else if (event.type === 'traffic') {
-      trafficPulse(event.device_id, event.what);
-      trafficLine(event.device_id, event.what);
+      trafficPulse(event.device_id, event.what, event);
+      trafficLine(event.device_id, event.what, event);
     } else if (event.type === 'job') {
       updateTraffic(event.job);
       const finished = ['running', 'paused'].includes(state.jobs.get(event.job.id)?.state) && !['running', 'paused'].includes(event.job.state);

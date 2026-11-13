@@ -3,7 +3,7 @@
 // signal over the week, boards gliding to their new router when they move, and flying to a node.
 // Nothing here asks a board for anything.
 
-import { api, h, state, svg } from './core.js';
+import { api, h, notify, state, svg } from './core.js';
 import { currentRoute } from './tabs.js';
 import { deviceName } from './devices.js';
 import { LENSES, calm, linkMargin, meshTree, net, nodeLabel, redrawNetwork, selectNode, shownTopology } from './network.js';
@@ -15,7 +15,7 @@ const onNetwork = () => currentRoute().split('/')[0] === 'network';
 
 const log = [];
 const LOG_SHOWN = 7;
-const ARROWS = { push: '←', read: '↔', command: '→', update: '→', move: '↻', offline: '✕', online: '✓', network: '•' };
+const ARROWS = { push: '←', read: '↔', command: '→', update: '→', move: '↻', offline: '✕', online: '✓', network: '•', pong: '↩' };
 const lastUpdateLine = new Map();
 
 export function logLine(kind, text, deviceId = null) {
@@ -26,16 +26,35 @@ export function logLine(kind, text, deviceId = null) {
 }
 
 // A message the app saw (its traffic events), in words.
-export function trafficLine(deviceId, what) {
+export function trafficLine(deviceId, what, extra = {}) {
   const device = state.devices.get(deviceId);
   const name = device ? deviceName(device) : deviceId;
   if (what === 'update') {  // one line per update, not one per chunk
     if (Date.now() - (lastUpdateLine.get(deviceId) || 0) < 60000) return;
     lastUpdateLine.set(deviceId, Date.now());
   }
+  if (what === 'ping') return;  // the answer (or none) says it
   const text = { push: `${name} pushed its readings`, read: `the app read ${name}`, command: `the app told ${name}`,
-    update: `${name} is being updated` }[what] || `${name}: ${what}`;
-  logLine(what, text, deviceId);
+    update: `${name} is being updated`, pong: `${name} answered the ping in ${((extra.ms || 0) / 1000).toFixed(1)} s`,
+    lost: `${name} didn't answer the ping` }[what] || `${name}: ${what}`;
+  logLine(what === 'lost' ? 'offline' : what, text, deviceId);
+}
+
+// Ping all: a silent ping to every board (no beep), the dots and round trips on the map, a summary
+export async function pingAll(button) {
+  button.disabled = true;
+  logLine('network', 'a silent ping to every board');
+  try {
+    const results = await api('POST', '/api/network/ping-all');
+    const ok = results.filter((r) => r.ok);
+    const times = ok.map((r) => r.ms / 1000);
+    const missing = results.filter((r) => !r.ok).map((r) => { const d = state.devices.get(r.device_id); return d ? deviceName(d) : r.device_id; });
+    const summary = `${ok.length} of ${results.length} answered${times.length ? ` · fastest ${Math.min(...times).toFixed(1)} s, slowest ${Math.max(...times).toFixed(1)} s` : ''}` +
+      (missing.length ? ` · no answer: ${missing.join(', ')}` : '');
+    notify(summary, missing.length ? 'warning' : 'success', 8000);
+  } finally {
+    button.disabled = false;
+  }
 }
 
 // A board that came online or went offline (its device events).
@@ -370,6 +389,7 @@ export function initNetPlus() {
     redrawNetwork();
   });
   document.getElementById('net-wall-button').addEventListener('click', toggleWall);
+  document.getElementById('net-ping-all').addEventListener('click', (event) => pingAll(event.currentTarget));
   document.addEventListener('keydown', (event) => {
     if (event.key === 'Escape' && wall.on) leaveWall();
     else onArrow(event);
