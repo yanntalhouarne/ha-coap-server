@@ -34,6 +34,7 @@ static uint8_t duration_s = CONFIG_HACOAP_PUMP_DEFAULT_DURATION;
 static atomic_t button_seconds; // run time started with S1 since boot
 static atomic_t run_ms;         // time it ran since boot, the runs that ended (ms)
 static int64_t started_ms;      // k_uptime_get() when the current run started
+static void (*run_end_callback)(void);
 
 /* Turns the pump and the user LED on or off, and counts the time it ran. */
 static void pump_set(bool on)
@@ -50,6 +51,15 @@ static void pump_set(bool on)
 	}
 	gpio_pin_set_dt(&pump_gpio, on ? 1 : 0);
 	status_led_user(on);
+	if (!on && was_on && (run_end_callback != NULL))
+	{
+		run_end_callback(); // after pump_run_ms() counts the run
+	}
+}
+
+void pump_on_run_end(void (*callback)(void))
+{
+	run_end_callback = callback;
 }
 
 /* The pump has run for 'duration_s' seconds. */

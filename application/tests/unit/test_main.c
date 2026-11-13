@@ -29,6 +29,7 @@ static struct
 	uint8_t pump_set_duration_arg;
 	int pump_starts;
 	int pump_stops;
+	void (*pump_run_end)(void);
 	uint32_t missing_sensors;
 	struct sensors_data sensors;
 	int sounds[4];        // plays per enum buzzer_sound
@@ -174,6 +175,11 @@ uint32_t pump_button_seconds(void)
 uint32_t pump_run_ms(void)
 {
 	return fake_mod.pump_ms;
+}
+
+void pump_on_run_end(void (*callback)(void))
+{
+	fake_mod.pump_run_end = callback;
 }
 
 uint32_t device_settings_boots(void)
@@ -528,11 +534,11 @@ static void sampled(uint8_t soil);
 static void test_a_new_pump_run_time_is_pushed(void)
 {
 	reset_module();
-	settings_push_work.pending = false;
+	changes_push_work.pending = false;
 	coap_ready = false;
 	/* At boot, the setting is only loaded: no one to tell */
 	on_setting_changed(SETTING_PUMP_S, 4);
-	CHECK(!settings_push_work.pending);
+	CHECK(!changes_push_work.pending);
 
 	CHECK_EQ(firmware_main(), 0);
 	sampled(40);
@@ -541,19 +547,42 @@ static void test_a_new_pump_run_time_is_pushed(void)
 	fake_mod.observed2 = true;                 // and Home Assistant
 	fake_mod.observed2_next = history_next();
 	CHECK_EQ(on_pumpdc_put('6'), 6);           // set from either of them
-	CHECK(settings_push_work.pending);         // from the work queue, not the CoAP handler
+	CHECK(changes_push_work.pending);         // from the work queue, not the CoAP handler
 	CHECK_EQ(fake_mod.notifies, 0);
-	fake_work_run(&settings_push_work);
+	fake_work_run(&changes_push_work);
 	CHECK_EQ(fake_mod.notifies, 1);            // each one is told, without a new sample
 	CHECK_EQ(fake_mod.notifies2, 1);
 	CHECK_EQ(fake_ot_api_lock_depth, 0);
 
 	/* The same run time again: nothing changed, nothing sent */
 	CHECK_EQ(on_pumpdc_put('6'), 6);
-	CHECK(!settings_push_work.pending);
+	CHECK(!changes_push_work.pending);
 	/* Other settings aren't pushed */
 	fake_mod.settings_changed(SETTING_POLL_MS, 5000);
-	CHECK(!settings_push_work.pending);
+	CHECK(!changes_push_work.pending);
+}
+
+static void test_the_end_of_a_pump_run_is_pushed(void)
+{
+	reset_module();
+	changes_push_work.pending = false;
+	coap_ready = false;
+	CHECK_EQ(firmware_main(), 0);
+	CHECK(fake_mod.pump_run_end != NULL);
+	sampled(40);
+	fake_mod.observed = true;
+	fake_mod.observed_next = history_next();
+	fake_mod.pump_run_end();                   // the run's end (maybe in the timer's interrupt)
+	CHECK(changes_push_work.pending);          // pushed from the work queue
+	fake_work_run(&changes_push_work);
+	CHECK_EQ(fake_mod.notifies, 1);            // without a new sample: it reads 'diag' (pump_ms)
+	CHECK_EQ(fake_ot_api_lock_depth, 0);
+
+	/* Before the CoAP API is up: no one to tell */
+	changes_push_work.pending = false;
+	coap_ready = false;
+	fake_mod.pump_run_end();
+	CHECK(!changes_push_work.pending);
 }
 
 /* A sample of this soil moisture, taken now */
@@ -752,6 +781,7 @@ int main(void)
 	RUN_TEST(test_samples_are_kept_for_hist);
 	RUN_TEST(test_samples_that_changed_are_pushed);
 	RUN_TEST(test_a_new_pump_run_time_is_pushed);
+	RUN_TEST(test_the_end_of_a_pump_run_is_pushed);
 	RUN_TEST(test_a_power_change_takes_a_sample);
 	RUN_TEST(test_usb_power_polls_faster);
 	RUN_TEST(test_pump_put_only_acts_on_a_change);

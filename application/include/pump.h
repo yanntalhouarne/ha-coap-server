@@ -40,4 +40,8 @@ uint32_t pump_button_seconds(void);
  * ended (its run time, or stopped early): 'diag' pump_ms, for the water a plant was given. */
 uint32_t pump_run_ms(void);
 
+/* 'callback' is called each time a run ends (its run time is over, or it was stopped), maybe from
+ * the timer's interrupt: it should only submit work. NULL: no one is told. */
+void pump_on_run_end(void (*callback)(void));
+
 #endif // PUMP_H_

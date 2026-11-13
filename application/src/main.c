@@ -65,11 +65,12 @@ static bool sampling;
 /* Set once the CoAP API is up: samples can be pushed */
 static bool coap_ready;
 
-static void push_settings(struct k_work *work);
+static void push_changes(struct k_work *work);
 
-/* The pump's run time changed (from Home Assistant, the fleet manager or the board's settings):
- * its observers are told, so that each one shows it at once (see push_settings()) */
-static K_WORK_DEFINE(settings_push_work, push_settings);
+/* The pump's run time changed (from Home Assistant, the fleet manager or the board's settings),
+ * or a pump run ended (whatever started it): its observers are told, so that each one shows it at
+ * once (see push_changes()) */
+static K_WORK_DEFINE(changes_push_work, push_changes);
 
 /* Applies a setting: at boot (when it differs from its default), and after each change */
 static void on_setting_changed(enum device_setting id, int32_t value)
@@ -87,7 +88,7 @@ static void on_setting_changed(enum device_setting id, int32_t value)
 		(void)pump_set_duration((uint8_t)value);
 		if (IS_ENABLED(CONFIG_HACOAP_PUSH) && coap_ready)
 		{
-			(void)k_work_submit(&settings_push_work); // not at boot: the setting is only loaded
+			(void)k_work_submit(&changes_push_work); // not at boot: the setting is only loaded
 		}
 		break;
 
@@ -230,10 +231,21 @@ static void on_sampled(const struct sensors_data *data)
 	openthread_api_mutex_unlock(context);
 }
 
-/* (System work queue) A setting changed: each observer of 'hist' is sent what it lacks, often no
- * sample at all. A push without new samples means "my settings changed": the observer reads them
- * again ('diag' pump_s, or 'pumpdc'). Whoever made the change is told too, which is harmless. */
-static void push_settings(struct k_work *work)
+/* A pump run ended (maybe in the timer's interrupt): the water it gave ('diag' pump_ms) is told now,
+ * not at the observers' next reading */
+static void on_pump_run_end(void)
+{
+	if (IS_ENABLED(CONFIG_HACOAP_PUSH) && coap_ready)
+	{
+		(void)k_work_submit(&changes_push_work);
+	}
+}
+
+/* (System work queue) A setting changed, or a pump run ended: each observer of 'hist' is sent what
+ * it lacks, often no sample at all. A push without new samples means "something changed": the
+ * observer reads 'diag' again (pump_s, pump_ms), or 'pumpdc'. Whoever made the change is told too,
+ * which is harmless. */
+static void push_changes(struct k_work *work)
 {
 	struct openthread_context *context = openthread_get_default_context();
 	uint32_t next;
@@ -253,7 +265,7 @@ static void push_settings(struct k_work *work)
 			err = coap_resources_notify(i);
 			if (err != 0)
 			{
-				LOG_WRN("Could not tell observer %u about the new settings (%d)", (unsigned int)i, err);
+				LOG_WRN("Could not tell observer %u about a change (%d)", (unsigned int)i, err);
 			}
 		}
 	}
@@ -501,6 +513,7 @@ int main(void)
 	}
 	else
 	{
+		pump_on_run_end(on_pump_run_end);
 		forget_network_if_held();
 	}
 
