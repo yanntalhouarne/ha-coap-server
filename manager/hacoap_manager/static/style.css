@@ -231,6 +231,7 @@ fieldset legend::before { content: "// "; color: var(--t-accent-text); }
 .event-pump { --event: var(--t-cyan); }
 .event-parent { --event: var(--t-magenta); }
 .event-restart { --event: var(--t-orange); }
+.event-lost { --event: var(--t-red); }
 .calibrate { border-top: 1px solid var(--t-border-subtle); padding-top: .5rem; margin-top: .25rem; }
 .calibrate .btn { margin: .15rem 0; }
 .legend-event { display: inline-block; width: .55rem; height: .55rem; border-radius: 50%; background: var(--event);
@@ -692,6 +693,35 @@ button.net-figure:hover { border-color: var(--t-brand); }
 .signal-spark.big { width: 100%; height: 70px; }
 .signal-spark .spark-weak { stroke: var(--t-red); stroke-dasharray: 3 4; vector-effect: non-scaling-stroke; opacity: .6; }
 .link-week { padding: .3rem 0; }
+/* A device's page: its section links, under the top bar while it scrolls */
+.device-sections { position: sticky; top: var(--topbar-h, 0); z-index: 10; display: flex; flex-wrap: wrap; gap: .25rem;
+  margin: 0 0 1rem; padding: .35rem 0; background: var(--t-bg); border-bottom: 1px solid var(--t-border-subtle); }
+.device-sections button { border: 0; background: transparent; color: var(--t-text-secondary); font-size: .8rem; padding: .2rem .55rem; border-radius: .35rem; }
+.device-sections button:hover { color: var(--t-text); background: var(--t-surface-2); }
+.device-sections button.active { color: var(--t-brand); background: color-mix(in srgb, var(--t-brand) 14%, transparent); }
+.device-sections button:focus-visible { outline: 2px solid var(--t-brand); outline-offset: 1px; }
+.device-section { scroll-margin-top: calc(var(--topbar-h, 0px) + 3.2rem); }
+@media (max-width: 767.98px) {  /* the top bar scrolls away on a phone: the links stick to the very top */
+  .device-sections { top: 0; flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
+  .device-sections button { flex: none; }
+  .device-section { scroll-margin-top: 3.2rem; }
+}
+/* The Devices table: meters, the signal, what needs a look */
+.cell-meter { min-width: 7.5rem; }
+.meter-top { display: flex; align-items: center; gap: .3rem; }
+.meter { position: relative; height: 5px; margin: .2rem 0 .15rem; background: var(--t-surface-2); border-radius: 3px; }
+.meter i { display: block; height: 100%; border-radius: 3px; background: var(--t-green); transition: width .4s; }
+.meter i.water { background: var(--t-cyan); } .meter i.warn { background: var(--t-yellow); }
+.meter i.bad { background: var(--t-red); } .meter i.charging { background: var(--t-blue); }
+.meter-mark { position: absolute; top: -3px; bottom: -3px; width: 2px; margin-left: -1px; background: var(--t-text); border-radius: 1px; opacity: .8; }
+.meter-note { font-size: .72rem; color: var(--t-text-muted); white-space: nowrap; }
+.cell-signal { min-width: 7.5rem; white-space: nowrap; }
+#devices-table.hide-ids .col-id { display: none; }
+#devices-table tr.attn-bad > td:first-child { box-shadow: inset 3px 0 0 var(--t-red); }
+#devices-table tr.attn-warn > td:first-child { box-shadow: inset 3px 0 0 var(--t-yellow); }
+.attn-reasons { font-size: .72rem; color: var(--t-yellow); } .attn-reasons.bad { color: var(--t-red); }
+.device-card.attn-bad { box-shadow: inset 3px 0 0 var(--t-red); } .device-card.attn-warn { box-shadow: inset 3px 0 0 var(--t-yellow); }
+.devices-more-menu { min-width: 19rem; }
 /* A board's round trip over the week */
 .rtt-chart { width: 100%; height: 70px; overflow: visible; }
 .rtt-dot { stroke: var(--t-cyan); stroke-width: 3.5; stroke-linecap: round; vector-effect: non-scaling-stroke; opacity: .75; }
@@ -925,6 +955,8 @@ body.net-wall .net-log { width: min(30rem, 34%); font-size: .82rem; max-height: 
   border: 1px solid var(--t-border-subtle); border-radius: .7rem; overflow: hidden; transition: border-color .15s, transform .15s; }
 .device-card:hover { border-color: var(--t-brand); transform: translateY(-2px); }
 .device-card.selected { border-color: var(--t-brand); box-shadow: 0 0 0 1px var(--t-brand); }
+.device-card.selected.attn-bad { box-shadow: 0 0 0 1px var(--t-brand), inset 3px 0 0 var(--t-red); }
+.device-card.selected.attn-warn { box-shadow: 0 0 0 1px var(--t-brand), inset 3px 0 0 var(--t-yellow); }
 .device-card.dry { border-color: color-mix(in srgb, var(--t-yellow) 60%, var(--t-border-subtle)); }
 .device-card.offline .card-photo, .device-card.offline .card-stats { opacity: .55; }
 .card-check { position: absolute; top: .6rem; left: .6rem; z-index: 1; width: 1.15rem; height: 1.15rem; }

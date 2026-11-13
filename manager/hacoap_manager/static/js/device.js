@@ -13,6 +13,34 @@ import { renderWatering } from './watering.js';
 
 // ------------------------------------------------------------------ one device
 
+// The section links under the page's top: each scrolls to its card, the one in view lit up
+const sectionLinks = [...document.querySelectorAll('#device-sections [data-section]')];
+let pinnedSection = null;  // the one clicked stays lit (two columns scroll together) until the page is scrolled by hand
+const lightSection = (link) => { for (const l of sectionLinks) l.classList.toggle('active', l === link); };
+for (const link of sectionLinks) {
+  link.addEventListener('click', () => {
+    pinnedSection = link;
+    lightSection(link);
+    document.getElementById(link.dataset.section)
+      .scrollIntoView({ behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'start' });
+  });
+}
+for (const kind of ['wheel', 'touchmove', 'keydown']) window.addEventListener(kind, () => { pinnedSection = null; }, { passive: true });
+const topbarHeight = () => document.documentElement.style.setProperty('--topbar-h', `${document.querySelector('.topbar')?.offsetHeight || 0}px`);
+topbarHeight();
+window.addEventListener('resize', topbarHeight);
+if ('IntersectionObserver' in window) {
+  const seen = new Map();
+  const watch = new IntersectionObserver((entries) => {
+    for (const entry of entries) seen.set(entry.target.id, entry.isIntersecting ? entry.boundingClientRect.top : null);
+    // The highest card in view
+    const shown = sectionLinks.map((l) => [l, seen.get(l.dataset.section)]).filter(([, top]) => top !== null && top !== undefined);
+    const current = shown.sort((a, b) => a[1] - b[1])[0];
+    if (!pinnedSection) lightSection(current ? current[0] : null);
+  }, { rootMargin: '-120px 0px -55% 0px' });
+  for (const link of sectionLinks) watch.observe(document.getElementById(link.dataset.section));
+}
+
 // range: the period the charts zoom into (null: all of it); compare: other devices drawn on them
 export const devicePage = { id: null, details: null, range: null, compare: [] };
 const COMPARE_COLORS = ['var(--t-magenta)', 'var(--t-yellow)', 'var(--t-text-secondary)'];
@@ -293,6 +321,9 @@ export function renderDeviceCharts(details) {
   const name = deviceName(details.device);
   const others = (key) => devicePage.compare.map((c, i) => ({ name: c.name, color: COMPARE_COLORS[i],
     points: c.readings.map((x) => ({ t: x.time, v: x[key] })) }));
+  // Its silent pings: the answers' round trip, each one it didn't answer a red marker
+  const trips = details.round_trips || [];
+  const lost = trips.filter((p) => p.ms === null).map((p) => ({ t: p.time, kind: 'lost', text: 'no answer to a silent ping' }));
   const charts = [
     lineChart('Battery', pick('battery'), { unit: ' %', min: 0, max: 100, color: 'var(--t-green)', events: [...updates, ...restarts], overlays: others('battery'), name, ...zoom }),
     lineChart('Soil moisture', pick('soil_moisture'), { unit: ' %', min: 0, max: 100, color: 'var(--t-cyan)', events: pumps, overlays: others('soil_moisture'), name, ...zoom }),
@@ -301,13 +332,18 @@ export function renderDeviceCharts(details) {
     margins.length
       ? lineChart('Link to its parent', margins.map((l) => ({ t: l.time, v: l.link_margin })), { unit: ' dB', min: 0, color: 'var(--t-magenta)', step: true, events: [...moves, ...updates], name, ...zoom })
       : lineChart('Link quality to its parent', links.map((l) => ({ t: l.time, v: l.link_quality })), { min: 0, max: 3, color: 'var(--t-magenta)', step: true, events: [...moves, ...updates], name, ...zoom }),
-  ];
+    // (Over the same period as the readings' charts, though pings may have started later)
+    trips.length ? lineChart('Round trip', trips.filter((p) => p.ms !== null).map((p) => ({ t: p.time, v: Math.round(p.ms / 100) / 10 })),
+      { unit: ' s', min: 0, color: 'var(--t-cyan)', events: [...lost, ...moves], name, ...zoom,
+        range: devicePage.range || (r.length ? [Math.min(r[0].t, trips[0].time), Math.max(r[r.length - 1].t, trips[trips.length - 1].time)] : null) }) : null,
+  ].filter(Boolean);
   document.getElementById('device-zoom-reset').classList.toggle('d-none', !devicePage.range);
-  const parents = [...new Set(links.map((l) => l.parent))];
+  const parents = [...new Set(links.map((l) => l.parent).filter(Boolean))];  // (a sample with no parent known has '')
   const legend = h('div', { class: 'chart-legend small text-body-secondary mt-2' }, 'Markers: ',
     h('span', { class: 'legend-event event-update' }), 'update ', h('span', { class: 'legend-event event-failed' }), 'failed update ',
     h('span', { class: 'legend-event event-pump' }), 'pump run (from the app) ', h('span', { class: 'legend-event event-parent' }),
-    'parent change ', h('span', { class: 'legend-event event-restart' }), 'restart. Point at one for details.');
+    'parent change ', h('span', { class: 'legend-event event-restart' }), 'restart',
+    trips.length ? [' ', h('span', { class: 'legend-event event-lost' }), 'no answer to a ping'] : null, '. Point at one for details.');
   const compared = devicePage.compare.length ? h('div', { class: 'chart-legend small text-body-secondary mt-1' }, 'Compared: ',
     h('span', { class: 'legend-line' }), `${name} (solid) `, ...devicePage.compare.flatMap((c, i) =>
       [h('span', { class: 'legend-line dashed', style: `--line: ${COMPARE_COLORS[i]}` }), `${c.name} `])) : null;

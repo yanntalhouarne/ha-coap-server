@@ -240,21 +240,30 @@
       <h4 class="mb-0" id="device-title"></h4>
       <span id="device-badges"></span>
     </div>
-    <div class="device-hero mb-4" id="device-hero"></div>
+    <div class="device-hero mb-3 device-section" id="device-hero"></div>
+    <nav class="device-sections" id="device-sections" aria-label="This page's sections">
+      <button type="button" data-section="device-hero">overview</button>
+      <button type="button" data-section="sec-history">history</button>
+      <button type="button" data-section="sec-watering">watering</button>
+      <button type="button" data-section="sec-health">health</button>
+      <button type="button" data-section="sec-timeline">timeline</button>
+      <button type="button" data-section="sec-controls">controls</button>
+      <button type="button" data-section="sec-firmware">firmware</button>
+      <button type="button" data-section="sec-board-settings">settings on the board</button>
+      <button type="button" data-section="sec-about">about</button>
+    </nav>
     <div class="row g-4">
       <div class="col-xl-4">
-        <div class="card mb-4"><div class="card-header">Plant</div><div class="card-body" id="device-photo"></div></div>
-        <div class="card mb-4"><div class="card-header">Status</div><div class="card-body" id="device-status"></div></div>
-        <div class="card mb-4"><div class="card-header">Firmware</div><div class="card-body" id="device-firmware"></div></div>
-        <div class="card mb-4"><div class="card-header">Controls</div><div class="card-body" id="device-controls"></div></div>
-        <div class="card mb-4"><div class="card-header">Watering</div><div class="card-body" id="device-watering"></div></div>
-        <div class="card mb-4"><div class="card-header">Health</div><div class="card-body" id="device-health"></div></div>
-        <div class="card mb-4"><div class="card-header">Settings on the board</div><div class="card-body" id="device-board-settings"></div></div>
-        <div class="card"><div class="card-header">About this device</div><div class="card-body">
+        <div class="card mb-4 device-section" id="sec-plant"><div class="card-header">Plant</div><div class="card-body" id="device-photo"></div></div>
+        <div class="card mb-4 device-section" id="sec-status"><div class="card-header">Status</div><div class="card-body" id="device-status"></div></div>
+        <div class="card mb-4 device-section" id="sec-controls"><div class="card-header">Controls</div><div class="card-body" id="device-controls"></div></div>
+        <div class="card mb-4 device-section" id="sec-firmware"><div class="card-header">Firmware</div><div class="card-body" id="device-firmware"></div></div>
+        <div class="card mb-4 device-section" id="sec-board-settings"><div class="card-header">Settings on the board</div><div class="card-body" id="device-board-settings"></div></div>
+        <div class="card device-section" id="sec-about"><div class="card-header">About this device</div><div class="card-body">
           <form id="device-form" class="row g-2"></form></div></div>
       </div>
       <div class="col-xl-8">
-        <div class="card mb-4">
+        <div class="card mb-4 device-section" id="sec-history">
           <div class="card-header d-flex flex-wrap align-items-center gap-2"><span class="me-auto">History</span>
             <button class="btn btn-sm btn-outline-secondary d-none" id="device-zoom-reset" type="button"
                     title="Back to the whole period">whole period</button>
@@ -272,7 +281,11 @@
             <div id="device-charts"></div>
           </div>
         </div>
-        <div class="card"><div class="card-header">Timeline</div><div class="card-body" id="device-timeline"></div></div>
+        <div class="row g-4 mb-4">
+          <div class="col-lg-6"><div class="card h-100 device-section" id="sec-watering"><div class="card-header">Watering</div><div class="card-body" id="device-watering"></div></div></div>
+          <div class="col-lg-6"><div class="card h-100 device-section" id="sec-health"><div class="card-header">Health</div><div class="card-body" id="device-health"></div></div></div>
+        </div>
+        <div class="card device-section" id="sec-timeline"><div class="card-header">Timeline</div><div class="card-body" id="device-timeline"></div></div>
       </div>
     </div>
   </section>
@@ -282,13 +295,22 @@
     <div class="d-flex flex-wrap gap-2 mb-3 align-items-center">
       <button class="btn btn-primary" id="discover">Find devices</button>
       <button class="btn btn-outline-secondary" id="refresh-all">Refresh all</button>
-      <form class="d-flex gap-2" id="add-device">
-        <input class="form-control" id="add-address" placeholder="Add by IPv6 address" size="28" required>
-        <button class="btn btn-outline-secondary" type="submit">Add</button>
-      </form>
-      <button class="btn btn-outline-secondary" id="read-all-slots" title="Asks every device which image it runs">Read all firmware</button>
-      <button class="btn btn-outline-secondary" id="doctor-run" title="Checks each step from this computer to the boards">Check my connection</button>
-      <button class="btn btn-outline-secondary" id="labels-open" title="Labels to stick on the pots or the boards">Print labels…</button>
+      <div class="dropdown">
+        <button class="btn btn-outline-secondary dropdown-toggle" type="button" data-bs-toggle="dropdown" data-bs-auto-close="outside"
+                id="devices-more" aria-expanded="false">More</button>
+        <div class="dropdown-menu devices-more-menu">
+          <form class="px-3 pt-2 pb-2" id="add-device">
+            <label class="form-label small text-body-secondary mb-1" for="add-address">Add a board by its address</label>
+            <div class="d-flex gap-2">
+              <input class="form-control form-control-sm" id="add-address" placeholder="IPv6 address" size="26" required>
+              <button class="btn btn-sm btn-outline-secondary" type="submit">Add</button></div>
+          </form>
+          <hr class="dropdown-divider">
+          <button class="dropdown-item" type="button" id="read-all-slots" title="Asks every device which image it runs">Read all firmware</button>
+          <button class="dropdown-item" type="button" id="doctor-run" title="Checks each step from this computer to the boards">Check my connection</button>
+          <button class="dropdown-item" type="button" id="labels-open" title="Labels to stick on the pots or the boards">Print labels…</button>
+        </div>
+      </div>
       <div class="ms-auto d-flex flex-wrap gap-2 align-items-center">
         <span class="text-body-secondary small" id="selection-count"></span>
         <div class="dropdown">
@@ -308,7 +330,10 @@
         <select class="form-select form-select-sm w-auto" id="device-sort">
           <option value="name">name</option><option value="water">needs water soonest</option>
           <option value="driest">driest first</option><option value="battery">lowest battery</option>
-          <option value="seen">last seen</option></select>
+          <option value="seen">last seen</option><option value="attention">needs attention first</option></select>
+        <div class="form-check form-switch mb-0 small" title="The device ID and address columns of the table">
+          <input class="form-check-input" type="checkbox" role="switch" id="show-ids">
+          <label class="form-check-label text-body-secondary" for="show-ids">IDs</label></div>
         <div class="map-seg view-switch" role="group" aria-label="View">
           <button type="button" id="view-table" title="A table"><svg class="icon" aria-hidden="true"><use href="#i-list"/></svg>table</button>
           <button type="button" id="view-cards" title="Plant cards"><svg class="icon" aria-hidden="true"><use href="#i-layout-grid"/></svg>cards</button>
@@ -326,9 +351,8 @@
       <table class="table table-hover align-middle" id="devices-table">
         <thead><tr>
           <th><input class="form-check-input" type="checkbox" id="select-all" title="Select all"></th>
-          <th>Name</th><th>Device ID</th><th>Address</th><th>Firmware</th>
-          <th class="text-end">Battery</th><th class="text-end">Soil</th><th class="text-end">Air</th>
-          <th class="text-end">Temp.</th><th>Last seen</th><th></th>
+          <th>Name</th><th class="col-id">Device ID</th><th class="col-id">Address</th><th>Firmware</th>
+          <th>Battery</th><th>Soil</th><th>Signal</th><th>Air</th><th>Last seen</th><th></th>
         </tr></thead>
         <tbody></tbody>
       </table>

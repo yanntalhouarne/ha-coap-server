@@ -237,6 +237,9 @@ async def test_a_silent_ping_to_every_board(client, services, start_sim):
     assert history["answered_pct"] == 50 and history["median_ms"] >= 0 and history["last"]["ms"] is None
     [plant] = (await client.get("/api/ha/plants")).json()["devices"]
     assert plant["round_trip"]["ms"] is None and plant["round_trip"]["time"] > 0
+    # Its page's Round trip chart
+    trips = (await client.get("/api/devices/1a2b3c4d/details?days=1")).json()["round_trips"]
+    assert [p["ms"] is None for p in trips] == [False, True]
 
 
 def test_round_trip_history():

@@ -8,6 +8,8 @@ import { renderStatusDevices } from './live.js';
 import { renderConsoleBoards } from './console.js';
 import { openFleetSettings } from './board.js';
 import { renderUpdateDevices, statusClass } from './updates.js';
+import { daysText } from './dashboard.js';
+import { loadRoundTrips, loadSignalHistory, signalSpark } from './netplus.js';
 
 // ------------------------------------------------------------------ devices
 
@@ -70,16 +72,41 @@ export function renderTagFilter() {
 const remembered = (key, fallback) => { try { return localStorage.getItem(key) || fallback; } catch (error) { return fallback; } };
 const remember = (key, value) => { try { localStorage.setItem(key, value); } catch (error) { /* not remembered */ } };
 export const deviceView = { mode: remembered('hacoap-devices-view', 'table'), sort: remembered('hacoap-devices-sort', 'name'),
-  forecasts: new Map(), fetched: 0 };
+  showIds: remembered('hacoap-devices-ids', '0') === '1', forecasts: new Map(), fetched: 0 };
 
-// When each plant will need water: from the wall display's data, asked again after a minute
+// When each plant will need water and how long its battery lasts (the wall display's data), each
+// board's signal and round trips over the week (the Network tab's): asked again after a minute
 async function loadForecasts() {
   if (Date.now() - deviceView.fetched < 60000) return;
   deviceView.fetched = Date.now();
-  const plants = await api('GET', '/api/wall', undefined, { quiet: true });
+  const [plants] = await Promise.all([api('GET', '/api/wall', undefined, { quiet: true }),
+    loadSignalHistory().catch(() => {}), loadRoundTrips().catch(() => {})]);
   deviceView.forecasts = new Map(plants.map((p) => [p.device_id, p]));
   renderDevices();
 }
+
+// ------------------------------------------------------------------ what needs a look
+
+const LOW_BATTERY = 20;   // as the alerts (fleet.LOW_BATTERY)
+const WEAK_DB = 10;       // a link under this: weak (the Network tab's red)
+
+const lastSignal = (id) => { const points = (net.signalHistory || {})[id]; return points && points.length ? points[points.length - 1][1] : null; };
+
+// Why a board needs a look, the worst first: [{text, level: 'bad' | 'warn'}]
+export function attention(device) {
+  const found = [];
+  if (!device.online && device.last_seen) found.push({ text: 'offline', level: 'bad' });
+  if (!missing(device.battery) && !onUsb(device) && device.battery <= LOW_BATTERY) found.push({ text: 'low battery', level: 'bad' });
+  if (device.needs_water) found.push({ text: 'needs water', level: 'warn' });
+  if (device.tank && device.tank.low) found.push({ text: 'tank low', level: 'warn' });
+  const signal = lastSignal(device.device_id);
+  if (signal !== null && signal <= WEAK_DB) found.push({ text: 'weak signal', level: 'warn' });
+  if (imageStatus(device) === 'outdated') found.push({ text: 'firmware behind', level: 'warn' });
+  if (device.last_error && device.online) found.push({ text: 'an error', level: 'warn' });
+  return found;
+}
+const attentionLevel = (found) => (found.some((f) => f.level === 'bad') ? 'bad' : found.length ? 'warn' : '');
+const attentionScore = (device) => { const found = attention(device); return found.reduce((n, f) => n + (f.level === 'bad' ? 10 : 1), 0); };
 
 const missing = (v) => v === null || v === undefined;
 const lastly = (v) => (missing(v) ? Infinity : v);
@@ -90,6 +117,7 @@ function sortDevices(list) {
     driest: (a, b) => lastly(a.soil_moisture - (a.water_target || 0)) - lastly(b.soil_moisture - (b.water_target || 0)),
     battery: (a, b) => lastly(a.battery) - lastly(b.battery),
     seen: (a, b) => (b.last_seen || 0) - (a.last_seen || 0),
+    attention: (a, b) => attentionScore(b) - attentionScore(a),
     water: (a, b) => {
       const days = (d) => (d.needs_water ? -1 : lastly(((deviceView.forecasts.get(d.device_id) || {}).water_forecast || {}).days));
       return days(a) - days(b);
@@ -139,8 +167,9 @@ function deviceCard(device) {
   const battery = h('b', {});
   countTo(battery, `card:${id}:battery`, device.battery, (v) => `${v} %`);
   const fwChanged = changedFrom(`card:${id}:image`, device.image_hash || null) !== null;
-  return h('article', { class: `device-card${state.selected.has(id) ? ' selected' : ''}${device.needs_water ? ' dry' : ''}${device.online ? '' : ' offline'}`,
-    'data-id': id, 'data-board': id },
+  const found = attention(device);
+  return h('article', { class: `device-card${state.selected.has(id) ? ' selected' : ''}${device.needs_water ? ' dry' : ''}${device.online ? '' : ' offline'}${found.length ? ` attn-${attentionLevel(found)}` : ''}`,
+    'data-id': id, 'data-board': id, title: found.length ? `Needs a look: ${found.map((f) => f.text).join(', ')}` : null },
     h('input', { class: 'form-check-input card-check', type: 'checkbox', checked: state.selected.has(id), 'aria-label': `Select ${deviceName(device)}`,
       onchange: (e) => { e.target.checked ? state.selected.add(id) : state.selected.delete(id); renderDevices(); } }),
     h('button', { class: 'card-photo', type: 'button', onclick: open, 'aria-label': `Open ${deviceName(device)}` },
@@ -172,6 +201,12 @@ document.getElementById('view-table').addEventListener('click', () => setDeviceV
 document.getElementById('view-cards').addEventListener('click', () => setDeviceView('cards'));
 document.getElementById('view-health').addEventListener('click', () => setDeviceView('health'));
 document.getElementById('device-sort').value = deviceView.sort;
+document.getElementById('show-ids').checked = deviceView.showIds;
+document.getElementById('show-ids').addEventListener('change', (event) => {
+  deviceView.showIds = event.target.checked;
+  remember('hacoap-devices-ids', deviceView.showIds ? '1' : '0');
+  renderDevices();
+});
 document.getElementById('device-sort').addEventListener('change', (event) => {
   deviceView.sort = event.target.value;
   remember('hacoap-devices-sort', deviceView.sort);
@@ -185,7 +220,8 @@ export function renderDevices() {
   const visible = sortDevices(visibleDevices());
   const mode = ['cards', 'health'].includes(deviceView.mode) ? deviceView.mode : 'table';
   const cards = mode === 'cards';
-  if (cards || deviceView.sort === 'water') loadForecasts().catch(() => {});
+  loadForecasts().catch(() => {});  // battery life, signal, round trips (and when to water)
+  document.getElementById('devices-table').classList.toggle('hide-ids', !deviceView.showIds);
   if (mode === 'health') loadFleetHealth().catch(() => {});
   for (const view of ['table', 'cards', 'health']) document.getElementById(`view-${view}`).classList.toggle('active', mode === view);
   document.getElementById('devices-table-wrap').classList.toggle('d-none', mode !== 'table');
@@ -234,7 +270,11 @@ export function deviceRow(device) {
     device.image_version ? h('div', { class: 'small text-body-secondary', title: `Image ${device.image_hash}` },
       `v${device.image_version} · ${shortHash(device.image_hash)}`) : null);
   const action = (label, handler) => h('li', {}, h('a', { class: 'dropdown-item', href: '#', onclick: (e) => { e.preventDefault(); handler(device); } }, label));
-  return h('tr', { 'data-id': id, 'data-board': id },
+  const found = attention(device);
+  const shownElsewhere = new Set(['needs water', 'offline', 'firmware behind']);  // a badge, the last seen dot, the firmware badge
+  const reasons = found.filter((f) => !shownElsewhere.has(f.text));
+  return h('tr', { 'data-id': id, 'data-board': id, class: found.length ? `attn-${attentionLevel(found)}` : null,
+    title: found.length ? `Needs a look: ${found.map((f) => f.text).join(', ')}` : null },
     h('td', {}, h('input', { class: 'form-check-input', type: 'checkbox', checked: state.selected.has(id),
       onchange: (e) => { e.target.checked ? state.selected.add(id) : state.selected.delete(id); renderDevices(); } })),
     h('td', {}, h('div', { class: 'd-flex align-items-center gap-2' },
@@ -243,14 +283,16 @@ export function deviceRow(device) {
         device.needs_water ? h('span', { class: 'badge water-badge ms-2', title: `Soil under its target of ${device.water_target} %` }, 'needs water') : null,
         (device.plant || device.location) ? h('div', { class: 'small text-body-secondary' },
           [device.plant, device.location].filter(Boolean).join(' · ')) : null,
-        deviceTags(device).length ? h('div', {}, deviceTags(device).map((t) => h('span', { class: 'tag' }, t))) : null))),
-    h('td', { class: 'mono' }, id),
-    h('td', { class: 'mono small' }, device.address || '–'),
+        deviceTags(device).length ? h('div', {}, deviceTags(device).map((t) => h('span', { class: 'tag' }, t))) : null,
+        reasons.length ? h('div', { class: `attn-reasons ${attentionLevel(reasons)}` }, reasons.map((f) => f.text).join(' · ')) : null))),
+    h('td', { class: 'mono col-id' }, id),
+    h('td', { class: 'mono small col-id' }, device.address || '–'),
     firmware,
-    h('td', { class: 'text-end text-nowrap' }, powerIcon(device), pct(device.battery)),
-    h('td', { class: `text-end${device.needs_water ? ' text-warning' : ''}` }, pct(device.soil_moisture)),
-    h('td', { class: 'text-end' }, pct(device.air_humidity)),
-    h('td', { class: 'text-end' }, (device.temperature === null || device.temperature === undefined) ? '–' : `${device.temperature} °C`),
+    batteryCell(device),
+    soilCell(device),
+    signalCell(device),
+    h('td', { class: 'text-nowrap' }, (device.temperature === null || device.temperature === undefined) ? '–' : `${device.temperature} °C`,
+      h('div', { class: 'small text-body-secondary' }, missing(device.air_humidity) ? '' : `${device.air_humidity} % humidity`)),
     h('td', { title: device.last_error || '' },
       h('span', { class: `online-dot ${device.online ? 'on' : 'off'}` }), ago(device.last_seen),
       device.last_error ? h('div', { class: 'small text-danger' }, device.last_error) : null),
@@ -266,6 +308,41 @@ export function deviceRow(device) {
         action('Notes…', editNotes),
         h('li', {}, h('hr', { class: 'dropdown-divider' })),
         action('Remove from the list', removeDevice)))));
+}
+
+// The table's battery: its level as a bar, how long it lasts (or its USB power)
+function batteryCell(device) {
+  const forecast = (deviceView.forecasts.get(device.device_id) || {}).battery_forecast;
+  const level = device.battery;
+  const low = !missing(level) && !onUsb(device) && level <= LOW_BATTERY;
+  return h('td', { class: 'cell-meter' },
+    h('div', { class: 'meter-top' }, h('b', {}, pct(level)), powerIcon(device)),
+    h('div', { class: 'meter' }, h('i', { class: onUsb(device) ? 'charging' : low ? 'bad' : 'ok', style: `width:${missing(level) ? 0 : level}%` })),
+    h('div', { class: 'meter-note' }, missing(level) ? '' : onUsb(device) ? 'on USB' : forecast ? daysText(forecast) : ''));
+}
+
+// The table's soil: its moisture as a bar, its watering target marked
+function soilCell(device) {
+  const soil = device.soil_moisture, target = device.water_target;
+  const forecast = (deviceView.forecasts.get(device.device_id) || {}).water_forecast;
+  const note = device.needs_water ? 'water now' : forecast && !missing(forecast.days) ? `water ${waterWhen(forecast.days)}` : target ? `water under ${target} %` : '';
+  return h('td', { class: 'cell-meter' },
+    h('div', { class: 'meter-top' }, h('b', { class: device.needs_water ? 'text-warning' : '' }, pct(soil))),
+    h('div', { class: 'meter', title: target ? `It needs water under ${target} %` : '' },
+      h('i', { class: device.needs_water ? 'warn' : 'water', style: `width:${missing(soil) ? 0 : soil}%` }),
+      target ? h('span', { class: 'meter-mark', style: `left:${target}%` }) : null),
+    h('div', { class: 'meter-note' }, note));
+}
+
+// The table's signal: its link over the week as a small line, its last value, and its usual round trip
+function signalCell(device) {
+  const last = lastSignal(device.device_id);
+  const trips = (net.roundTrips || {})[device.device_id];
+  return h('td', { class: 'cell-signal' },
+    h('div', { class: 'd-flex align-items-center gap-2' }, signalSpark(device.device_id, { width: 56, height: 18 }),
+      h('span', { class: last === null ? 'text-body-secondary' : last <= WEAK_DB ? 'text-danger' : '' }, last === null ? '–' : `${last} dB`)),
+    trips && trips.median_ms !== null ? h('div', { class: 'meter-note', title: `Its silent pings over the week: answered ${trips.answered_pct} %` },
+      `answers in ${(trips.median_ms / 1000).toFixed(1)} s`) : null);
 }
 
 // Asks the board for its status. With a button, it waits for the board on it (see motion.js).

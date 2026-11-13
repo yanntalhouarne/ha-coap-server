@@ -634,6 +634,7 @@ def create_app(services, background_tasks=True, on_quit=None, port=None):
                     s.db.readings(device_id, time.time() - fleet.REPORT_DAYS * 86400),
                     s.db.activity_kind_since(device_id, "pump", time.time() - fleet.REPORT_DAYS * 86400)),
                 "restarts": s.db.recent_activity(device_id, "restart", 20),
+                "round_trips": s.db.round_trips_for(device_id, since),
                 "drain": await asyncio.to_thread(fleet.battery_drain, s.db, device)}
 
     @app.post("/api/devices/{device_id}/tank/refilled")

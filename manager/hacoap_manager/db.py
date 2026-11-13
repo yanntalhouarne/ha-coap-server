@@ -441,6 +441,10 @@ class Database:
         """Every board's pings since then, oldest first: [{device_id, time, ms}]."""
         return self._query("SELECT device_id, time, ms FROM round_trips WHERE time >= ? ORDER BY time", (since,))
 
+    def round_trips_for(self, device_id, since):
+        """One board's pings since then, oldest first: [{time, ms}]."""
+        return self._query("SELECT time, ms FROM round_trips WHERE device_id = ? AND time >= ? ORDER BY time", (device_id, since))
+
     def last_round_trips(self):
         """Each board's last ping: {device_id: {time, ms}}."""
         rows = self._query("SELECT r.device_id, r.time, r.ms FROM round_trips r JOIN (SELECT device_id, MAX(time) AS time "

@@ -116,7 +116,9 @@ class Demo:
         for i, (host, plain) in enumerate(simdevice.fleet(self.count)):
             older_image = i % 5 == 3
             model = PlantModel(i, start, None if older_image else now - UPDATED_DAYS_AGO * DAY)
-            device = DemoDevice.with_image(older if older_image else current, device_id=plain.device_id, model=model)
+            # (Its key too: the plain board registered its name with it, and a name taken by another key is refused)
+            device = DemoDevice.with_image(older if older_image else current, device_id=plain.device_id, srp_key=plain.srp_key,
+                                           model=model)
             if not self.servers:
                 # The first board picks the ports, the next pair along if they're taken (another
                 # demo running); the others use the same.
