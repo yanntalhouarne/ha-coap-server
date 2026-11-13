@@ -1228,6 +1228,11 @@ body.wall-mode .simple-top, body.wall-mode .simple-nav { display: none !importan
 .plant-card-soil { font-size: 1.6rem; font-weight: 700; line-height: 1; color: var(--t-cyan); }
 .plant-card-soil small { font-size: .7rem; font-weight: 400; color: var(--t-text-muted); }
 .plant-card-note { min-height: 1.2em; font-size: .75rem; color: var(--t-text-muted); }
+.plant-card-battery { display: inline-flex; align-items: center; gap: .25rem; font-size: .72rem; color: var(--t-text-secondary); }
+.plant-card-battery .icon { width: .85rem; height: .85rem; }
+.plant-card-battery.usb { color: var(--t-cyan); }
+.plant-card-battery.low { color: var(--t-red); }
+.plant-row-battery small { color: var(--t-text-muted); }
 .plant-card.thirsty .plant-card-soil, .plant-card.thirsty .plant-card-note { color: var(--t-yellow); }
 .simple-empty { grid-column: 1 / -1; padding: 2rem 1rem; text-align: center; color: var(--t-text-secondary); }
 

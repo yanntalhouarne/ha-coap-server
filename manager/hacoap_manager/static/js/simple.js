@@ -144,6 +144,15 @@ async function renderAway() {
     change ? pick : null);
 }
 
+// How long its battery lasts, short: "battery ≈ 3 months", "charging", "on USB"; '' when not known
+function batteryLasts(p, short = false) {
+  if (onUsb(p)) return p.power === 'charging' ? 'charging' : 'on USB';
+  const days = p.battery_forecast && p.battery_forecast.days_left;
+  if (!has(days)) return '';
+  const text = days >= 60 ? `≈ ${Math.round(days / 30)} ${short ? 'mo' : 'months'}` : `≈ ${Math.round(days)} ${short ? 'd' : 'days'}`;
+  return short ? text : `battery ${text}`;
+}
+
 function plantNote(p) {
   if (!p.online) return 'offline';
   if (p.needs_water) return 'needs water now';
@@ -173,7 +182,11 @@ function renderPlants() {
       h('div', { class: 'plant-card-name' }, title(p)),
       h('div', { class: 'plant-card-board' }, boardName(p)),
       h('div', { class: 'plant-card-soil' }, has(p.soil_moisture) ? `${p.soil_moisture} %` : '–', h('small', {}, ' soil')),
-      h('div', { class: 'plant-card-note' }, plantNote(p))))
+      h('div', { class: 'plant-card-note' }, plantNote(p)),
+      batteryLasts(p) ? h('div', { class: `plant-card-battery${onUsb(p) ? ' usb' : has(p.battery) && p.battery <= 20 ? ' low' : ''}`,
+        title: 'How long its battery lasts at the pace it went down over two weeks' },
+        icon(onUsb(p) ? (p.power === 'charging' ? 'battery-charging' : 'plug') : has(p.battery) && p.battery <= 20 ? 'battery-low' : 'battery-medium'),
+        ` ${batteryLasts(p)}`) : null))
     : [h('div', { class: 'simple-empty' }, h('p', {}, 'No plants yet. Find your boards in the advanced view, then give each one a name and a plant.'),
       h('a', { class: 'btn btn-primary', href: '#devices' }, 'Find my boards'))]));
 }
@@ -262,8 +275,9 @@ function plantRow(p, note = boardName(p) || plantNote(p)) {
       h('div', { class: 'plant-row-soil' }, h('span', {}, has(p.soil_moisture) ? `${p.soil_moisture} %` : '–'),
         h('div', { class: 'soil-bar' }, h('i', { style: `width: ${has(p.soil_moisture) ? Math.max(0, Math.min(100, p.soil_moisture)) : 0}%` }),
           p.water_target ? h('b', { style: `left: ${p.water_target}%` }) : null)),
-      h('span', { class: 'plant-row-battery', title: 'battery' }, has(p.battery)
-        ? [icon(p.power === 'charging' ? 'battery-charging' : p.battery <= 20 ? 'battery-low' : 'battery-medium'), ` ${p.battery} %`] : '')));
+      h('span', { class: 'plant-row-battery', title: 'battery, and how long it lasts' }, has(p.battery)
+        ? [icon(p.power === 'charging' ? 'battery-charging' : p.battery <= 20 ? 'battery-low' : 'battery-medium'), ` ${p.battery} %`,
+          batteryLasts(p, true) ? h('small', {}, ` · ${batteryLasts(p, true)}`) : null] : '')));
 }
 
 // ------------------------------------------------------------------ by room
