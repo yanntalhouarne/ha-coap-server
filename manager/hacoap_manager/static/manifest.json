@@ -1,0 +1,16 @@
+{
+  "id": "/",
+  "name": "ha-coap fleet manager",
+  "short_name": "ha-coap fleet",
+  "description": "The ha-coap plant boards: their status, updates, network and history.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#1a1b26",
+  "theme_color": "#18bcf2",
+  "icons": [
+    {"src": "/static/icons/app-192.png", "sizes": "192x192", "type": "image/png"},
+    {"src": "/static/icons/app-512.png", "sizes": "512x512", "type": "image/png"},
+    {"src": "/static/icons/app-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable"}
+  ]
+}

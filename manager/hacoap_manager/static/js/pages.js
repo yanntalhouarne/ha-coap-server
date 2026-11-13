@@ -1,0 +1,179 @@
+// The wall display and the weekly summary.
+
+import { api, h, notify, onUsb, photoUrl, powerText, shortHash, svg, when } from './core.js';
+import { fullLasts, imageLabel, perDay } from './dashboard.js';
+import { waterIn } from './network.js';
+import { simpleMode } from './mode.js';
+
+// ------------------------------------------------------------------ wall display
+
+// Full screen for a spare monitor: every plant big on one page, the ones that need water
+// first; it scrolls when they don't all fit, with the header kept at the top.
+export const wall = { plants: [], timers: [], soon: null, wasFullscreen: false };
+
+export async function loadWall() {
+  wall.plants = await api('GET', '/api/wall', undefined, { quiet: true });
+  if (!wall.timers.length) {
+    wall.timers.push(setInterval(() => loadWall().catch(() => {}), 60000));
+    wall.timers.push(setInterval(renderWallClock, 1000));
+  }
+  renderWallClock();
+  renderWall();
+}
+
+export function loadWallSoon() {  // after device events, at most every few seconds
+  clearTimeout(wall.soon);
+  wall.soon = setTimeout(() => loadWall().catch(() => {}), 3000);
+}
+
+export function stopWall() {
+  wall.timers.forEach(clearInterval);
+  wall.timers = [];
+  if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+}
+
+export function renderWallClock() {
+  const now = new Date();
+  document.getElementById('wall-clock').textContent =
+    `${now.toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric' })} · ${now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+}
+
+// The plant's photo (or the logo) in a ring that fills with its battery: green, yellow under
+// 50 %, red at 20 % and under (the low-battery alert's level); on USB green, with a plug,
+// or a bolt and a slow pulse while charging.
+const LOW_BATTERY = 20;
+export function batteryRing(p, place = 'wall-photo') {
+  const known = p.battery !== null && p.battery !== undefined;
+  const level = known ? Math.max(0, Math.min(100, p.battery)) : 0;
+  const usb = onUsb(p);
+  const tone = usb ? 'usb' : !known ? 'unknown' : level <= LOW_BATTERY ? 'low' : level <= 50 ? 'mid' : 'ok';
+  const label = known ? `${level} %` : '–';
+  return h('div', { class: `${place} ring-box ring-${tone}${p.power === 'charging' ? ' charging' : ''}`, title: `Battery ${label}${usb ? ` · ${powerText(p)}` : ''}` },
+    h('div', { class: 'wall-ring' },
+      svg('svg', { class: 'wall-ring-arc', viewBox: '0 0 120 120', 'aria-hidden': 'true' },
+        svg('circle', { class: 'track', cx: 60, cy: 60, r: 54, pathLength: 100 }),
+        level > 0 ? svg('circle', { class: 'level', cx: 60, cy: 60, r: 54, pathLength: 100, 'stroke-dasharray': `${level} 100` }) : null),
+      p.photo ? h('img', { class: 'wall-ring-photo', src: photoUrl(p), alt: '' })
+        : h('div', { class: 'wall-ring-photo empty' }, svg('svg', { viewBox: '0 0 512 512' }, svg('use', { href: '#hacoap-glyph' }))),
+      h('div', { class: 'wall-ring-label' },
+        usb ? svg('svg', { class: 'icon', 'aria-hidden': 'true' }, svg('use', { href: p.power === 'charging' ? '#i-battery-charging' : '#i-plug' })) : null,
+        label)));
+}
+
+export function renderWall() {
+  const plants = wall.plants;
+  const thirsty = plants.filter((p) => p.needs_water);
+  document.getElementById('wall-banner').replaceChildren(thirsty.length
+    ? h('span', { class: 'wall-alert' }, `💧 ${thirsty.map((p) => p.name).join(', ')} ${thirsty.length > 1 ? 'need' : 'needs'} water`)
+    : h('span', { class: 'wall-ok' }, 'Every plant has enough water'));
+  document.getElementById('wall-grid').replaceChildren(...plants.map((p) => {
+    const soil = p.soil_moisture;
+    const fill = soil === null || soil === undefined ? 0 : Math.max(0, Math.min(100, soil));
+    return h('a', { class: `wall-card${p.needs_water ? ' thirsty' : ''}${p.online ? '' : ' offline'}`,
+      href: `#${simpleMode() ? 'plant' : 'device'}/${encodeURIComponent(p.device_id)}`, title: `Open ${p.name}` },
+      batteryRing(p),
+      h('div', { class: 'wall-body' },
+        h('div', { class: 'wall-name' }, p.name),
+        h('div', { class: 'wall-plant' }, [p.board && p.board !== p.name ? p.board : null, p.location].filter(Boolean).join(' · ')),
+        h('div', { class: 'wall-soil' }, h('span', { class: 'wall-value' }, soil === null || soil === undefined ? '–' : `${soil} %`), ' soil'),
+        h('div', { class: 'wall-bar' }, h('div', { class: 'wall-bar-fill', style: `width: ${fill}%` }),
+          p.water_target ? h('div', { class: 'wall-bar-target', style: `left: ${p.water_target}%`, title: `water under ${p.water_target} %` }) : null),
+        h('div', { class: 'wall-note' }, p.needs_water ? 'needs water now'
+          : p.water_forecast && p.water_forecast.days !== null ? `water ${waterIn(p.water_forecast)}` : ''),
+        h('div', { class: 'wall-meta' }, [powerText(p), p.online ? '' : 'offline'].filter(Boolean).join(' · '))));
+  }));
+}
+
+document.getElementById('wall-fullscreen').addEventListener('click', () => {
+  if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+  else document.documentElement.requestFullscreen().catch(() => notify('This browser won\'t go full screen', 'warning'));
+});
+
+// Back to the wall from a plant's page (the link does it), full screen again if it was
+document.getElementById('device-to-wall').addEventListener('click', () => {
+  if (wall.wasFullscreen && !document.fullscreenElement) document.documentElement.requestFullscreen().catch(() => {});
+});
+
+// ------------------------------------------------------------------ weekly summary
+
+export const summaryView = { weeksBack: 0 };
+export const dateShort = (t) => new Date(t * 1000).toLocaleDateString([], { month: 'short', day: 'numeric' });
+
+export async function loadSummary() {
+  const days = Number(document.getElementById('summary-days').value);
+  const end = Date.now() / 1000 - summaryView.weeksBack * 7 * 86400;
+  renderSummary(await api('GET', `/api/summary?days=${days}&end=${end}`));
+}
+
+export function renderSummary(r) {
+  const section = (title, body) => h('section', { class: 'summary-section' }, h('h5', {}, title), body);
+  const list = (rows, empty) => rows.length ? h('ul', { class: 'mb-0' }, rows) : h('p', { class: 'text-body-secondary mb-0' }, empty);
+  const totalWaterings = r.plants.reduce((sum, p) => sum + p.waterings, 0);
+  const total = (key) => r.plants.reduce((sum, p) => sum + (key(p) || 0), 0);
+  const water = total((p) => p.water_ml);
+  const careDone = total((p) => (p.care_done || []).length);
+  const numbers = [[r.devices, 'boards'], [`${r.online}`, 'online now'], [totalWaterings, 'waterings'],
+    water ? [water >= 1000 ? `${(water / 1000).toFixed(1)} l` : `${water} ml`, 'water pumped'] : null,
+    careDone ? [careDone, 'care done'] : null,
+    [r.alerts.length, 'alerts'], [r.updates.length, 'updates'], [r.parent_changes.length, 'parent changes']].filter(Boolean);
+  // "4 (2 automatic, 1 app, 1 by hand)"
+  const how = (p) => {
+    const by = p.by || {};
+    const ways = [[by.automatic, 'automatic', 'automatic'], [by.app, 'app', 'from the app'], [by.button, 'button', 'with its button'],
+      [by.hand, 'by hand', 'by hand']].filter(([n]) => n);
+    if (ways.length === 1) return ` (${ways[0][2]})`;  // "1 (from the app)"
+    return ways.length ? ` (${ways.map(([n, text]) => `${n} ${text}`).join(', ')})` : '';
+  };
+  // "Fertilize ×2, Repot"
+  const careText = (done) => [...new Set(done)].map((what) => {
+    const n = done.filter((d) => d === what).length;
+    return n > 1 ? `${what} ×${n}` : what;
+  }).join(', ');
+  const duration = (s) => (s < 60 ? '–' : s < 3600 ? `${Math.round(s / 60)} min`
+    : s < 86400 ? `${Math.floor(s / 3600)} h ${Math.round((s % 3600) / 60)} min` : `${(s / 86400).toFixed(1)} days`);
+  document.getElementById('summary').replaceChildren(
+    h('div', { class: 'summary-head' }, h('img', { src: '/static/logo.svg', alt: '', class: 'summary-logo' }),
+      h('div', {}, h('h3', { class: 'mb-0' }, 'ha-coap fleet summary'),
+        h('div', { class: 'text-body-secondary' }, `${dateShort(r.start)} to ${dateShort(r.end)} ${new Date(r.end * 1000).getFullYear()} · ${r.days} days`))),
+    h('div', { class: 'summary-numbers' }, numbers.map(([value, label]) => h('div', {}, h('b', {}, value), h('span', {}, label)))),
+    section('Plants', h('table', { class: 'table table-sm' },
+      h('thead', {}, h('tr', {}, h('th', {}, 'Plant'), h('th', { class: 'text-end' }, 'Soil (low to high)'), h('th', { class: 'text-end' }, 'Now'),
+        h('th', { class: 'text-end' }, 'Waterings'), h('th', { class: 'text-end' }, 'Water'), h('th', {}, 'Care'), h('th', {}, 'Next'))),
+      h('tbody', {}, r.plants.map((p) => h('tr', {},
+        h('td', {}, h('b', {}, p.name), p.board && p.board !== p.name ? ` · ${p.board}` : ''),
+        h('td', { class: 'text-end' }, p.soil ? `${p.soil.min} to ${p.soil.max} %` : '–'),
+        h('td', { class: 'text-end' }, p.soil ? `${p.soil.last} %` : '–'),
+        h('td', { class: 'text-end' }, p.waterings ? `${p.waterings}${how(p)}` : '0'),
+        h('td', { class: 'text-end' }, p.water_ml ? `${p.water_ml} ml` : '–', p.refills ? h('div', { class: 'small text-body-secondary' },
+          `tank refilled${p.refills > 1 ? ` ×${p.refills}` : ''}`) : null),
+        h('td', {}, careText(p.care_done || [])),
+        h('td', { class: p.needs_water ? 'text-warning' : '' }, p.needs_water ? 'needs water now'
+          : p.water_forecast && p.water_forecast.days !== null ? `water ${waterIn(p.water_forecast)}` : '')))))),
+    section('Batteries', h('table', { class: 'table table-sm' },
+      h('thead', {}, h('tr', {}, h('th', {}, 'Board'), h('th', { class: 'text-end' }, 'Start'), h('th', { class: 'text-end' }, 'End'),
+        h('th', { class: 'text-end' }, 'Per day'), h('th', { class: 'text-end' }, 'Offline'), h('th', {}, 'Firmware'))),
+      h('tbody', {}, r.batteries.map((b) => h('tr', {}, h('td', {}, b.name),
+        h('td', { class: 'text-end' }, b.battery ? `${b.battery.first} %` : '–'), h('td', { class: 'text-end' }, b.battery ? `${b.battery.last} %` : '–'),
+        h('td', { class: 'text-end' }, b.per_day !== null ? `${b.per_day.toFixed(2)} %` : '–'),
+        h('td', { class: `text-end${b.offline_s >= 3600 ? ' text-warning' : ''}` }, duration(b.offline_s || 0)),
+        h('td', {}, b.image_hash ? `v${b.image_version} · ${shortHash(b.image_hash)}` : '')))))),
+    r.drain_by_image.length ? section('Battery drain by firmware', list(r.drain_by_image.map((g) => h('li', {},
+      `${imageLabel(g.image_hash, g.version)}: ${perDay({ per_day: g.median })} over ${g.devices.length} board(s), ${fullLasts(g.days_full)}`)), '')) : null,
+    section('Alerts', list(r.alerts.map((a) => h('li', {}, `${when(a.raised)}: ${a.message}`, a.cleared ? h('span', { class: 'text-body-secondary' }, ` (cleared ${when(a.cleared)})`) : '')),
+      'No alerts.')),
+    section('Updates', list(r.updates.map((u) => h('li', {}, `${when(u.started)}: ${u.name} to v${u.image_version}, ${u.result}`)), 'No updates.')),
+    section('Network', list(r.parent_changes.map((e) => h('li', {}, `${when(e.time)}: ${e.message}`)),
+      `No parent changes${r.network_readings ? ` in ${r.network_readings} network reading(s)` : ' (no network readings in this period)'}.`)),
+    section('Done by', list((r.done_by || []).map((d) => h('li', {}, `${d.by}: ${d.count} thing${d.count === 1 ? '' : 's'}`)),
+      'Nothing done from the app.')),
+    h('p', { class: 'small text-body-secondary mt-3 mb-0' }, `Made by the HA-CoAP Fleet Manager on ${when(Date.now() / 1000)}.`));
+  document.getElementById('summary-later').disabled = summaryView.weeksBack === 0;
+}
+
+document.getElementById('summary-days').addEventListener('change', () => loadSummary().catch(() => {}));
+document.getElementById('summary-earlier').addEventListener('click', () => { summaryView.weeksBack += 1; loadSummary().catch(() => {}); });
+document.getElementById('summary-later').addEventListener('click', () => {
+  summaryView.weeksBack = Math.max(0, summaryView.weeksBack - 1);
+  loadSummary().catch(() => {});
+});
+document.getElementById('summary-print').addEventListener('click', () => window.print());

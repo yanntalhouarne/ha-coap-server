@@ -1,3 +1,10 @@
+# West manifest: the repository root is the west workspace and the SDK is fetched
+# into external/ (scripts/setup.ps1 or scripts/setup.sh runs 'west update').
+#
+# The SDK comes from forks of sdk-nrf (v2.4-branch) and sdk-zephyr
+# (v3.3.99-ncs1-branch), pinned to exact commits so that every clone builds the
+# same code. To move to newer fork commits, update both revisions below and run
+# 'west update'.
 manifest:
   self:
     path: application
@@ -8,7 +15,47 @@ manifest:
     - name: sdk-nrf
       remote: yanntalhouarne
       path: nrf
-      revision: v2.4-branch
+      revision: 467c0042b035ceced125f75ce236736e19d057b8 # v2.4-branch, 2024-03-03
       import:
         path-prefix: external
       clone-depth: 1
+    # sdk-nrf's manifest tracks the sdk-zephyr branch. This entry takes precedence
+    # over it to pin the commit; the import list is copied from sdk-nrf's west.yml.
+    - name: zephyr
+      remote: yanntalhouarne
+      repo-path: sdk-zephyr
+      path: zephyr
+      revision: debd8afc9d2792ab716b116997290ebf6dd50d4b # v3.3.99-ncs1-branch, 2024-03-04
+      clone-depth: 1
+      import:
+        path-prefix: external
+        name-allowlist:
+          - TraceRecorderSource
+          - canopennode
+          - chre
+          - cmsis
+          - edtt
+          - fatfs
+          - hal_nordic
+          - hal_st
+          - hal_wurthelektronik
+          - liblc3
+          - libmetal
+          - littlefs
+          - loramac-node
+          - lvgl
+          - lz4
+          - mipi-sys-t
+          - nanopb
+          - net-tools
+          - nrf_hw_models
+          - open-amp
+          - picolibc
+          - psa-arch-tests
+          - segger
+          - tinycbor
+          - tinycrypt
+          - tf-m-tests
+          - uoscore-uedhoc
+          - zcbor
+          - zscilib

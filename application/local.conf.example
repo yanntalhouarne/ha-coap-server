@@ -1,0 +1,10 @@
+# Private build settings. Copy this file to application/local.conf (git ignores it)
+# and edit it. Every build picks local.conf up automatically, after prj.conf.
+#
+# Any Kconfig option can go here; keep values you don't want in a public
+# repository here rather than in prj.conf.
+
+# Joiner pre-shared key (PSKd), used when commissioning a new device:
+# 6 to 32 characters, A-Z and 0-9, without the letters I, O, Q and Z.
+# Use the same key in 'ot-ctl commissioner joiner add * <PSKd>'.
+CONFIG_OPENTHREAD_JOINER_PSKD="REPLACE-ME"

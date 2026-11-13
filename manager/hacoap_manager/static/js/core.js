@@ -1,0 +1,137 @@
+// Shared state and helpers: building elements, calling the app, notices, dates and numbers.
+
+export const state = {
+  devices: new Map(), selected: new Set(), images: [], jobs: new Map(), status: null,
+  release: null, filter: { text: '', tag: null }, pendingImage: null, setup: null, console: null,
+  alerts: [], appUpdate: null,
+};
+
+// A dashboard link (Settings > Other devices): its key, from the page's address (?key=...), goes
+// with every request instead of a sign-in, and the page only shows the plants
+export const LINK_KEY = new URLSearchParams(location.search).get('key') || '';
+export const linkMode = () => Boolean(LINK_KEY);
+// A view-only dashboard link (the app's status says): its plants to look at, no watering or naming
+export const linkView = () => Boolean(LINK_KEY && state.status && state.status.view_only);
+export const withKey = (url) => (LINK_KEY ? `${url}${url.includes('?') ? '&' : '?'}key=${encodeURIComponent(LINK_KEY)}` : url);
+if (LINK_KEY) document.documentElement.classList.add('link-mode');
+
+// ------------------------------------------------------------------ helpers
+
+export const SVG_NS = 'http://www.w3.org/2000/svg';
+
+export function svg(tag, attrs = {}, ...children) {
+  const el = document.createElementNS(SVG_NS, tag);
+  for (const [key, value] of Object.entries(attrs)) {
+    if (value === undefined || value === null) continue;
+    if (key.startsWith('on')) el.addEventListener(key.slice(2), value);
+    else el.setAttribute(key, value);
+  }
+  for (const child of children.flat()) {
+    if (child === undefined || child === null) continue;
+    el.append(child instanceof Node ? child : document.createTextNode(String(child)));
+  }
+  return el;
+}
+
+export function h(tag, attrs = {}, ...children) {
+  const el = document.createElement(tag);
+  for (const [key, value] of Object.entries(attrs)) {
+    if (value === undefined || value === null || value === false) continue;
+    if (key.startsWith('on')) el.addEventListener(key.slice(2), value);
+    else if (key === 'class') el.className = value;
+    else if (value === true) el.setAttribute(key, '');
+    else el.setAttribute(key, value);
+  }
+  for (const child of children.flat()) {
+    if (child === undefined || child === null || child === false) continue;
+    el.append(child instanceof Node ? child : document.createTextNode(String(child)));
+  }
+  return el;
+}
+
+export async function api(method, path, body, options = {}) {
+  const init = { method, headers: {}, keepalive: !!options.keepalive };
+  if (method !== 'GET') init.headers['X-HACoap'] = '1';
+  if (LINK_KEY) init.headers['X-HACoap-Key'] = LINK_KEY;
+  Object.assign(init.headers, options.headers || {});
+  if (body instanceof Blob || body instanceof ArrayBuffer) {
+    init.body = body;
+    init.headers['Content-Type'] = 'application/octet-stream';
+  } else if (body !== undefined) {
+    init.body = JSON.stringify(body);
+    init.headers['Content-Type'] = 'application/json';
+  }
+  const response = await fetch(path, init);
+  if (response.status === 401 && path !== '/api/login') {
+    // Another device whose session ended (a revoked dashboard link: the page says so)
+    if (LINK_KEY) window.location.reload(); else window.location.href = '/login';
+  }
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const detail = typeof data.detail === 'string' ? data.detail : JSON.stringify(data.detail || response.statusText);
+    if (!options.quiet) notify(detail, 'danger');
+    throw new Error(detail);
+  }
+  return data;
+}
+
+// Its power, from newer firmware ('diag'): on USB (charging, or charged), else its battery
+const USB_POWER = { charging: 'charging', charged: 'charged · on USB', usb: 'on USB' };
+export const onUsb = (device) => Object.hasOwn(USB_POWER, device.power || '');
+export const powerText = (device) => USB_POWER[device.power] || '';
+export function powerIcon(device) {
+  if (!onUsb(device)) return null;
+  return h('span', { class: `power-icon power-${device.power}`, title: powerText(device) },
+    svg('svg', { class: 'icon', role: 'img', 'aria-label': powerText(device) },
+      svg('use', { href: device.power === 'charging' ? '#i-battery-charging' : '#i-plug' })));
+}
+
+export function notify(message, kind = 'info', timeout = 6000) {
+  const alert = h('div', { class: `alert alert-${kind} alert-dismissible fade show`, role: 'alert' },
+    message, h('button', { type: 'button', class: 'btn-close', 'data-bs-dismiss': 'alert' }));
+  document.getElementById('alerts').append(alert);
+  if (timeout) setTimeout(() => alert.remove(), timeout);
+}
+
+// An action done after a few seconds, with Undo meanwhile: removing a board from the list,
+// dismissing an alert. Done at once if the page closes (its request kept alive).
+const pendingUndos = new Set();
+
+export function undoable(message, commit, undo, seconds = 8) {
+  let done = false;
+  const close = () => { done = true; pendingUndos.delete(finish); clearTimeout(timer); notice.remove(); };
+  const finish = () => { if (done) return; close(); commit(); };
+  const notice = h('div', { class: 'alert alert-info undo-alert', role: 'status' },
+    h('span', {}, message),
+    h('button', { type: 'button', class: 'btn btn-sm btn-outline-primary ms-3', onclick: () => { if (done) return; close(); undo(); } }, 'Undo'),
+    h('span', { class: 'undo-bar', style: `animation-duration: ${seconds}s` }));
+  document.getElementById('alerts').append(notice);
+  const timer = setTimeout(finish, seconds * 1000);
+  pendingUndos.add(finish);
+}
+
+window.addEventListener('pagehide', () => { for (const finish of [...pendingUndos]) finish(); });
+
+export async function busy(button, work) {
+  const label = button.textContent;
+  button.disabled = true;
+  button.textContent = label.replace(/…$/, '') + '…';
+  try { return await work(); } catch (error) { return undefined; } finally {
+    button.disabled = false;
+    button.textContent = label;
+  }
+}
+
+export function ago(seconds) {
+  if (!seconds) return 'never';
+  const delta = Date.now() / 1000 - seconds;
+  if (delta < 60) return 'just now';
+  if (delta < 3600) return `${Math.round(delta / 60)} min ago`;
+  if (delta < 86400) return `${Math.round(delta / 3600)} h ago`;
+  return new Date(seconds * 1000).toLocaleDateString();
+}
+
+export const when = (seconds) => seconds ? new Date(seconds * 1000).toLocaleString() : '';
+export const pct = (value) => (value === null || value === undefined) ? '–' : `${value} %`;
+export const shortHash = (hash) => hash ? hash.slice(0, 8) : '';
+export const photoUrl = (device) => withKey(`/api/devices/${encodeURIComponent(device.device_id)}/photo?t=${device.photo}`);

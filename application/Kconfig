@@ -8,10 +8,330 @@ menu "Zephyr Kernel"
 source "Kconfig.zephyr"
 endmenu
 
+menu "ha-coap application"
+
+config HACOAP_HW_VERSION
+	string "Hardware version"
+	default "v2.0"
+	help
+	  Board revision reported in the 'info' CoAP resource.
+
+config HACOAP_BOOT_DELAY_MS
+	int "Delay at the start of main() (ms)"
+	default 2150
+
+config HACOAP_STATUS_LED_TIMEOUT_S
+	int "How long the RGB LED shows a state (s)"
+	range 0 86400
+	default 300
+	help
+	  The RGB LED shows the network state (and errors) as a short flash
+	  every 5 s. It stops this long after the last change, to save power
+	  when the network stays down. 0 flashes for as long as the state lasts.
+
+config HACOAP_MCUMGR_POLL_PERIOD_MS
+	int "Thread poll period while mcumgr is in use (ms)"
+	range 10 10000
+	default 100
+	help
+	  A sleepy device receives a message only when it polls its parent, so
+	  with a long CONFIG_OPENTHREAD_POLL_PERIOD every mcumgr request (each
+	  chunk of an image upload) would wait up to a full period. The device
+	  polls at this period from the first mcumgr request until
+	  HACOAP_MCUMGR_POLL_TIMEOUT_S after the last one. Reading the 'log'
+	  resource (HACOAP_REMOTE_LOG) does the same.
+
+config HACOAP_MCUMGR_POLL_TIMEOUT_S
+	int "Return to the normal poll period after this long without mcumgr requests (s)"
+	range 1 3600
+	default 30
+
+config HACOAP_USB_POLL_PERIOD_MS
+	int "Thread poll period on USB power (ms)"
+	range 10 600000
+	default 500
+	help
+	  On USB power, battery life doesn't matter: the device polls its parent at
+	  least this often, so commands reach it quickly. On the battery again, it
+	  goes back to the normal period (CONFIG_OPENTHREAD_POLL_PERIOD, or the
+	  'poll_ms' setting). mcumgr still polls faster (HACOAP_MCUMGR_POLL_PERIOD_MS).
+
+config HACOAP_POWER_CHECK_S
+	int "How often the device checks whether it's on USB power, and charging (s)"
+	range 1 3600
+	default 10
+
+config HACOAP_BOOT_PROBE
+	bool "Diagnostic build: boot breadcrumbs in the board's settings"
+	help
+	  For an image that doesn't start after an update (the bootloader reverts it, and
+	  it's never seen): as it starts, it writes how far it got into two settings, which
+	  the previous firmware reports over mcumgr after the revert. 'sample_s' is the stage
+	  reached times 1000 plus the uptime in seconds (1: main, 2: watchdog set up, 3: after
+	  the boot delay, 4: boot counted, 5: USB, 6: sensors, 7: CoAP, 8: OpenThread
+	  started, 9 and up: every 5 s after). 'soil_wet_mv' is 1 + 100 times the reset cause
+	  (diag.h) + 10 if the watchdog was already running. Once the boot got through
+	  (stage 20), it puts both back as they were: they stay only when it got stuck.
+	  Not for boards in use.
+
+config HACOAP_REMOTE_LOG
+	bool "Log over the air (the 'log' CoAP resource)"
+	select LOG
+	help
+	  Keeps the latest log output in RAM (HACOAP_REMOTE_LOG_BUFFER_SIZE)
+	  for the 'log' CoAP resource, which the fleet manager's console reads
+	  over Thread. While someone reads it, the device polls its parent
+	  fast, as during an update, so a console costs battery only while it
+	  is open. Turns logging on, which adds about 27 KB of flash and 10 KB
+	  of RAM to the battery variant, and a little power for each log line.
+	  Without it, 'log' answers 4.04 Not Found.
+
+config HACOAP_REMOTE_LOG_BUFFER_SIZE
+	int "Log output kept for the 'log' resource (bytes)"
+	depends on HACOAP_REMOTE_LOG
+	range 512 16384
+	default 4096
+	help
+	  The latest log output the device keeps: what a console shows when it
+	  opens (the log since boot, until it fills), and how much a reader
+	  can fall behind without missing lines.
+
+menu "Readings kept, and pushed"
+
+config HACOAP_HISTORY_SIZE
+	int "Samples kept for the 'hist' resource"
+	range 16 1024
+	default 192
+	help
+	  The latest sensor samples the device keeps in RAM (12 bytes each):
+	  the fleet manager reads the ones it doesn't have yet, so a border
+	  router or network that was down leaves no gap in its history, as
+	  long as it's back within this many samples (192: 48 hours at the
+	  default sampling period of 15 minutes). They're lost at a restart.
+
+config HACOAP_PUSH
+	bool "Push the samples that changed (CoAP Observe on 'hist')"
+	default y
+	help
+	  The fleet manager registers to observe 'hist' at each refresh. After
+	  a sample that changed enough since the last one it was given (its
+	  soil or battery by HACOAP_PUSH_SOIL_DELTA or HACOAP_PUSH_BATTERY_DELTA,
+	  or the power source: the device takes a sample when it changes), the
+	  device sends it the samples it doesn't have, in one non-confirmable
+	  message: a plant that needs water or a board plugged in shows within
+	  seconds instead of at the next refresh. A message only when something
+	  changed: about the cost of one more poll.
+
+config HACOAP_PUSH_SOIL_DELTA
+	int "Push when the soil moisture moved this much (%)"
+	depends on HACOAP_PUSH
+	range 1 100
+	default 5
+
+config HACOAP_PUSH_BATTERY_DELTA
+	int "Push when the battery moved this much (%)"
+	depends on HACOAP_PUSH
+	range 1 100
+	default 5
+
+config HACOAP_PUSH_LEASE_S
+	int "Stop pushing this long after the observer last registered (s)"
+	depends on HACOAP_PUSH
+	range 60 86400
+	default 7200
+	help
+	  The fleet manager registers again at each refresh (every 15 minutes
+	  by default). One that's gone stops getting messages after this.
+
+config HACOAP_PUSH_OBSERVERS
+	int "Observers at once"
+	depends on HACOAP_PUSH
+	range 1 4
+	default 3
+	help
+	  How many senders can observe 'hist' at the same time (the fleet
+	  manager, Home Assistant...), about 60 bytes of RAM each. One that
+	  registers again keeps its place; when all are taken, a new one
+	  replaces the one that registered longest ago.
+
+endmenu
+
+menu "Joining the network"
+
+config HACOAP_JOIN_RETRY_S
+	int "Try joining again every (s), at first"
+	range 10 3600
+	default 30
+	help
+	  A device without a network runs the Thread joiner at boot. If no
+	  commissioner accepts joiners at that moment, it tries again this
+	  often for the first HACOAP_JOIN_RETRY_FAST_FOR_S after boot, so a
+	  commissioner started after the board was powered on still gets it.
+	  Each try listens on every channel for a few seconds.
+
+config HACOAP_JOIN_RETRY_FAST_FOR_S
+	int "For this long after boot (s)"
+	range 0 86400
+	default 600
+
+config HACOAP_JOIN_RETRY_SLOW_S
+	int "Then try every (s)"
+	range 10 86400
+	default 120
+	help
+	  How often a device that still has no network tries to join, after
+	  the first HACOAP_JOIN_RETRY_FAST_FOR_S: often enough to join within
+	  a commissioner's window of a few minutes (open it for 300 s), seldom
+	  enough to spare the battery of a board left without a network. Only
+	  a device that never joined (or forgot its network) tries: one that
+	  lost its border router keeps its network and waits for it.
+
+endmenu
+
+menu "Pump"
+
+config HACOAP_PUMP_DEFAULT_DURATION
+	int "Default pump run time (s)"
+	range 1 9
+	default 1
+	help
+	  How long the pump runs after a 'pump' PUT or a press of S1, until a
+	  'pumpdc' PUT changes it (and the change is kept across resets).
+	  The default for the board's 'pump_s' setting, which the fleet
+	  manager changes without a new firmware (src/device_settings.c).
+
+config HACOAP_PUMP_MAX_DURATION
+	int "Longest pump run time a 'pumpdc' PUT can set (s)"
+	range 1 9
+	default 9
+	help
+	  The 'pumpdc' payload is a single ASCII digit, so 9 s is the upper limit.
+
+endmenu
+
+menu "Sensors"
+
+config HACOAP_SENSOR_SAMPLE_PERIOD_S
+	int "Sensor sampling period (s)"
+	range 10 86400
+	default 900
+	help
+	  The sensors are sampled at boot and then every period, from the system
+	  work queue. The 'data' resource returns the latest samples, so a CoAP
+	  request never waits on the sensors. A shorter period gives fresher data
+	  but powers the soil sensor more often (about 1 mC per sample).
+	  The default for the board's 'sample_s' setting, which the fleet
+	  manager changes without a new firmware (src/device_settings.c).
+
+config HACOAP_SOIL_POWER_UP_MS
+	int "Soil sensor power-up time (ms)"
+	default 200
+	help
+	  Time between enabling the soil sensor supply (SENSOR_EN) and sampling it.
+
+config HACOAP_SOIL_DRY_MV
+	int "Soil sensor output when dry (mV)"
+	default 2200
+	help
+	  Reported as 0% moisture. Must be above HACOAP_SOIL_WET_MV.
+	  The default for the board's 'soil_dry_mv' setting, which the fleet
+	  manager changes without a new firmware (src/device_settings.c).
+
+config HACOAP_SOIL_WET_MV
+	int "Soil sensor output when wet (mV)"
+	default 980
+	help
+	  Reported as 100% moisture.
+	  The default for the board's 'soil_wet_mv' setting, which the fleet
+	  manager changes without a new firmware (src/device_settings.c).
+
+endmenu
+
+menu "Watchdog"
+
+config HACOAP_WDT_TIMEOUT_MS
+	int "Watchdog timeout (ms)"
+	default 120000
+	help
+	  The SoC resets if the watchdog is not fed within this time. The
+	  watchdog keeps running across a soft reset (an update's, mcumgr's),
+	  and the start that follows is slow while it runs: on the boards, a
+	  board answered again 15 to 40 s after a plain restart. With 30 s,
+	  the watchdog reset it first, and an update's test image was reverted
+	  every time. A running watchdog's timeout can't change: a new value
+	  applies from the next power-on or watchdog reset.
+
+config HACOAP_WDT_FEED_PERIOD_MS
+	int "Watchdog feed period (ms)"
+	default 10000
+	help
+	  How often the system work queue feeds the watchdog. Must be well below
+	  HACOAP_WDT_TIMEOUT_MS.
+
+endmenu
+
+menu "SRP service registration"
+
+config HACOAP_SRP_HOSTNAME
+	string "SRP host name prefix"
+	default "ha-coap"
+
+config HACOAP_SRP_SERVICE_INSTANCE
+	string "SRP service instance prefix"
+	default "ha-coap"
+
+config HACOAP_SRP_LEASE_S
+	int "SRP lease (s)"
+	range 300 86400
+	default 1800
+	help
+	  How long the border router keeps advertising the device after its
+	  last registration. The device renews it before it ends (one small
+	  message), so a board that's gone (dead battery, moved) disappears
+	  from Home Assistant's and the fleet manager's discovery within this
+	  time. OpenThread's default is 7200.
+
+config HACOAP_SRP_SERVICE_NAME
+	string "SRP service name"
+	default "_ot._udp"
+	help
+	  The Home Assistant integration discovers devices through this service.
+
+choice HACOAP_SRP_NAME_SUFFIX
+	prompt "Suffix appended to the host and instance names"
+	default HACOAP_SRP_SUFFIX_DEVICE_ID
+	help
+	  The SRP server rejects duplicate host names, so every device needs a
+	  unique name. The HA integration uses the part after the '-' as the
+	  device's unique ID.
+
+config HACOAP_SRP_SUFFIX_DEVICE_ID
+	bool "Factory device ID (FICR DEVICEID[0], in hex)"
+
+config HACOAP_SRP_SUFFIX_RANDOM
+	bool "Random number, new at every boot"
+
+config HACOAP_SRP_SUFFIX_MANUAL
+	bool "Fixed ID (HACOAP_SRP_MANUAL_ID)"
+
+config HACOAP_SRP_SUFFIX_NONE
+	bool "No suffix (one device per network only)"
+
+endchoice
+
+config HACOAP_SRP_MANUAL_ID
+	string "Fixed ID appended to the names"
+	depends on HACOAP_SRP_SUFFIX_MANUAL
+	default "87d7a063"
+
+endmenu
+
+endmenu
+
 module = COAP_SERVER
 module-str = CoAP server
 source "${ZEPHYR_BASE}/subsys/logging/Kconfig.template.log_config"
 
-module = OT_COAP_UTILS
-module-str = OpenThread CoAP utils
+module = COAP_RESOURCES
+module-str = CoAP resources
 source "${ZEPHYR_BASE}/subsys/logging/Kconfig.template.log_config"

@@ -1,0 +1,84 @@
+# Fleet manager changes
+
+## Since 0.1.0 (to 2026-11-13, not released yet)
+
+Running for real: on a server, with the boards and the border router.
+
+- **On a server:** `scripts/install-server.sh` sets a Debian machine up (the app as a service, the border router in Docker, the routes); `scripts/connect-to-server` opens it from any PC over SSH, and in VS Code.
+- **Border router tab:** its state, Restart, **Update to the newest build** (pinned by its digest, put back if the new one doesn't come up; it says when a newer build is out), its log, the network's settings (kept in the backups), **adding boards over the air** (the border router as commissioner, the PSKd never stored) and **moving the network to another channel**. The map is read through its command line when its REST diagnostics don't answer. Alerts when the border router is down, or when no board answers.
+- **The boards' kept samples and pushes:** each refresh reads the samples a board kept since the last one (`hist`, newer firmware), so a gap fills itself, and the app takes the boards' pushes: a plant that needs water, a board plugged in, its pump's run time set elsewhere, the end of a pump run show within seconds. Up to 3 observers, so Home Assistant can take them too. Pump runs started elsewhere (Home Assistant...) are counted in the plant's water tank, from the time its pump ran (`diag` pump_ms). An alert when a board answers but stopped sampling. A board that stops answering is looked for again on the network, and asked at its new address.
+- **A simple view, made for a phone, by default:** the plants as cards, a **Today** list (what to do, the most urgent first), or **Rooms**; **Water now** asks how long, then confirms. A plant is called by the name given to it everywhere.
+- **Water tanks:** a tank's size and the pump's flow; how full it is, how long it lasts, **Refilled**, and an alert under 20 %. An alert when two waterings in a row didn't raise the soil (an empty tank, the tube out of the pot).
+- **Automatic watering:** a rule per plant (under its target, so many times a day, between two hours, a wait between waterings), paused when its waterings stop working or its tank is empty.
+- **Care tasks** per plant (fertilize, repot...), coming back after they're done; **Going away**, a check of what won't last until you're back; **Does watering work?**, a report per plant; more in the weekly summary; alerts for weak links and boards that keep switching parents.
+- **Dashboard links,** to show the plants inside Home Assistant (or anywhere): view-only ones, the network map and charts, alerts dismissed from there, the full app opened outside the dashboard. A **link for the HA CoAP integration**: the boards' firmware updates, and each plant's tank, battery forecast and care tasks. The activity says who did what (this computer, a signed-in device, a link, automatic watering, a board's button).
+- **Builds and updates:** choose the key a build is signed with, chosen for you from what the boards run; an update with a key the boards' bootloader would refuse asks first; **Cancel the rest** works during an upload; the Updates tab's list shows each board on USB power, and a board on USB isn't skipped for a low battery.
+- **Smaller:** Home Assistant history from the integration's version 2 too; a CSV on Charts; backups copied to another folder; the CoAP tab shows each board's plant and how many bytes came back; the heatmap uses the boards' own signal; the wall display shows each battery as a ring; the health view shows each board's plant and location; the map shows an address for every board; no drying rate from a soil reading that doesn't move.
+
+## 0.1.0
+
+First version: the plan's phases 0, 1, 2, 5 and 6. Tested against a simulated device; not yet used with real boards.
+
+- **Devices:** finds devices on the network (mDNS) or by address, and shows their firmware, battery, readings and when they were last seen. Rename, notes, update history, firmware slots, beep.
+- **Updates** over the air or USB: upload (resumes after lost packets), trial boot, check that the device came back running the new image, confirm. One device at a time, stopping at the first failure. History of every result.
+- **Images:** a library of firmware images, from files or from the builds on this computer.
+- **Builds:** build profiles (variant and settings, from the firmware's Kconfig), checks for the toolchain and signing key, builds with a live log.
+- **Network:** a map of the Thread mesh from the border router's REST API: routers, children, your boards by name, link strength as line colour and length, and a log of parent changes. Click a board for its plant photo and readings.
+- **Dashboard:** devices online, behind the release, never read, low batteries and weak links. Firmware per image, with one click to update the devices behind the release.
+- **Device pages:** readings with a battery forecast, firmware compared with the release, pump and buzzer controls, and charts of readings and link strength over up to 90 days.
+- **Groups:** location and tags per device, with a filter.
+- **Staged updates:** update one device, check it, then continue with the rest.
+- **What's new:** the commits between two images built here. **Release:** mark the image the fleet should run.
+- **Floor plan:** place the mesh on a picture of your home. **Channel scan:** radio noise on every Thread channel.
+- **A board's health:** boards with the new firmware report why they last restarted (power, reset button, software reset, watchdog, lockup, or a crash with its fatal error and address), their boot count and their link to their parent, read at every refresh (`diag`). Each restart goes in the board's history, on its charts and in the activity feed; a crash, watchdog reset or lockup raises an alert; the dashboard lists the week's restarts. On the Network page, an older border router's boards are named from the short address they report.
+- **Settings on the board:** the sampling period, the pump run time, the poll period and the soil sensor's calibration, kept in the board's flash and changed from the app without a new firmware (the firmware's `hacoap` mcumgr group), on one board or several at once, with a soil calibration helper. The pump run time Home Assistant sets is now kept across resets.
+- **Joining:** a board without a network now keeps trying to join (every 30 s, then every 2 minutes), so it no longer has to be reset while a commissioner is open. **Forget its network…** on a device's page (or S1 held at boot) makes a board forget its network, to move it to another one without a chip erase.
+- **Names on the LAN (SRP):** boards register TXT records (device ID, firmware, hardware, image version) that **Find devices** reads, use a 30-minute lease (gone boards disappear sooner), report their registration's state (Health, **Its name**), and keep their SRP key when they forget their network, so they take their name back (they used to lose it for 14 days). The simulator models the border router's SRP server, keys and leases included.
+- **Charts:** a new tab with one reading of every board on a single chart (soil, battery, air humidity, temperature, signal), with a legend to bring a board forward or hide it, groups, zoom, and every board's value under the pointer.
+- **A board's timeline** on its page: its updates, restarts, pump runs, settings changes, network changes, photos and alerts in one list by day, with filters. A **health** view of the device list: restarts, name registration, signal, battery drain and firmware per board, sortable.
+- **Motion that says what happened:** values that count to a new reading, buttons that wait for a sleepy board then confirm, cards that pulse when their board answers, drops over the photo while the pump runs, cards that slide when sorted, a finished update's check drawing itself. **Undo** instead of a confirmation for removing boards from the list and dismissing alerts. The page **installs as an app** (its own window and icon) in Edge and Chrome.
+- **CoAP tab:** any request to a board's resources: method, the resources that take it, payload (text or hex) with its usual values, confirmable or not; the answer's code, time, text, hex and decoding; a history to send again. Changes go in the board's timeline. Keys 1 to 9 then 0 for the tabs.
+- **Charging:** boards whose firmware reports their power show a charging (or plug) icon next to their battery, everywhere it shows; plugging in, charged and unplugged go in their timeline; their time on USB is left out of the battery drain and forecasts, and a low battery on USB raises no alert. The firmware polls fast while on USB power.
+- **Other devices** (Settings): your phone or another computer opens the app too, from the networks you choose (the home network, ZeroTier…), after signing in with a password. Off by default; sessions last 30 days after their last use, are listed, and can be signed out; only the computer itself changes these settings.
+- **Remove the simulated boards** (Settings → Data), with their history.
+- **Console:** a board's serial output, live. **Over the air** too, from firmware built with **Log over the air** (new firmware option `CONFIG_HACOAP_REMOTE_LOG`): the board keeps its latest 4 KB of log and the console reads it over Thread every second, saying when the board restarts. **Log** on a device's page opens it. Not yet tried on a board.
+- **Set up this computer:** buttons on the Builds tab install the toolchain and SDK, create the signing key and set the PSKd, and (optional) install the SWD flashing tools.
+- **Flash a board over SWD** with a J-Link: a build's MCUboot and application, keeping the board's network or erasing everything. Not yet tried with a real J-Link.
+- **Signature check:** each image shows who signed it (your key, MCUboot's development key, another key, unsigned), and an update with an image your boards would refuse needs a confirmation.
+- **Battery check:** over the air, devices under 20 % battery are skipped unless included on purpose.
+- **Plants:** a photo per device, a watering target per plant (30 % by default), and a "needs water" list with a button to run the pump.
+- **Alerts:** a device that stops answering, a low battery, a plant that needs water, a failed update. On the dashboard, in the status bar, and as browser notifications if wanted.
+- **Network history:** every reading is kept, with a slider to look back. The app also reads the network at each automatic refresh. **Signal heatmap** on the floor plan and the mesh.
+- **Ctrl+K search** for tabs, devices and actions. **With selected:** actions for all the ticked devices.
+- **Exports:** readings as CSV, and a problem report (no keys, PSKd blanked out).
+- **App update check:** optional, asks GitHub once a day.
+- **Phones:** a narrower layout with every tab in rows of three, and pinch to zoom the map.
+- **Check my connection:** border router, mDNS, the route to the Thread network, and each board's CoAP and mcumgr speed with an update time estimate; a failed step says what usually fixes it.
+- **Battery drain by firmware:** % per day under each image, per device and for the fleet, leaving out charging and the time around updates.
+- **Running in the background:** start with the computer (no admin rights), a second start opens the running app, **Stop the app**, and a log file.
+- **Home Assistant history:** imports the boards' readings from Home Assistant, matched by device ID; the token stays out of backups and reports.
+- **Chart markers:** updates, pump runs and parent changes on a device's charts.
+- **Plant presets:** a suggested watering target for about 30 plants.
+- **Labels:** printable per device, on A4 or Letter label sheets or a label printer.
+- **Data limits:** how long readings, network history and backups are kept, the data folder's size, and compacting the database.
+- **Watering forecast:** when each plant will need water at its drying rate, a "soon" list on the dashboard, and what a pump run raises the soil by.
+- **Photo timeline:** several dated photos per plant, with a slider and the soil at each date.
+- **Wall display:** full screen, every plant big, for a spare monitor; all of them on one page that scrolls, with the header kept at the top; click a plant to open its page, and **← wall display** on that page to come back.
+- **Weekly summary:** what happened over a week, to print.
+- **Demo:** a second app with simulated boards and two weeks of history, in a throwaway data folder.
+- **Getting started** checklist on the dashboard, and a pulse on the map when a board answers.
+- **A new network map:** the border router in the middle and routers on hop rings (a stable layout that fills the view), boards as their plant photo with a soil gauge, icons for routers, curved links coloured and sized by strength with flowing dashes to the parent, hover to trace a board's way to the border router, a details panel sliding over the map, floating controls and legend, and smooth zoom.
+- **A new floor plan:** a dimmed picture, boards as photo pins, thin curved links (which can be hidden), a list of nodes to drag onto the plan, and a smoother heatmap in 5 dB bands with a scale.
+- **The Network page, redesigned:** the figures across the top (routers, children, your boards, the weakest link, the average signal, changes in 24 hours); every node in a searchable list beside the map, sharing its highlight and selection; the border router's address and the floor plan behind a gear; changes and channels as tabs under the map. On the map, only each node's way to the border router is drawn, with dots flowing towards it (a router's spare links when you point at it, or with **all links**); one look for nodes in every view (a ring for the strength of their way in, a badge on a board that's offline, low on battery or needs water); a dot grid instead of the hop rings. A new **tree** view: routers in levels, each one's children as cards with their signal, no lines crossing. The floor plan fills the space, tinted to the theme (inverted when needed), with small pins, names and lines only for the node in focus, and a smooth heatmap.
+- **Devices as cards:** a grid of plant cards (photo, soil gauge, battery, when it needs water), and sorting (needs water soonest, driest, lowest battery, last seen).
+- **A device's page** opens with its photo, a big soil gauge, its battery, watering, signal and air, and the quick actions. The plant card's slider steps through the older photos in that photo, instead of showing a second, bigger one.
+- **Charts you can read:** point for the values, drag to zoom into a period, compare up to three plants on the same charts.
+- **Update progress as steps:** connect, upload (with the time left), test, reboot, back online, confirm; a failure shows where it stopped.
+- **Settings in sections**, with a side menu. **Activity feed** on the dashboard. **?** lists the keyboard shortcuts. A **System** theme that follows the computer's light or dark setting.
+- **Accessibility:** keyboard focus shown everywhere, the network map usable from the keyboard, and contrast checked in every theme.
+- The page's code is now ES modules, one per tab or feature (static/js), instead of one 3,400-line file.
+- The page asks for its scripts and styles at an address that changes with every version (/v/<version>/), so a browser never runs a new page with a script it kept from an older one. If the page's scripts fail to start anyway, it says so at the top, instead of showing no data.
+- **Icons** (Lucide) on the tabs, the status bar and the map; 7-day charts in the dashboard's tiles; tabs that fade in and placeholders while cards load.
+- **Data:** backups (one file; daily automatic ones, and one before every restore), restore, and the device list as CSV.
+- A look after [Omarchy](https://omarchy.org/): a terminal feel, JetBrains Mono, 12 colour themes (Tokyo Night by default, **T** cycles them) with Home Assistant's blue as the accent, the ha-coap logo, keys 1 to 9 for the tabs, and a status bar.
+- Answers only on this computer (127.0.0.1).

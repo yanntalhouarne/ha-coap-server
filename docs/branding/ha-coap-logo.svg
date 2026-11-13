@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" fill="none" stroke="#808080" stroke-linecap="round" stroke-linejoin="round">
+  <title>ha-coap</title>
+  <circle cx="256" cy="256" r="244" stroke-width="24"/>
+  <g stroke-width="16">
+    <circle cx="256" cy="140" r="28"/>
+    <circle cx="163" cy="254" r="28"/>
+    <circle cx="349" cy="214" r="28"/>
+  </g>
+  <g stroke-width="17">
+    <path d="M256 168V397"/>
+    <path d="M163 282V322H256"/>
+    <path d="M349 242V281H256"/>
+  </g>
+</svg>

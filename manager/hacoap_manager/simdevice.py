@@ -1,0 +1,870 @@
+"""A simulated ha-coap device, for tests and for trying the app without a board.
+
+It answers mcumgr (SMP) over UDP and CoAP ('info', 'data', 'ping', 'diag', 'log') like the
+firmware, and models MCUboot's two slots: upload to slot 1, test, reset (swap), confirm, and
+revert when a tested image isn't confirmed before the next reset. It has the firmware's
+settings (the 'hacoap' mcumgr group), counts its boots, and can crash (crash()).
+
+Run one from the command line:
+    python -m hacoap_manager.simdevice [--host 127.0.0.1] [--smp-port 1337] [--coap-port 5683]
+                                       [--border-router api|legacy] [--border-router-port 8081]
+                                       [--no-mdns] [--count 24]
+With --count N, it simulates a fleet of N devices at 127.0.0.1, 127.0.0.2 and so on, with
+different readings, some running an older image. With --border-router, a simulated border
+router REST API serves a made-up network in which the simulated devices are boards (see
+simborder.py). Unless --no-mdns, it announces
+itself over mDNS like a real board (through its border router), so the app's Find devices
+finds it.
+"""
+
+import argparse
+import asyncio
+import hashlib
+import math
+import os
+import random
+import struct
+import time
+from dataclasses import dataclass, field
+
+import cbor2
+
+from . import coap, mcuboot
+
+# SMP header: op, flags, length, group, sequence, command
+SMP_HEADER = struct.Struct(">BBHHBB")
+OP_READ, OP_READ_RSP, OP_WRITE, OP_WRITE_RSP = 0, 1, 2, 3
+GROUP_OS, GROUP_IMAGE, GROUP_HACOAP = 0, 1, 64
+OS_ECHO, OS_RESET, OS_MCUMGR_PARAMS = 0, 5, 6
+IMAGE_STATE, IMAGE_UPLOAD, IMAGE_ERASE = 0, 1, 5
+RC_OK, RC_EUNKNOWN, RC_EINVAL, RC_ENOTSUP, RC_EBADSTATE = 0, 1, 3, 8, 6
+
+# The log over the air, as the firmware keeps it (CONFIG_HACOAP_REMOTE_LOG_BUFFER_SIZE, and
+# LOG_PAYLOAD_MAX_SIZE in application/include/coap_resources.h)
+LOG_KEEP = 4096
+LOG_PAYLOAD_MAX = coap.LOG_PAYLOAD_MAX
+SIM_SAMPLE_S = 20      # the sensors are sampled every 15 min on a board; faster here
+HISTORY_SIZE = 192     # CONFIG_HACOAP_HISTORY_SIZE
+PUSH_SOIL_DELTA = 5    # CONFIG_HACOAP_PUSH_SOIL_DELTA
+PUSH_BATTERY_DELTA = 5  # CONFIG_HACOAP_PUSH_BATTERY_DELTA
+SRP_LEASE_S = 1800     # CONFIG_HACOAP_SRP_LEASE_S
+SRP_KEY_LEASE_S = 14 * 86400  # OpenThread's default: a name stays its key's this long
+SIM_FAST_POLL_S = 30   # CONFIG_HACOAP_MCUMGR_POLL_TIMEOUT_S
+
+# The firmware's settings (application/src/device_settings.c): name: (default, min, max)
+SETTINGS = {
+    "sample_s": (900, 10, 86400),
+    "soil_dry_mv": (2200, 1, 3600),
+    "soil_wet_mv": (980, 0, 3599),
+    "pump_s": (1, 1, 9),
+    "poll_ms": (3000, 101, 600000),
+}
+
+
+@dataclass
+class Slot:
+    image: bytes = b""
+    confirmed: bool = False
+    pending: bool = False
+    permanent: bool = False
+
+    @property
+    def info(self):
+        return mcuboot.parse_image(self.image) if self.image else None
+
+
+class SimulatedSrpServer:
+    """The border router's SRP server, for the simulated boards: it advertises a host name for
+    its lease, and keeps the name for the key that registered it for the key lease (14 days),
+    so a registration of the same name with another key is refused."""
+
+    def __init__(self):
+        self.hosts = {}  # name: {"key", "expires", "key_expires", "txt"}
+
+    def register(self, name, key, txt):
+        now = time.time()
+        host = self.hosts.get(name)
+        if host is not None and host["key"] != key and now < host["key_expires"]:
+            return False
+        self.hosts[name] = {"key": key, "expires": now + SRP_LEASE_S, "key_expires": now + SRP_KEY_LEASE_S, "txt": txt}
+        return True
+
+    def unregister(self, name, key):
+        """Removes the name from the LAN at once; the key keeps it (the firmware keeps its key lease)."""
+        host = self.hosts.get(name)
+        if host is not None and host["key"] == key:
+            host["expires"] = 0
+
+    def advertised(self, name):
+        host = self.hosts.get(name)
+        return host is not None and time.time() < host["expires"]
+
+
+SRP_SERVER = SimulatedSrpServer()  # the simulated network's border router
+
+
+@dataclass
+class SimulatedDevice:
+    device_id: str = "1a2b3c4d"
+    hw_version: str = "v2.0"
+    data: bytes = bytes([42, 87, 55, 251])  # soil, battery, air humidity, -5 degC
+    slots: list = field(default_factory=lambda: [Slot(), Slot()])
+    reboot_s: float = 0.3            # unreachable for this long after a reset
+    fail_boot: bool = False          # a tested image crashes: MCUboot reverts it
+    drop_smp_every: int = 0          # drop every Nth SMP request (0: never)
+    late_smp_replies: int = 0        # the next N answers come after a copy of the one before (a late answer)
+    drop_coap_first: int = 0         # drop the first N CoAP requests
+    dynamic: bool = False            # readings change over time (battery drains), for trying the app
+    battery_drain_per_hour: float = 0.5
+    battery_start: float = 87
+    power: str = "battery"           # battery, usb, charging or charged ('diag'): see plug()
+    charge_per_hour: float = 30.0    # % per hour on a charger (dynamic)
+    phase: float = 0.0               # shifts the dynamic readings, so a fleet's devices differ
+    pump_running: bool = False
+    pings: int = 0
+    resets: int = 0
+    smp_requests: int = 0
+    remote_log: bool = True          # the 'log' resource (firmware built with HACOAP_REMOTE_LOG)
+    diag: bool = True                # the 'diag' resource and the 'hacoap' mcumgr group (newer firmware)
+    history: bool = True             # the 'hist' resource, observed (newer firmware)
+    button_s: int = 0                # the pump's run time started with its button since boot ('diag')
+    pump_ms: int = 0                 # how long its pump ran since boot, whatever started it ('diag')
+    rloc16: int = 0x5001             # its short address on the Thread network, reported in 'diag'
+    parent_rloc16: int = 0x5000
+    boots: int = 1
+    reset_cause: str = "power"
+    fault: str = ""
+    samples: int = 1
+    settings: dict = field(default_factory=lambda: {name: values[0] for name, values in SETTINGS.items()})
+    srp_server: SimulatedSrpServer = None   # SRP_SERVER unless given
+    srp_key: str = field(default_factory=lambda: os.urandom(8).hex())  # kept when it forgets its network
+    srp_state: str = "off"
+    forget_wipes_srp_key: bool = False      # as the firmware did before: a new key after forgetting
+    short_info_id: bool = False             # as firmware up to d98bac1: 7 characters of its ID in 'info'
+    on_srp_change: object = None            # called with (device, advertised) when it (un)registers
+    _charge_from: tuple = None       # (time, battery %) when plugged in (dynamic)
+    _upload: bytearray = None
+    _upload_size: int = 0
+    _rebooting_until: float = 0.0
+    _started: float = field(default_factory=time.time)
+    _log: bytearray = field(default_factory=bytearray)  # the last LOG_KEEP bytes
+    _log_written: int = 0
+    _boot_id: str = ""
+    _booted: float = 0.0
+    _last_sample: float = 0.0
+    _last_log_read: float = 0.0
+    _samples: list = field(default_factory=list)  # ('hist') [(uptime_s, soil, battery, air, temperature, power)]
+    _samples_added: int = 0
+    _observer: dict = None          # who observes 'hist': {addr, token, next, sequence}
+    send: object = None             # sends a datagram from its CoAP port: send(data, addr) (SimulatorServer sets it)
+
+    def __post_init__(self):
+        if self.srp_server is None:
+            self.srp_server = SRP_SERVER
+        self._boot_log()
+        self.srp_register()
+        self.sample()  # the firmware samples at boot
+
+    # ------------------------------------------------------------ SRP (application/src/srp.c)
+
+    @property
+    def srp_name(self):
+        return f"ha-coap-{self.device_id}"
+
+    def txt(self):
+        """The TXT records the firmware registers."""
+        return {"id": self.device_id, "fw": self.fw_version, "hw": self.hw_version, "ver": self.image_version()}
+
+    def image_version(self):
+        info = self.slots[0].info
+        return info.version if info else ""
+
+    def srp_register(self):
+        ok = self.srp_server.register(self.srp_name, self.srp_key, self.txt())
+        self.srp_state = "registered" if ok else "failed"
+        self.log("SRP callback: OK" if ok else "SRP callback: Duplicated")
+        if self.on_srp_change is not None:
+            self.on_srp_change(self, ok)
+
+    def srp_unregister(self):
+        self.srp_server.unregister(self.srp_name, self.srp_key)
+        self.srp_state = "off"
+        if self.on_srp_change is not None:
+            self.on_srp_change(self, False)
+
+    @classmethod
+    def with_image(cls, image, **kwargs):
+        device = cls(**kwargs)
+        device.slots[0] = Slot(image=image, confirmed=True, permanent=True)
+        host = device.srp_server.hosts.get(device.srp_name)
+        if host is not None and host["key"] == device.srp_key:
+            host["txt"] = device.txt()  # registered at creation, before it had its image
+        return device
+
+    @property
+    def pump_duration(self):
+        return self.settings["pump_s"]
+
+    def soil_mv(self):
+        """The soil sensor's output: the soil the readings model, as a sensor calibrated with the
+        firmware's defaults would see it."""
+        soil = self.data[0] if not self.dynamic else 45 + 20 * math.sin(self._hours() / 6 + self.phase)
+        dry, wet = SETTINGS["soil_dry_mv"][0], SETTINGS["soil_wet_mv"][0]
+        return round(dry - soil * (dry - wet) / 100)
+
+    def _hours(self):
+        return (time.time() - self._started) / 3600
+
+    def readings(self):
+        """The 'data' payload: fixed, or (dynamic) a slowly draining battery and drifting readings.
+        The soil goes through the board's calibration, like on a board."""
+        dry, wet = self.settings["soil_dry_mv"], self.settings["soil_wet_mv"]
+        soil = round(min(max((dry - self.soil_mv()) / (dry - wet) * 100, 0), 100))
+        if not self.dynamic:
+            return bytes([soil]) + self.data[1:]
+        hours = self._hours()
+        battery = self._battery(hours)
+        humidity = round(55 + 10 * math.sin(hours / 9 + 1 + self.phase))
+        temperature = round(18 + 6 * math.sin(hours / 4 + self.phase))
+        return bytes([soil, battery, humidity, temperature & 0xFF])
+
+    def _battery(self, hours):
+        """Draining on its battery, or rising on a charger until it's full (then 'charged')."""
+        if self._charge_from is None:
+            return max(3, round(self.battery_start - hours * self.battery_drain_per_hour))
+        since, level = self._charge_from
+        charged = min(100, round(level + (time.time() - since) / 3600 * self.charge_per_hour))
+        if charged >= 100 and self.power == "charging":
+            self.power = "charged"
+        return charged
+
+    def plug(self, usb=True):
+        """USB power on (it charges until full) or off (it drains from where it got to)."""
+        hours = self._hours()
+        level = self._battery(hours) if self.dynamic else self.data[1]
+        if usb:
+            self._charge_from = (time.time(), level)
+            self.power = "charging" if level < 100 else "charged"
+            self.log(f"Power: {self.power}")
+        else:
+            self._charge_from = None
+            self.battery_start = level + hours * self.battery_drain_per_hour
+            self.power = "battery"
+            self.log("Power: battery")
+        self.sample()  # the firmware samples when its power changes
+
+    @property
+    def fw_version(self):
+        info = self.slots[0].info
+        return info.hash[:7] if info else "unknown"
+
+    def _rebooting(self):
+        return asyncio.get_running_loop().time() < self._rebooting_until
+
+    # ------------------------------------------------------------ MCUboot
+
+    def boot(self):
+        """What MCUboot does at a reset."""
+        primary, secondary = self.slots
+        if secondary.pending and secondary.image:
+            # Swap: the new image runs, unconfirmed unless it was confirmed up front.
+            new = Slot(image=secondary.image, confirmed=secondary.permanent, permanent=secondary.permanent)
+            old = Slot(image=primary.image, confirmed=True)
+            self.slots = [new, old]
+            if self.fail_boot and not new.confirmed:
+                self.boot()  # crashes: the watchdog resets it before it's confirmed
+        elif primary.image and not primary.confirmed:
+            # The tested image wasn't confirmed: swap back.
+            self.slots = [Slot(image=secondary.image, confirmed=True, permanent=True),
+                          Slot(image=primary.image)]
+
+    def reset(self, cause="soft", fault="", register=True):
+        self.resets += 1
+        self.boot()
+        self._rebooting_until = asyncio.get_running_loop().time() + self.reboot_s
+        self.boots += 1
+        self.reset_cause, self.fault = cause, fault
+        self.samples = 1
+        self.button_s = 0
+        self.pump_ms = 0
+        self._samples, self._samples_added, self._observer = [], 0, None
+        self._boot_log()
+        self.sample()
+        if register:
+            self.srp_register()  # with the same key: its name again
+
+    def forget_network(self, rejoin_s=3.0):
+        """Forgets its network and resets (application/src/joining.c): it removes its SRP
+        registration first, keeps its SRP key, and answers again once it 'joined' again (as if a
+        commissioner accepted it at once), registering its name again."""
+        self.log("Forgetting the Thread network: removing the SRP registration first")
+        self.srp_unregister()
+        if self.forget_wipes_srp_key:
+            self.srp_key = os.urandom(8).hex()
+        self.log("Forgetting the Thread network, then resetting", level="wrn")
+        self.reset(register=False)
+        self._rebooting_until = asyncio.get_running_loop().time() + rejoin_s
+        asyncio.get_running_loop().call_later(rejoin_s, self.srp_register)
+
+    def crash(self, reason=3, address=0x0001A2B4):
+        """A fatal error: the board records it and resets (application/src/diag.c)."""
+        self.log(f"Fatal error {reason} at 0x{address:08x}: resetting", level="err")
+        self.reset("crash", f"{reason}@{address:08x}")
+
+    # ------------------------------------------------------------ diagnostics and settings
+
+    def diag_payload(self):
+        text = f"boots={self.boots},up={int(time.time() - self._booted)},reset={self.reset_cause}"
+        if self.fault:
+            text += f",fault={self.fault}"
+        text += (f",role=child,srp={self.srp_state},rloc={self.rloc16:04x},parent={self.parent_rloc16:04x},"
+                 f"rssi=-62,last_rssi=-60,lq=3")
+        text += f",soil_mv={self.soil_mv()},power={self.power}"
+        if self.history:
+            text += f",button_s={self.button_s},pump_ms={self.pump_ms},pump_s={self.pump_duration}"  # with 'hist': the same firmware
+        return text.encode()
+
+    def _settings_response(self):
+        return {"settings": {name: [self.settings[name], *values] for name, values in SETTINGS.items()},
+                "soil_mv": self.soil_mv(), "samples": self.samples}
+
+    def _settings_write(self, request):
+        change = request.get("set")
+        if not isinstance(change, dict) or any(name not in SETTINGS or not isinstance(value, int)
+                                                for name, value in change.items()):
+            return {"rc": RC_EINVAL}
+        new = {**self.settings, **change}
+        if any(not SETTINGS[name][1] <= value <= SETTINGS[name][2] for name, value in new.items()) or \
+                new["soil_dry_mv"] <= new["soil_wet_mv"]:
+            return {"rc": RC_EINVAL}
+        for name, value in change.items():
+            if self.settings[name] != value:
+                self.log(f"Setting {name} = {value}")
+        pump_changed = new["pump_s"] != self.settings["pump_s"]
+        self.settings = new
+        if pump_changed and self.history:
+            self.notify()  # its observer is told (a push without new samples)
+        return self._settings_response()
+
+    def _sample_now(self):
+        before = self.samples
+        self.samples += 1
+        self._sample_log()
+        return {"samples": before}
+
+    # ------------------------------------------------------------ the samples ('hist', application/src/history.c)
+
+    def sample(self):
+        """Takes a sample (as the firmware does every period, at boot and when its power changes),
+        and pushes it to the observer if it changed enough since the last one it was given."""
+        soil, battery, air, temperature = self.readings()
+        power = coap.POWER_NAMES.index(self.power) if self.power in coap.POWER_NAMES else 0
+        entry = (int(time.time() - self._booted), soil, battery, air, temperature if temperature < 128 else temperature - 256, power)
+        self._samples = (self._samples + [entry])[-HISTORY_SIZE:]
+        self._samples_added += 1
+        if self._observer is not None and self.history:
+            given_seq = self._observer["next"] - 1
+            given = self._sample(given_seq)
+            if given is None or abs(entry[1] - given[1]) >= PUSH_SOIL_DELTA or abs(entry[2] - given[2]) >= PUSH_BATTERY_DELTA \
+                    or entry[5] != given[5]:
+                self.notify()
+        return entry
+
+    def _sample(self, seq):
+        oldest = self._samples_added - len(self._samples)
+        return self._samples[seq - oldest] if oldest <= seq < self._samples_added else None
+
+    def history_payload(self, from_seq, size=512):
+        """The 'hist' payload (application/include/history.h), and the number after its last sample."""
+        oldest = self._samples_added - len(self._samples)
+        start = oldest if from_seq < oldest or from_seq > self._samples_added else from_seq
+        count = min(self._samples_added - start, (size - coap.HISTORY_HEADER.size) // coap.HISTORY_ENTRY.size, 255)
+        payload = coap.HISTORY_HEADER.pack(1, count, coap.HISTORY_ENTRY.size, self.boots, int(time.time() - self._booted),
+                                           start, self._samples_added)
+        for seq in range(start, start + count):
+            payload += coap.HISTORY_ENTRY.pack(*self._sample(seq))
+        return payload, start + count
+
+    def notify(self):
+        """Sends the observer the samples it doesn't have (a non-confirmable notification)."""
+        observer = self._observer
+        if observer is None or self.send is None or self._rebooting():
+            return False
+        payload, observer["next"] = self.history_payload(observer["next"])
+        observer["sequence"] = (observer["sequence"] + 1) & 0xFFFFFF
+        self.send(coap.encode(coap.TYPE_NON, coap.CONTENT, (observer["sequence"] + 0x2000) & 0xFFFF, observer["token"],
+                              payload=payload, observe=observer["sequence"]), observer["addr"])
+        return True
+
+    # ------------------------------------------------------------ the log over the air
+
+    def log(self, text, level="inf", module="coap_server"):
+        """Adds a line to the log, formatted like the firmware's remote_log backend."""
+        uptime = time.time() - self._booted
+        hours, rest = divmod(uptime, 3600)
+        minutes, seconds = divmod(rest, 60)
+        stamp = f"[{int(hours):02d}:{int(minutes):02d}:{seconds:06.3f},{int(uptime * 1e6) % 1000:03d}]"
+        data = f"{stamp} <{level}> {module}: {text}\n".encode() if level else f"{text}\n".encode()
+        self._log += data
+        self._log_written += len(data)
+        del self._log[:-LOG_KEEP]
+
+    def _boot_log(self):
+        self._log = bytearray()
+        self._log_written = 0
+        self._boot_id = f"{random.getrandbits(32) | 1:08x}"
+        self._booted = self._last_sample = time.time()
+        self.log("*** Booting nRF Connect SDK v2.4.3 ***", level=None)
+        self.log("Set up user button at gpio@50000000 pin 15")
+        self.log("Start CoAP-server sample")
+        self.log("CoAP server has started", module="coap_resources")
+        self.log("Initialization done. Starting OpenThread...")
+        self.log(f"hostname is: ha-coap-{self.device_id}")
+        self.log(f"service instance is: ha-coap-{self.device_id}")
+        self.log("Adding SRP client service...")
+        self._sample_log()
+
+    def _sample_log(self):
+        soil, battery, humidity, temperature = self.readings()
+        temperature = temperature - 256 if temperature > 127 else temperature
+        self.log(f"soil_voltage = {2200 - soil * 12} mV, soil_humidity = {soil} %")
+        self.log(f"Temp = {temperature}.250000 C, RH = {humidity}.500000 %")
+        self.log(f"soil_humidity = {soil}, battery = {battery}, air_humidity = {humidity}, temperature = {temperature}")
+
+    def read_log(self, offset):
+        """The 'log' payload for a reader that has the log up to 'offset' (like log_buffer_read())."""
+        now = time.time()
+        while now - self._last_sample >= SIM_SAMPLE_S:  # sampling, sped up
+            self._last_sample += SIM_SAMPLE_S
+            self._sample_log()
+        if now - self._last_log_read > SIM_FAST_POLL_S:
+            self.log("mcumgr or log reader: poll period 100 ms")
+        self._last_log_read = now
+        oldest = self._log_written - len(self._log)
+        start = oldest if offset < oldest or offset > self._log_written else offset
+        header = f"{self._boot_id} {start}\n".encode()
+        return header + bytes(self._log[start - oldest:])[:LOG_PAYLOAD_MAX - len(header)]
+
+    # ------------------------------------------------------------ SMP
+
+    def _images(self):
+        images = []
+        for number, slot in enumerate(self.slots):
+            info = slot.info
+            if info is None:
+                continue
+            images.append({
+                "slot": number,
+                "version": info.mcumgr_version,
+                "hash": bytes.fromhex(info.hash),
+                "bootable": True,
+                "pending": slot.pending,
+                "confirmed": slot.confirmed,
+                "active": number == 0,
+                "permanent": slot.permanent,
+            })
+        return {"images": images, "splitStatus": 0}
+
+    def handle_smp(self, frame):
+        """Returns the response to one SMP request, or None to drop it."""
+        self.smp_requests += 1
+        if self._rebooting():
+            return None
+        if self.drop_smp_every and self.smp_requests % self.drop_smp_every == 0:
+            return None
+        first, flags, length, group, sequence, command = SMP_HEADER.unpack_from(frame)
+        request = cbor2.loads(frame[SMP_HEADER.size:SMP_HEADER.size + length]) if length else {}
+        response, after = self._dispatch(first & 0x07, group, command, request)
+        payload = cbor2.dumps(response)
+        # Answers in SMP version 1, like Zephyr 3.3 (version bits cleared)
+        header = SMP_HEADER.pack((first & 0x07) + 1, flags, len(payload), group, sequence, command)
+        return header + payload, after
+
+    def _dispatch(self, op, group, command, request):
+        if group == GROUP_HACOAP and self.diag:
+            if command == 0 and op == OP_READ:
+                return self._settings_response(), None
+            if command == 0 and op == OP_WRITE:
+                return self._settings_write(request), None
+            if command == 1 and op == OP_WRITE:
+                return self._sample_now(), None
+            if command == 2 and op == OP_WRITE:
+                return {}, self.forget_network
+        if group == GROUP_OS and command == OS_ECHO:
+            return {"r": request.get("d", "")}, None
+        if group == GROUP_OS and command == OS_RESET:
+            return {}, self.reset
+        if group == GROUP_IMAGE and command == IMAGE_STATE and op == OP_READ:
+            return self._images(), None
+        if group == GROUP_IMAGE and command == IMAGE_STATE and op == OP_WRITE:
+            return self._state_write(request), None
+        if group == GROUP_IMAGE and command == IMAGE_UPLOAD:
+            return self._upload_chunk(request), None
+        if group == GROUP_IMAGE and command == IMAGE_ERASE:
+            self.slots[1] = Slot()
+            return {"rc": RC_OK}, None
+        return {"rc": RC_ENOTSUP}, None
+
+    def _state_write(self, request):
+        image_hash = request.get("hash")
+        confirm = request.get("confirm", False)
+        primary, secondary = self.slots
+        if confirm and (image_hash is None or (primary.info and bytes.fromhex(primary.info.hash) == image_hash)):
+            primary.confirmed = True
+            primary.permanent = True
+            secondary.pending = False
+        elif secondary.info and image_hash == bytes.fromhex(secondary.info.hash):
+            secondary.pending = True
+            secondary.permanent = bool(confirm)
+        else:
+            return {"rc": RC_EINVAL}
+        return self._images()
+
+    def _upload_chunk(self, request):
+        offset = request.get("off")
+        data = request.get("data", b"")
+        if offset == 0:
+            if "len" not in request:
+                return {"rc": RC_EINVAL}
+            self._upload = bytearray()
+            self._upload_size = request["len"]
+            self._upload_sha = request.get("sha")
+            self.slots[1] = Slot()
+        if self._upload is None:
+            return {"rc": RC_EINVAL}
+        if offset != len(self._upload):
+            return {"rc": RC_OK, "off": len(self._upload)}  # wrong offset: tell the client where to go on
+        self._upload.extend(data)
+        response = {"rc": RC_OK, "off": len(self._upload)}
+        if len(self._upload) >= self._upload_size:
+            image = bytes(self._upload)
+            self._upload = None
+            try:
+                mcuboot.parse_image(image)
+                self.slots[1] = Slot(image=image)
+            except mcuboot.ImageError:
+                return {"rc": RC_EINVAL}
+            if self._upload_sha is not None:
+                response["match"] = hashlib.sha256(image).digest() == self._upload_sha
+        return response
+
+    # ------------------------------------------------------------ CoAP
+
+    def handle_coap(self, data, addr=None):
+        if self._rebooting():
+            return None
+        if self.drop_coap_first > 0:
+            self.drop_coap_first -= 1
+            return None
+        try:
+            message = coap.decode(data)
+        except coap.CoapError:
+            return None
+        if message.type == coap.TYPE_CON:
+            reply_type = coap.TYPE_ACK
+        elif message.type == coap.TYPE_NON:
+            reply_type = coap.TYPE_NON
+        else:
+            return None
+
+        def reply(code, payload=b""):
+            return coap.encode(reply_type, code, message.message_id, message.token, payload=payload)
+
+        if message.path == "info" and message.code == coap.GET:
+            text = f"{self.fw_version},{self.hw_version},{self.device_id[:7] if self.short_info_id else self.device_id}"
+            self.log(f"Device info is: {text}", module="coap_resources")
+            return reply(coap.CONTENT, text.encode() + b"\0")
+        if message.path == "data" and message.code == coap.GET:
+            self.log("Received 'data' GET request", module="coap_resources")
+            return reply(coap.CONTENT, self.readings())
+        if message.path == "diag" and message.code == coap.GET:
+            if not self.diag:
+                return None  # older firmware: no answer to an unknown resource
+            return reply(coap.CONTENT, self.diag_payload())
+        if message.path == "hist" and message.code == coap.GET:
+            if not self.history:
+                return None  # older firmware: no answer to an unknown resource
+            from_seq = next((int(q[5:]) for q in message.query if q.startswith("from=") and q[5:].isdigit()), 0)
+            payload, read_up_to = self.history_payload(from_seq)
+            observe = None
+            if message.observe == 0 and addr is not None:
+                sequence = ((self._observer or {}).get("sequence", 0) + 1) & 0xFFFFFF
+                self._observer = {"addr": addr, "token": message.token, "next": read_up_to, "sequence": sequence}
+                observe = sequence
+            elif message.observe == 1 and self._observer is not None and self._observer["addr"] == addr:
+                self._observer = None
+            return coap.encode(reply_type, coap.CONTENT, message.message_id, message.token, payload=payload, observe=observe)
+        if message.path == "log" and message.code == coap.GET:
+            if not self.remote_log:
+                return reply(coap.NOT_FOUND)
+            offset = next((int(q[5:]) for q in message.query if q.startswith("from=") and q[5:].isdigit()), 0)
+            return reply(coap.CONTENT, self.read_log(offset))
+        if message.path == "pump":
+            if message.code == coap.PUT and message.type == coap.TYPE_CON and message.payload in (b"0", b"1"):
+                self.log(f"Received 'pump' PUT request: {message.payload.decode()}", module="coap_resources")
+                self.pump_running = message.payload == b"1"
+                if self.pump_running:
+                    self.pump_ms += self.pump_duration * 1000
+                    asyncio.get_running_loop().call_later(self.pump_duration, self._pump_off)
+            elif message.code != coap.GET:
+                return None  # the firmware ignores a NON PUT
+            return reply(coap.CONTENT, bytes([1 if self.pump_running else 0]))
+        if message.path == "pumpdc":
+            if message.code == coap.PUT and message.type == coap.TYPE_CON:
+                if message.payload[:1].isdigit() and 1 <= int(message.payload[:1]) <= 9 and                         int(message.payload[:1]) != self.settings["pump_s"]:
+                    self.settings["pump_s"] = int(message.payload[:1])
+                    if self.history:
+                        asyncio.get_running_loop().call_soon(self.notify)  # after the answer, as the firmware's work queue
+            elif message.code != coap.GET:
+                return None  # the firmware ignores a NON PUT
+            return reply(coap.CONTENT, bytes([self.pump_duration]))
+        if message.path == "ping" and message.code == coap.PUT:
+            self.log("Received 'ping' PUT request", module="coap_resources")
+            if message.payload == b"1":
+                self.pings += 1
+            return reply(coap.CHANGED)
+        # Like the firmware: no answer to a path it doesn't have, or a method a resource doesn't take
+        return None
+
+
+    def press_button(self):
+        """S1: the pump runs for its run time (application/src/pump.c), counted in 'diag'."""
+        self.pump_running = True
+        self.button_s += self.pump_duration
+        self.pump_ms += self.pump_duration * 1000
+        asyncio.get_running_loop().call_later(self.pump_duration, self._pump_off)
+
+    def _pump_off(self):
+        if self.pump_running and self.history:
+            self.notify()  # a run ended: its observers read 'diag' again (pump_ms), as the firmware's push
+        self.pump_running = False
+
+
+class _SmpProtocol(asyncio.DatagramProtocol):
+    def __init__(self, device):
+        self.device = device
+
+    def connection_made(self, transport):
+        self.transport = transport
+
+    def datagram_received(self, data, addr):
+        result = self.device.handle_smp(data)
+        if result is None:
+            return
+        response, after = result
+        previous, self._previous = getattr(self, "_previous", None), response
+        if self.device.late_smp_replies and previous is not None:
+            self.device.late_smp_replies -= 1
+            self.transport.sendto(previous, addr)
+        self.transport.sendto(response, addr)
+        if after is not None:
+            asyncio.get_running_loop().call_later(0.05, after)
+
+
+class _CoapProtocol(asyncio.DatagramProtocol):
+    def __init__(self, device):
+        self.device = device
+
+    def connection_made(self, transport):
+        self.transport = transport
+
+    def datagram_received(self, data, addr):
+        response = self.device.handle_coap(data, addr)
+        if response is not None:
+            self.transport.sendto(response, addr)
+
+
+class SimulatorServer:
+    """Serves one SimulatedDevice on a host and two UDP ports (0: any free port)."""
+
+    def __init__(self, device, host="127.0.0.1", smp_port=0, coap_port=0, sample_s=None):
+        self.device = device
+        self.host = host
+        self._requested = (smp_port, coap_port)
+        self._transports = []
+        self.sample_s = sample_s  # it samples this often (None: only when asked, as in the tests)
+        self._sampling = None
+        self.smp_port = None
+        self.coap_port = None
+
+    async def start(self):
+        loop = asyncio.get_running_loop()
+        smp_port, coap_port = self._requested
+        smp, _ = await loop.create_datagram_endpoint(lambda: _SmpProtocol(self.device), local_addr=(self.host, smp_port))
+        cp, _ = await loop.create_datagram_endpoint(lambda: _CoapProtocol(self.device), local_addr=(self.host, coap_port))
+        self._transports = [smp, cp]
+        self.device.send = cp.sendto  # its notifications ('hist' observed)
+        if self.sample_s:
+            self._sampling = asyncio.create_task(self._sample_every(self.sample_s))
+        self.smp_port = smp.get_extra_info("sockname")[1]
+        self.coap_port = cp.get_extra_info("sockname")[1]
+        return self
+
+    async def _sample_every(self, period_s):
+        while True:
+            await asyncio.sleep(period_s)
+            if not self.device._rebooting():
+                self.device.sample()
+
+    async def stop(self):
+        if self._sampling is not None:
+            self._sampling.cancel()
+            self._sampling = None
+        for transport in self._transports:
+            transport.close()
+        self._transports = []
+
+    async def __aenter__(self):
+        return await self.start()
+
+    async def __aexit__(self, *exc):
+        await self.stop()
+
+
+async def announce(device_id, host, coap_port, txt=None):
+    """Announces the device over mDNS as ha-coap-<id>._ot._udp, like a real board's border
+    router does, with its TXT records and a TXT flag that lets discovery accept a loopback address."""
+    aiozc = await announce_all([(device_id, host, coap_port, txt)])
+    print(f"Announced over mDNS as ha-coap-{device_id}._ot._udp.local.")
+    return aiozc
+
+
+def service_info(device_id, host, coap_port, txt=None):
+    import socket
+
+    from zeroconf import ServiceInfo
+
+    family = socket.AF_INET6 if ":" in host else socket.AF_INET
+    return ServiceInfo("_ot._udp.local.", f"ha-coap-{device_id}._ot._udp.local.",
+                       addresses=[socket.inet_pton(family, host)], port=coap_port,
+                       properties={**(txt or {}), "sim": "1"}, server=f"ha-coap-{device_id}.local.")
+
+
+async def announce_all(devices):
+    """Announces several devices, given as (device_id, host, coap_port[, txt]). Returns the
+    AsyncZeroconf to close when done."""
+    from zeroconf.asyncio import AsyncZeroconf
+
+    aiozc = AsyncZeroconf()
+    registrations = []
+    for device_id, host, coap_port, *txt in devices:
+        info = service_info(device_id, host, coap_port, txt[0] if txt else None)
+        registrations.append(await aiozc.async_register_service(info))
+    await asyncio.gather(*registrations)  # registered together: each one probes for about a second
+    return aiozc
+
+
+def follow_srp(aiozc, server):
+    """Keeps a simulated device's mDNS announcement in step with its SRP registration, as the
+    border router does: gone when it unregisters (or is refused), back when it registers."""
+    def changed(device, advertised):
+        info = service_info(device.device_id, server.host, server.coap_port, device.txt())
+        if advertised:
+            asyncio.ensure_future(aiozc.async_update_service(info) if changed.shown
+                                  else aiozc.async_register_service(info))
+        elif changed.shown:
+            asyncio.ensure_future(aiozc.async_unregister_service(info))
+        changed.shown = advertised
+    changed.shown = server.device.srp_state == "registered"
+    server.device.on_srp_change = changed
+
+
+def fleet(count):
+    """A simulated fleet of 'count' devices, as (host, device): device i answers at 127.0.0.<i+1>.
+    Each has its own battery level, drain and readings, and every fifth runs an older image,
+    so the dashboard has something to show. The first is the usual 1a2b3c4d."""
+    current = mcuboot.build_image(b"simulated firmware" * 100, (1, 0, 0, 0))
+    older = mcuboot.build_image(b"simulated firmware, older" * 100, (0, 9, 0, 0))
+    result = []
+    for i in range(count):
+        device_id = "1a2b3c4d" if i == 0 else hashlib.sha256(f"simulated {i}".encode()).hexdigest()[:8]
+        device = SimulatedDevice.with_image(older if i % 5 == 3 else current, device_id=device_id, dynamic=True,
+                                            battery_start=87 if i == 0 else 95 - (i * 37) % 80,
+                                            battery_drain_per_hour=0.5 if i == 0 else 0.2 + (i % 4) * 0.25,
+                                            phase=i * 0.7)
+        if i == 2:
+            device.plug()  # one on a charger
+        result.append((f"127.0.0.{i + 1}", device))
+    return result
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Simulated ha-coap device (mcumgr over UDP and CoAP)")
+    parser.add_argument("--host", default="127.0.0.1")
+    parser.add_argument("--smp-port", type=int, default=1337)
+    parser.add_argument("--coap-port", type=int, default=5683)
+    parser.add_argument("--device-id", default="1a2b3c4d")
+    parser.add_argument("--border-router", choices=("api", "legacy"),
+                        help="also simulate a border router REST API, as a 2025+ (api) or older (legacy) one")
+    parser.add_argument("--border-router-port", type=int, default=8081)
+    parser.add_argument("--no-mdns", action="store_true", help="don't announce the device over mDNS")
+    parser.add_argument("--count", type=int, default=1,
+                        help="simulate this many devices, at 127.0.0.1, 127.0.0.2 and so on (up to 200)")
+    args = parser.parse_args()
+    if not 1 <= args.count <= 200:
+        parser.error("--count must be between 1 and 200")
+
+    async def run():
+        if args.count == 1:
+            devices = [(args.host, SimulatedDevice.with_image(
+                mcuboot.build_image(b"simulated firmware" * 100, (1, 0, 0, 0)), device_id=args.device_id, dynamic=True))]
+        else:
+            devices = fleet(args.count)
+        servers = []
+        try:
+            for host, device in devices:
+                try:
+                    servers.append(await SimulatorServer(device, host, args.smp_port, args.coap_port).start())
+                except OSError as exc:
+                    hint = (" On macOS, only 127.0.0.1 exists until you add the others, for example: "
+                            "for i in $(seq 2 24); do sudo ifconfig lo0 alias 127.0.0.$i up; done") \
+                        if host != "127.0.0.1" else ""
+                    raise SystemExit(f"Can't listen on {host}: {exc}.{hint}")
+            first = servers[0]
+            if len(servers) == 1:
+                print(f"Simulated device {first.device.device_id}: mcumgr on {first.host}:{first.smp_port}, "
+                      f"CoAP on {first.host}:{first.coap_port}. Ctrl+C to stop.")
+            else:
+                print(f"{len(servers)} simulated devices, at 127.0.0.1 to {servers[-1].host} "
+                      f"(mcumgr on port {first.smp_port}, CoAP on {first.coap_port}). Ctrl+C to stop.")
+            announcement = None
+            if not args.no_mdns:
+                if len(servers) == 1:
+                    announcement = await announce(first.device.device_id, first.host, first.coap_port,
+                                                  first.device.txt())
+                else:
+                    announcement = await announce_all([(s.device.device_id, s.host, s.coap_port, s.device.txt())
+                                                       for s in servers])
+                    print("Announced over mDNS as ha-coap-<ID>._ot._udp.local., for each device.")
+                for server in servers:
+                    follow_srp(announcement, server)
+            border = None
+            if args.border_router:
+                from .simborder import SimulatedBorderRouter, scenario
+                addresses = [s.host for s in servers] if len(servers) > 1 else [first.host, "fd11:22::2"]
+                net = scenario(addresses)
+                for child in net["children"]:
+                    for server in servers:
+                        if server.host in child["ipv6"]:
+                            server.device.rloc16, server.device.parent_rloc16 = child["rloc16"], child["parent"]
+                border = SimulatedBorderRouter(args.border_router, first.host, args.border_router_port, net).start()
+                print(f"Simulated border router ({args.border_router} API): {border.url}")
+            try:
+                await asyncio.Event().wait()
+            finally:
+                if border is not None:
+                    border.stop()
+                if announcement is not None:
+                    await announcement.async_close()
+        finally:
+            for server in servers:
+                await server.stop()
+
+    try:
+        asyncio.run(run())
+    except KeyboardInterrupt:
+        pass
+
+
+if __name__ == "__main__":
+    main()

@@ -1,3 +1,15 @@
 application/build*/
 external/
 scripts/flash_logs_*
+__pycache__/
+*.pyc
+firmware-updater/logs/
+firmware-updater/*.log
+
+# Private build settings and signing keys: never commit these
+application/local.conf
+application/keys/
+*.pem
+
+# Python virtual environments (firmware-updater setup)
+.venv/

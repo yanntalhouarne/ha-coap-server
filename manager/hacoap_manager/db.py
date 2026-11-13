@@ -1,0 +1,653 @@
+"""The app's database (SQLite, in the user's data folder): devices and their history, images,
+update history, build profiles and builds, and the network's floor plan."""
+
+import contextvars
+import json
+import sqlite3
+import threading
+import time
+
+# Who a request comes from ("this computer", "Chrome on Android", "the link “Kitchen”"), set by
+# the app for each request: what it does to a board is recorded with it (activity.actor)
+current_actor = contextvars.ContextVar("hacoap_actor", default="")
+
+SCHEMA = """
+CREATE TABLE IF NOT EXISTS devices (
+    device_id     TEXT PRIMARY KEY,
+    name          TEXT NOT NULL DEFAULT '',
+    address       TEXT NOT NULL DEFAULT '',   -- IPv6 address (over the air)
+    serial_port   TEXT NOT NULL DEFAULT '',   -- last USB serial port it was seen on
+    fw_version    TEXT NOT NULL DEFAULT '',   -- git commit, from 'info'
+    hw_version    TEXT NOT NULL DEFAULT '',
+    image_version TEXT NOT NULL DEFAULT '',   -- MCUboot version of the running image (mcumgr)
+    image_hash    TEXT NOT NULL DEFAULT '',   -- SHA-256 of the running image (mcumgr)
+    soil_moisture INTEGER,
+    battery       INTEGER,
+    air_humidity  INTEGER,
+    temperature   INTEGER,
+    last_seen     REAL,                       -- last answer to anything
+    last_error    TEXT NOT NULL DEFAULT '',
+    notes         TEXT NOT NULL DEFAULT '',
+    added         REAL NOT NULL,
+    tags          TEXT NOT NULL DEFAULT '',   -- comma-separated groups, such as "greenhouse"
+    location      TEXT NOT NULL DEFAULT '',
+    plant         TEXT NOT NULL DEFAULT '',
+    water_below   INTEGER,                    -- soil moisture % under which it needs water (NULL: the default)
+    photo         REAL,                       -- when its photo was added (photos/<device_id>), or NULL
+    boots         INTEGER,                    -- from 'diag' (newer firmware): boots since its flash was erased
+    reset_cause   TEXT NOT NULL DEFAULT '',   -- why it last restarted: power, pin, soft, watchdog, lockup, crash
+    fault         TEXT NOT NULL DEFAULT '',   -- after a crash: "<reason>@<address>"
+    uptime_s      INTEGER,                    -- at diag_time
+    role          TEXT NOT NULL DEFAULT '',   -- its Thread role: child, router, detached...
+    rloc16        TEXT NOT NULL DEFAULT '',   -- its short address, such as 0x5c01
+    parent_rloc16 TEXT NOT NULL DEFAULT '',
+    parent_rssi   INTEGER,                    -- dBm, the board's own measure of its parent
+    link_quality  INTEGER,                    -- 0 to 3, the same
+    soil_mv       INTEGER,                    -- the soil sensor's output, for calibrating
+    diag_time     REAL,                       -- when 'diag' last answered
+    no_diag_fw    TEXT NOT NULL DEFAULT '',   -- the firmware that didn't answer 'diag' (not asked again)
+    pump_s        INTEGER,                    -- the pump run time the board last reported (s)
+    srp_state     TEXT NOT NULL DEFAULT '',   -- its name's registration with the border router ('diag')
+    power         TEXT NOT NULL DEFAULT '',   -- battery, usb, charging or charged ('diag'), '' when not reported
+    tank_ml       INTEGER,                    -- its water tank's size (ml), or NULL: not tracked
+    tank_filled   REAL,                       -- when its tank was last refilled (NULL: since it was set)
+    pump_ml_s     REAL,                       -- how much its pump moves per second (ml), or NULL: the default
+    watering      TEXT NOT NULL DEFAULT '',   -- its automatic watering rule (JSON, autowater.py), '' when never set
+    hist_boot     INTEGER,                    -- 'hist': the boot its samples were read in...
+    hist_next     INTEGER,                    -- ...and the number of the first one not read yet
+    no_hist_fw    TEXT NOT NULL DEFAULT '',   -- the firmware that didn't answer 'hist' (not asked again)
+    button_s      INTEGER,                    -- the pump's run time with its button since boot, as last reported ('diag')
+    last_sample   REAL,                       -- when its newest sample was taken ('hist'), NULL: not known
+    pump_ms_seen  INTEGER,                    -- its pump's run time since boot ('diag' pump_ms) its activity accounts for...
+    pump_ms_time  REAL                        -- ...with its pump runs noted until then
+);
+CREATE TABLE IF NOT EXISTS images (
+    hash     TEXT PRIMARY KEY,
+    version  TEXT NOT NULL,
+    filename TEXT NOT NULL,
+    size     INTEGER NOT NULL,
+    notes    TEXT NOT NULL DEFAULT '',
+    added    REAL NOT NULL,
+    git_commit TEXT NOT NULL DEFAULT '',      -- the firmware's git commit, when known
+    release  INTEGER NOT NULL DEFAULT 0       -- 1 for the image the fleet should run
+);
+CREATE TABLE IF NOT EXISTS updates (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    job_id        TEXT NOT NULL,
+    device_id     TEXT NOT NULL,
+    transport     TEXT NOT NULL,
+    image_hash    TEXT NOT NULL,
+    image_version TEXT NOT NULL,
+    started       REAL NOT NULL,
+    finished      REAL,
+    result        TEXT NOT NULL,              -- updated, already-current, failed, cancelled, skipped
+    message       TEXT NOT NULL DEFAULT ''
+);
+CREATE TABLE IF NOT EXISTS profiles (
+    name     TEXT PRIMARY KEY,
+    variant  TEXT NOT NULL,
+    settings TEXT NOT NULL,                    -- JSON: {Kconfig symbol: value}, only the changed ones
+    notes    TEXT NOT NULL DEFAULT '',
+    updated  REAL NOT NULL
+);
+CREATE TABLE IF NOT EXISTS network_events (
+    id        INTEGER PRIMARY KEY AUTOINCREMENT,
+    time      REAL NOT NULL,
+    device_id TEXT NOT NULL,
+    message   TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS readings (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    device_id     TEXT NOT NULL,
+    time          REAL NOT NULL,
+    battery       INTEGER,
+    soil_moisture INTEGER,
+    air_humidity  INTEGER,
+    temperature   INTEGER,
+    power         TEXT NOT NULL DEFAULT ''    -- the device's power then (as devices.power)
+);
+CREATE INDEX IF NOT EXISTS readings_device_time ON readings (device_id, time);
+CREATE TABLE IF NOT EXISTS link_samples (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    device_id    TEXT NOT NULL,
+    time         REAL NOT NULL,
+    parent       TEXT NOT NULL,                -- the parent's RLOC16, such as 0x5000
+    link_margin  INTEGER,                      -- dB, when the border router reports it
+    average_rssi INTEGER,                      -- dBm
+    link_quality INTEGER                       -- 0 to 3
+);
+CREATE INDEX IF NOT EXISTS link_samples_device_time ON link_samples (device_id, time);
+CREATE TABLE IF NOT EXISTS floorplan_positions (
+    node_key TEXT PRIMARY KEY,                 -- a device ID, or a router's extended address
+    x        REAL NOT NULL,                    -- 0 to 1, across the floor plan picture
+    y        REAL NOT NULL
+);
+CREATE TABLE IF NOT EXISTS alerts (
+    id        INTEGER PRIMARY KEY AUTOINCREMENT,
+    key       TEXT NOT NULL,                   -- what it's about, such as "battery:1a2b3c4d"
+    kind      TEXT NOT NULL,                   -- offline, battery, dry, update
+    device_id TEXT NOT NULL DEFAULT '',
+    message   TEXT NOT NULL,
+    raised    REAL NOT NULL,
+    cleared   REAL,                            -- when it went away (or was dismissed)
+    dismissed INTEGER NOT NULL DEFAULT 0,
+    ended     REAL                             -- a dismissed one: when its condition ended (until then, it's not raised again)
+);
+CREATE INDEX IF NOT EXISTS alerts_open ON alerts (cleared);
+CREATE TABLE IF NOT EXISTS network_snapshots (
+    id       INTEGER PRIMARY KEY AUTOINCREMENT,
+    time     REAL NOT NULL,
+    nodes    INTEGER NOT NULL,
+    boards   INTEGER NOT NULL,
+    topology BLOB NOT NULL                     -- zlib-compressed JSON
+);
+CREATE TABLE IF NOT EXISTS activity (
+    id        INTEGER PRIMARY KEY AUTOINCREMENT,
+    time      REAL NOT NULL,
+    device_id TEXT NOT NULL,
+    kind      TEXT NOT NULL,                   -- pump (started from the app), restart, settings, network
+    message   TEXT NOT NULL,
+    actor     TEXT NOT NULL DEFAULT ''         -- who did it: a device, a link, automatic watering ('': the board)
+);
+CREATE INDEX IF NOT EXISTS activity_device_time ON activity (device_id, time);
+CREATE TABLE IF NOT EXISTS care_tasks (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    device_id  TEXT NOT NULL,                  -- the plant's board
+    what       TEXT NOT NULL,                  -- such as "Fertilize"
+    every_days INTEGER NOT NULL,               -- it comes back this many days after it's done
+    due        REAL NOT NULL,                  -- when it's next to do
+    last_done  REAL,
+    created    REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS care_tasks_device ON care_tasks (device_id);
+CREATE TABLE IF NOT EXISTS builds (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    profile    TEXT NOT NULL,
+    variant    TEXT NOT NULL,
+    settings   TEXT NOT NULL,                  -- JSON, as built
+    started    REAL NOT NULL,
+    finished   REAL,
+    result     TEXT NOT NULL,                  -- running, done, failed, cancelled
+    message    TEXT NOT NULL DEFAULT '',
+    image_hash TEXT NOT NULL DEFAULT '',
+    signing    TEXT NOT NULL DEFAULT '',       -- private, development, unknown
+    log        TEXT NOT NULL DEFAULT ''
+);
+"""
+
+DEVICE_FIELDS = ("name", "address", "serial_port", "fw_version", "hw_version", "image_version", "image_hash",
+                 "soil_moisture", "battery", "air_humidity", "temperature", "last_seen", "last_error", "notes",
+                 "tags", "location", "plant", "water_below", "photo", "boots", "reset_cause", "fault", "uptime_s",
+                 "role", "rloc16", "parent_rloc16", "parent_rssi", "link_quality", "soil_mv", "diag_time",
+                 "no_diag_fw", "pump_s", "srp_state", "power", "tank_ml", "tank_filled", "pump_ml_s", "watering",
+                 "hist_boot", "hist_next", "no_hist_fw", "button_s", "last_sample", "pump_ms_seen", "pump_ms_time")
+
+# Columns added after the first version: (table, column, definition), added to older databases
+ADDED_COLUMNS = [
+    ("devices", "tags", "TEXT NOT NULL DEFAULT ''"),
+    ("devices", "location", "TEXT NOT NULL DEFAULT ''"),
+    ("devices", "plant", "TEXT NOT NULL DEFAULT ''"),
+    ("images", "git_commit", "TEXT NOT NULL DEFAULT ''"),
+    ("images", "release", "INTEGER NOT NULL DEFAULT 0"),
+    ("devices", "water_below", "INTEGER"),
+    ("devices", "photo", "REAL"),
+    ("devices", "boots", "INTEGER"),
+    ("devices", "reset_cause", "TEXT NOT NULL DEFAULT ''"),
+    ("devices", "fault", "TEXT NOT NULL DEFAULT ''"),
+    ("devices", "uptime_s", "INTEGER"),
+    ("devices", "role", "TEXT NOT NULL DEFAULT ''"),
+    ("devices", "rloc16", "TEXT NOT NULL DEFAULT ''"),
+    ("devices", "parent_rloc16", "TEXT NOT NULL DEFAULT ''"),
+    ("devices", "parent_rssi", "INTEGER"),
+    ("devices", "link_quality", "INTEGER"),
+    ("devices", "soil_mv", "INTEGER"),
+    ("devices", "diag_time", "REAL"),
+    ("devices", "no_diag_fw", "TEXT NOT NULL DEFAULT ''"),
+    ("devices", "pump_s", "INTEGER"),
+    ("devices", "srp_state", "TEXT NOT NULL DEFAULT ''"),
+    ("devices", "power", "TEXT NOT NULL DEFAULT ''"),
+    ("readings", "power", "TEXT NOT NULL DEFAULT ''"),
+    ("alerts", "ended", "REAL"),
+    ("devices", "tank_ml", "INTEGER"),
+    ("devices", "tank_filled", "REAL"),
+    ("devices", "pump_ml_s", "REAL"),
+    ("devices", "watering", "TEXT NOT NULL DEFAULT ''"),
+    ("devices", "hist_boot", "INTEGER"),
+    ("devices", "hist_next", "INTEGER"),
+    ("devices", "no_hist_fw", "TEXT NOT NULL DEFAULT ''"),
+    ("devices", "button_s", "INTEGER"),
+    ("activity", "actor", "TEXT NOT NULL DEFAULT ''"),
+    ("devices", "last_sample", "REAL"),
+    ("devices", "pump_ms_seen", "INTEGER"),
+    ("devices", "pump_ms_time", "REAL"),
+]
+
+
+class Database:
+    def __init__(self, path):
+        self._lock = threading.Lock()
+        self._conn = sqlite3.connect(str(path), check_same_thread=False)
+        self._conn.row_factory = sqlite3.Row
+        with self._lock:
+            self._upgrade()
+
+    def _upgrade(self):
+        """Creates missing tables, and adds the columns an older database lacks."""
+        for table, column, definition in ADDED_COLUMNS:
+            exists = self._conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", (table,)).fetchone()
+            if exists and column not in {row[1] for row in self._conn.execute(f"PRAGMA table_info({table})")}:
+                self._conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+                if (table, column) == ("alerts", "ended"):  # the ones dismissed before: long over
+                    self._conn.execute("UPDATE alerts SET ended = cleared WHERE dismissed = 1")
+        self._conn.executescript(SCHEMA)
+        self._conn.commit()
+
+    def close(self):
+        with self._lock:
+            self._conn.close()
+
+    def backup_to(self, path):
+        """A consistent copy of the database, in a new file."""
+        with self._lock:
+            target = sqlite3.connect(str(path))
+            self._conn.backup(target)
+            target.close()
+
+    def restore_from(self, path):
+        """Replaces this database's contents with another database file's."""
+        with self._lock:
+            source = sqlite3.connect(str(path))
+            source.backup(self._conn)
+            source.close()
+            self._upgrade()  # a backup from an older version
+
+    def _query(self, sql, params=()):
+        with self._lock:
+            return [dict(row) for row in self._conn.execute(sql, params).fetchall()]
+
+    def _execute(self, sql, params=()):
+        with self._lock:
+            cursor = self._conn.execute(sql, params)
+            self._conn.commit()
+            return cursor
+
+    # ------------------------------------------------------------ devices
+
+    def devices(self):
+        return self._query("SELECT * FROM devices ORDER BY name, device_id")
+
+    def device(self, device_id):
+        rows = self._query("SELECT * FROM devices WHERE device_id = ?", (device_id,))
+        return rows[0] if rows else None
+
+    def device_by_address(self, address):
+        rows = self._query("SELECT * FROM devices WHERE address = ?", (address,))
+        return rows[0] if rows else None
+
+    def upsert_device(self, device_id, **fields):
+        """Adds the device if it's new, then sets the given fields. Returns the device."""
+        unknown = set(fields) - set(DEVICE_FIELDS)
+        if unknown:
+            raise ValueError(f"unknown device fields: {sorted(unknown)}")
+        with self._lock:
+            self._conn.execute("INSERT OR IGNORE INTO devices (device_id, added) VALUES (?, ?)",
+                               (device_id, time.time()))
+            if fields:
+                assignments = ", ".join(f"{name} = ?" for name in fields)
+                self._conn.execute(f"UPDATE devices SET {assignments} WHERE device_id = ?",
+                                   (*fields.values(), device_id))
+            self._conn.commit()
+        return self.device(device_id)
+
+    def delete_device(self, device_id):
+        return self._execute("DELETE FROM devices WHERE device_id = ?", (device_id,)).rowcount > 0
+
+    def purge_device(self, device_id):
+        """Deletes a device and everything recorded about it."""
+        with self._lock:
+            for table in ("readings", "link_samples", "activity", "alerts", "updates", "network_events", "care_tasks",
+                          "devices"):
+                self._conn.execute(f"DELETE FROM {table} WHERE device_id = ?", (device_id,))
+            self._conn.execute("DELETE FROM floorplan_positions WHERE node_key = ?", (device_id,))
+            self._conn.commit()
+
+    # ------------------------------------------------------------ images
+
+    def images(self):
+        return self._query("SELECT * FROM images ORDER BY added DESC")
+
+    def image(self, image_hash):
+        rows = self._query("SELECT * FROM images WHERE hash = ?", (image_hash,))
+        return rows[0] if rows else None
+
+    def add_image(self, image_hash, version, filename, size, notes="", git_commit=""):
+        """Adds an image, or updates its notes (and commit, if given) if it's already there."""
+        existing = self.image(image_hash)
+        if existing:
+            self._execute("UPDATE images SET notes = ?, git_commit = ? WHERE hash = ?",
+                          (notes, git_commit or existing["git_commit"], image_hash))
+        else:
+            self._execute("INSERT INTO images (hash, version, filename, size, notes, added, git_commit) "
+                          "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                          (image_hash, version, filename, size, notes, time.time(), git_commit))
+        return self.image(image_hash)
+
+    def release_image(self):
+        rows = self._query("SELECT * FROM images WHERE release = 1")
+        return rows[0] if rows else None
+
+    def set_release(self, image_hash):
+        """Marks the image the fleet should run (None: no image)."""
+        with self._lock:
+            self._conn.execute("UPDATE images SET release = 0")
+            if image_hash:
+                self._conn.execute("UPDATE images SET release = 1 WHERE hash = ?", (image_hash,))
+            self._conn.commit()
+
+    def delete_image(self, image_hash):
+        return self._execute("DELETE FROM images WHERE hash = ?", (image_hash,)).rowcount > 0
+
+    # ------------------------------------------------------------ update history
+
+    def add_update(self, job_id, device_id, transport, image_hash, image_version, started, finished, result, message):
+        self._execute("INSERT INTO updates (job_id, device_id, transport, image_hash, image_version, started, "
+                      "finished, result, message) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                      (job_id, device_id, transport, image_hash, image_version, started, finished, result, message))
+
+    def updates(self, device_id=None, limit=200):
+        if device_id is None:
+            return self._query("SELECT * FROM updates ORDER BY id DESC LIMIT ?", (limit,))
+        return self._query("SELECT * FROM updates WHERE device_id = ? ORDER BY id DESC LIMIT ?", (device_id, limit))
+
+    # ------------------------------------------------------------ build profiles
+
+    @staticmethod
+    def _profile(row):
+        return {**row, "settings": json.loads(row["settings"])}
+
+    def profiles(self):
+        return [self._profile(r) for r in self._query("SELECT * FROM profiles ORDER BY name")]
+
+    def profile(self, name):
+        rows = self._query("SELECT * FROM profiles WHERE name = ?", (name,))
+        return self._profile(rows[0]) if rows else None
+
+    def save_profile(self, name, variant, settings, notes=""):
+        self._execute("INSERT OR REPLACE INTO profiles (name, variant, settings, notes, updated) VALUES (?, ?, ?, ?, ?)",
+                      (name, variant, json.dumps(settings), notes, time.time()))
+        return self.profile(name)
+
+    def delete_profile(self, name):
+        return self._execute("DELETE FROM profiles WHERE name = ?", (name,)).rowcount > 0
+
+    # ------------------------------------------------------------ builds
+
+    BUILD_COLUMNS = "id, profile, variant, settings, started, finished, result, message, image_hash, signing"
+
+    @staticmethod
+    def _build(row):
+        return {**row, "settings": json.loads(row["settings"])}
+
+    def add_build(self, profile, variant, settings):
+        cursor = self._execute("INSERT INTO builds (profile, variant, settings, started, result) VALUES (?, ?, ?, ?, ?)",
+                               (profile, variant, json.dumps(settings), time.time(), "running"))
+        return cursor.lastrowid
+
+    def build(self, build_id, with_log=False):
+        columns = self.BUILD_COLUMNS + (", log" if with_log else "")
+        rows = self._query(f"SELECT {columns} FROM builds WHERE id = ?", (build_id,))
+        return self._build(rows[0]) if rows else None
+
+    def update_build(self, build_id, **fields):
+        assignments = ", ".join(f"{name} = ?" for name in fields)
+        self._execute(f"UPDATE builds SET {assignments} WHERE id = ?", (*fields.values(), build_id))
+        return self.build(build_id)
+
+    def builds(self, limit=100):
+        return [self._build(r) for r in self._query(f"SELECT {self.BUILD_COLUMNS} FROM builds ORDER BY id DESC LIMIT ?",
+                                                    (limit,))]
+
+    def interrupted_builds(self):
+        """Marks builds left 'running' by an app that was closed mid-build."""
+        self._execute("UPDATE builds SET result = 'failed', message = 'The app was closed during the build' "
+                      "WHERE result = 'running'")
+
+    # ------------------------------------------------------------ network events
+
+    def add_network_event(self, device_id, message):
+        self._execute("INSERT INTO network_events (time, device_id, message) VALUES (?, ?, ?)",
+                      (time.time(), device_id, message))
+
+    def network_events(self, limit=50):
+        return self._query("SELECT * FROM network_events ORDER BY id DESC LIMIT ?", (limit,))
+
+    # ------------------------------------------------------------ history: readings and links
+
+    def add_reading(self, device_id, battery, soil_moisture, air_humidity, temperature, when=None, power=""):
+        self._execute("INSERT INTO readings (device_id, time, battery, soil_moisture, air_humidity, temperature, power) "
+                      "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                      (device_id, when or time.time(), battery, soil_moisture, air_humidity, temperature, power or ""))
+
+    def all_readings(self, since=0, device_id=None):
+        """Readings of every device (or one), oldest first, with the device's name."""
+        where, params = "r.time >= ?", [since]
+        if device_id:
+            where += " AND r.device_id = ?"
+            params.append(device_id)
+        return self._query("SELECT r.device_id, d.name, r.time, r.battery, r.soil_moisture, r.air_humidity, "
+                           "r.temperature, r.power FROM readings r LEFT JOIN devices d ON d.device_id = r.device_id "
+                           f"WHERE {where} ORDER BY r.time, r.device_id", params)
+
+    def readings(self, device_id, since=0):
+        return self._query("SELECT time, battery, soil_moisture, air_humidity, temperature, power FROM readings "
+                           "WHERE device_id = ? AND time >= ? ORDER BY time", (device_id, since))
+
+    def add_link_sample(self, device_id, parent, link_margin=None, average_rssi=None, link_quality=None, when=None):
+        self._execute("INSERT INTO link_samples (device_id, time, parent, link_margin, average_rssi, link_quality) "
+                      "VALUES (?, ?, ?, ?, ?, ?)",
+                      (device_id, when or time.time(), parent, link_margin, average_rssi, link_quality))
+
+    def link_samples(self, device_id, since=0):
+        return self._query("SELECT time, parent, link_margin, average_rssi, link_quality FROM link_samples "
+                           "WHERE device_id = ? AND time >= ? ORDER BY time", (device_id, since))
+
+    def all_link_samples(self, since=0):
+        return self._query("SELECT device_id, time, link_margin, link_quality FROM link_samples WHERE time >= ? ORDER BY time",
+                           (since,))
+
+    def network_events_for(self, device_id, limit=50):
+        return self._query("SELECT * FROM network_events WHERE device_id = ? ORDER BY id DESC LIMIT ?",
+                           (device_id, limit))
+
+    def last_reading_time(self, device_id):
+        rows = self._query("SELECT MAX(time) AS time FROM readings WHERE device_id = ?", (device_id,))
+        return rows[0]["time"] if rows else None
+
+    def add_samples(self, rows):
+        """Adds a board's samples at once: [(device_id, time, battery, soil, air, temperature, power)]."""
+        with self._lock:
+            self._conn.executemany("INSERT INTO readings (device_id, time, battery, soil_moisture, air_humidity, "
+                                   "temperature, power) VALUES (?, ?, ?, ?, ?, ?, ?)", rows)
+            self._conn.commit()
+
+    def add_readings(self, rows):
+        """Adds many readings at once: [(device_id, time, battery, soil, air, temperature)]."""
+        with self._lock:
+            self._conn.executemany("INSERT INTO readings (device_id, time, battery, soil_moisture, air_humidity, "
+                                   "temperature) VALUES (?, ?, ?, ?, ?, ?)", rows)
+            self._conn.commit()
+
+    # ------------------------------------------------------------ activity: what the app did to a device
+
+    def add_activity(self, device_id, kind, message, when=None, actor=None):
+        """Notes what happened to a board. 'actor': who did it ('' for the board itself); None:
+        whoever the request being answered comes from (current_actor)."""
+        self._execute("INSERT INTO activity (time, device_id, kind, message, actor) VALUES (?, ?, ?, ?, ?)",
+                      (when or time.time(), device_id, kind, message, current_actor.get() if actor is None else actor))
+
+    def activity(self, device_id, since=0):
+        return self._query("SELECT time, kind, message, actor FROM activity WHERE device_id = ? AND time >= ? ORDER BY time",
+                           (device_id, since))
+
+    def activity_kind_since(self, device_id, kind, since):
+        """A device's activity of one kind since a time, oldest first."""
+        return self._query("SELECT time, kind, message, actor FROM activity WHERE device_id = ? AND kind = ? AND time >= ? "
+                           "ORDER BY time", (device_id, kind, since))
+
+    def device_activity(self, device_id, limit):
+        """A device's newest activity, newest first."""
+        return self._query("SELECT time, kind, message, actor FROM activity WHERE device_id = ? ORDER BY time DESC LIMIT ?",
+                           (device_id, limit))
+
+    def device_alerts(self, device_id, limit):
+        return self._query("SELECT * FROM alerts WHERE device_id = ? ORDER BY id DESC LIMIT ?", (device_id, limit))
+
+    def recent_activity(self, device_id, kind, limit):
+        """A device's newest activity of one kind, newest first."""
+        return self._query("SELECT time, kind, message FROM activity WHERE device_id = ? AND kind = ? "
+                           "ORDER BY time DESC LIMIT ?", (device_id, kind, limit))
+
+    def activity_kind_between(self, kind, start, end):
+        return self._query("SELECT * FROM activity WHERE kind = ? AND time >= ? AND time < ? ORDER BY time",
+                           (kind, start, end))
+
+    # ------------------------------------------------------------ the activity feed
+
+    FEED_TABLES = {("updates", "finished"), ("alerts", "raised"), ("network_events", "time"), ("activity", "time"),
+                   ("builds", "finished")}
+
+    def recent(self, table, column, columns, before, limit):
+        """The newest rows of a table before a time, with that time as 'time' (feed tables only)."""
+        if (table, column) not in self.FEED_TABLES or not all(c.strip().isidentifier() for c in columns.split(",")):
+            raise ValueError(f"not a feed table: {table}.{column}")
+        return self._query(f"SELECT {column} AS time, {columns} FROM {table} WHERE {column} IS NOT NULL AND {column} < ? "
+                           f"ORDER BY {column} DESC LIMIT ?", (before if before != float("inf") else 1e18, limit))
+
+    # ------------------------------------------------------------ a period, for the weekly summary
+
+    def alerts_between(self, start, end):
+        return self._query("SELECT * FROM alerts WHERE raised >= ? AND raised < ? ORDER BY raised", (start, end))
+
+    def alerts_overlapping(self, kind, start, end):
+        """Alerts of one kind that were open at some point between two times (a dismissed one
+        lasted until its condition ended)."""
+        return self._query("SELECT * FROM alerts WHERE kind = ? AND raised < ? AND (cleared IS NULL OR cleared > ? "
+                           "OR (dismissed = 1 AND (ended IS NULL OR ended > ?))) ORDER BY raised", (kind, end, start, start))
+
+    def network_events_between(self, start, end):
+        return self._query("SELECT * FROM network_events WHERE time >= ? AND time < ? ORDER BY time", (start, end))
+
+    def updates_between(self, start, end):
+        return self._query("SELECT * FROM updates WHERE started >= ? AND started < ? ORDER BY started", (start, end))
+
+    def activity_between(self, start, end):
+        return self._query("SELECT * FROM activity WHERE time >= ? AND time < ? ORDER BY time", (start, end))
+
+    def readings_between(self, device_id, start, end):
+        return self._query("SELECT time, battery, soil_moisture, air_humidity, temperature FROM readings "
+                           "WHERE device_id = ? AND time >= ? AND time < ? ORDER BY time", (device_id, start, end))
+
+    # ------------------------------------------------------------ keeping the data in bounds
+
+    def prune(self, before):
+        """Deletes readings, link samples, activity and network events older than 'before'.
+        Returns how many rows went."""
+        removed = 0
+        with self._lock:
+            for table in ("readings", "link_samples", "activity", "network_events"):
+                removed += self._conn.execute(f"DELETE FROM {table} WHERE time < ?", (before,)).rowcount
+            self._conn.commit()
+        return removed
+
+    def keep_network_snapshots(self, keep):
+        return self._execute("DELETE FROM network_snapshots WHERE id NOT IN "
+                             "(SELECT id FROM network_snapshots ORDER BY time DESC LIMIT ?)", (keep,)).rowcount
+
+    def compact(self):
+        """Gives the space of deleted rows back to the disk."""
+        with self._lock:
+            self._conn.execute("VACUUM")
+
+    def counts(self):
+        """How many rows the big tables hold."""
+        with self._lock:
+            return {table: self._conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+                    for table in ("readings", "link_samples", "network_snapshots", "activity")}
+
+    # ------------------------------------------------------------ care tasks: fertilize, repot...
+
+    def care_tasks(self, device_id=None):
+        """A plant's care tasks (or every plant's), the soonest due first."""
+        if device_id is None:
+            return self._query("SELECT * FROM care_tasks ORDER BY due, id")
+        return self._query("SELECT * FROM care_tasks WHERE device_id = ? ORDER BY due, id", (device_id,))
+
+    def care_task(self, task_id):
+        rows = self._query("SELECT * FROM care_tasks WHERE id = ?", (task_id,))
+        return rows[0] if rows else None
+
+    def add_care_task(self, device_id, what, every_days, due):
+        cursor = self._execute("INSERT INTO care_tasks (device_id, what, every_days, due, created) VALUES (?, ?, ?, ?, ?)",
+                               (device_id, what, every_days, due, time.time()))
+        return self.care_task(cursor.lastrowid)
+
+    def update_care_task(self, task_id, **fields):
+        assignments = ", ".join(f"{name} = ?" for name in fields if name in ("what", "every_days", "due", "last_done"))
+        self._execute(f"UPDATE care_tasks SET {assignments} WHERE id = ?", (*fields.values(), task_id))
+        return self.care_task(task_id)
+
+    def delete_care_task(self, task_id):
+        return self._execute("DELETE FROM care_tasks WHERE id = ?", (task_id,)).rowcount > 0
+
+    # ------------------------------------------------------------ floor plan
+
+    def floorplan_positions(self):
+        return {r["node_key"]: {"x": r["x"], "y": r["y"]} for r in self._query("SELECT * FROM floorplan_positions")}
+
+    def set_floorplan_position(self, node_key, x, y):
+        if x is None:
+            self._execute("DELETE FROM floorplan_positions WHERE node_key = ?", (node_key,))
+        else:
+            self._execute("INSERT OR REPLACE INTO floorplan_positions (node_key, x, y) VALUES (?, ?, ?)",
+                          (node_key, x, y))
+
+    # ------------------------------------------------------------ alerts
+
+    def open_alerts(self):
+        return self._query("SELECT * FROM alerts WHERE cleared IS NULL ORDER BY raised DESC")
+
+    def recent_alerts(self, limit=50):
+        return self._query("SELECT * FROM alerts ORDER BY id DESC LIMIT ?", (limit,))
+
+    def add_alert(self, key, kind, device_id, message):
+        cursor = self._execute("INSERT INTO alerts (key, kind, device_id, message, raised) VALUES (?, ?, ?, ?, ?)",
+                               (key, kind, device_id, message, time.time()))
+        return self._query("SELECT * FROM alerts WHERE id = ?", (cursor.lastrowid,))[0]
+
+    def clear_alert(self, alert_id, dismissed=False):
+        return self._execute("UPDATE alerts SET cleared = ?, dismissed = ? WHERE id = ? AND cleared IS NULL",
+                             (time.time(), int(dismissed), alert_id)).rowcount > 0
+
+    def quiet_alert_keys(self):
+        """What was dismissed while its condition lasts: not raised again until it ends."""
+        return {row["key"] for row in self._query("SELECT DISTINCT key FROM alerts WHERE dismissed = 1 AND ended IS NULL")}
+
+    def end_quiet_alert(self, key):
+        self._execute("UPDATE alerts SET ended = ? WHERE key = ? AND dismissed = 1 AND ended IS NULL", (time.time(), key))
+
+    # ------------------------------------------------------------ network history
+
+    def add_network_snapshot(self, when, nodes, boards, blob, keep=1000):
+        with self._lock:
+            self._conn.execute("INSERT INTO network_snapshots (time, nodes, boards, topology) VALUES (?, ?, ?, ?)",
+                               (when, nodes, boards, blob))
+            self._conn.execute("DELETE FROM network_snapshots WHERE id NOT IN "
+                               "(SELECT id FROM network_snapshots ORDER BY time DESC LIMIT ?)", (keep,))
+            self._conn.commit()
+
+    def network_snapshots(self):
+        return self._query("SELECT id, time, nodes, boards FROM network_snapshots ORDER BY time")
+
+    def network_snapshot(self, snapshot_id):
+        rows = self._query("SELECT * FROM network_snapshots WHERE id = ?", (snapshot_id,))
+        return rows[0] if rows else None
