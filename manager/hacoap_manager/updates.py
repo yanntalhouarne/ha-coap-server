@@ -9,7 +9,7 @@ Each device goes through:
   5. confirm the new image, so it stays
 
 A device whose battery was last read under the limit (settings.min_battery_for_update) is
-skipped over the air: a flat battery mid-update leaves it running the old image, but costs
+skipped over the air, unless it's on USB power: a flat battery mid-update leaves it running the old image, but costs
 a battery change. An update job stops at the first failure unless asked to go on, so a bad
 image reaches one device, not the whole fleet. A staged job also pauses after the first device, until
 asked to continue. Cancelling skips the devices not started yet; the one in progress
@@ -22,6 +22,7 @@ import time
 import uuid
 from dataclasses import asdict, dataclass, field, fields
 
+from .fleet import ON_USB
 from .mcumgr import DeviceLink, McumgrError
 from .naming import display_name
 
@@ -184,6 +185,8 @@ class UpdateManager:
         if job.ignore_battery or not limit or target.transport != "udp" or not target.device_id:
             return None  # over USB, the board runs from USB power
         device = self.db.device(target.device_id)
+        if device and device["power"] in ON_USB:
+            return None  # plugged in: it can't run flat mid-update
         battery = device["battery"] if device else None
         return battery if battery is not None and battery < limit else None
 

@@ -1,6 +1,6 @@
 // The Updates tab: starting updates, their progress and history, and who signed an image.
 
-import { ago, api, busy, h, notify, pct, shortHash, state, svg, when } from './core.js';
+import { ago, api, busy, h, notify, onUsb, pct, powerIcon, powerText, shortHash, state, svg, when } from './core.js';
 import { deviceName, loadDevices, renderDevices } from './devices.js';
 
 // ------------------------------------------------------------------ updates
@@ -21,6 +21,11 @@ export async function renderUpdateForm() {
 // The boards to update, ticked here or on the Devices tab (the same selection)
 const byName = (a, b) => deviceName(a).localeCompare(deviceName(b));
 
+// Under the limit for an update over the air, and on its battery (on USB power, it can't run flat)
+function lowBattery(d, limit) {
+  return Boolean(limit) && !onUsb(d) && d.battery !== null && d.battery !== undefined && d.battery < limit;
+}
+
 export function renderUpdateDevices() {
   const list = document.getElementById('update-devices');
   const imageHash = document.getElementById('update-image').value;
@@ -29,7 +34,7 @@ export function renderUpdateDevices() {
   list.replaceChildren(...(devices.length ? devices.map((d) => {
     const id = `update-pick-${d.device_id}`;
     const runsIt = imageHash && d.image_hash === imageHash;
-    const low = limit && d.battery !== null && d.battery !== undefined && d.battery < limit;
+    const low = lowBattery(d, limit);
     return h('div', { class: 'form-check update-device' },
       h('input', { class: 'form-check-input', type: 'checkbox', id, checked: state.selected.has(d.device_id),
         onchange: (e) => {
@@ -41,6 +46,7 @@ export function renderUpdateDevices() {
         h('b', {}, deviceName(d)),
         h('span', { class: 'text-body-secondary' }, ` · ${d.fw_version || '?'}${d.image_hash ? ` · ${shortHash(d.image_hash)}` : ''}`),
         h('span', { class: low ? 'text-warning' : 'text-body-secondary' }, ` · ${pct(d.battery)}`),
+        onUsb(d) ? h('span', { class: 'update-power text-body-secondary' }, ' ', powerIcon(d), ` ${powerText(d)}`) : null,
         runsIt ? h('span', { class: 'badge text-bg-success ms-1' }, 'runs this image') : null));
   }) : [h('span', { class: 'small text-body-secondary' }, 'No boards yet: find them on the Devices tab.')]));
   renderUpdateSummary();
@@ -338,7 +344,7 @@ export function renderUpdateChecks() {
   signer.textContent = image && image.signer ? `${signerIcon[image.signer] || ''} ${image.detail}` : '';
   const limit = state.status ? state.status.settings.min_battery_for_update : 20;
   const low = [...state.selected].map((id) => state.devices.get(id))
-    .filter((d) => d && limit && d.battery !== null && d.battery !== undefined && d.battery < limit);
+    .filter((d) => d && lowBattery(d, limit));
   const warning = document.getElementById('update-low-batteries');
   warning.classList.toggle('d-none', !low.length);
   warning.textContent = low.length ? `Battery under ${limit} %: ${low.map((d) => `${deviceName(d)} (${d.battery} %)`).join(', ')}. ` +

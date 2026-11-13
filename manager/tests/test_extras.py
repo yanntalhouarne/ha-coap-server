@@ -144,6 +144,11 @@ async def test_low_battery_devices_are_skipped(client, services, start_sim):
     assert job.state == "done"  # skipped isn't a failure
     job = await update(ignore_battery=True)
     assert job.targets[0].status == "updated"
+    # Plugged in: it can't run flat, it's updated
+    services.db.upsert_device("1a2b3c4d", power="charging")
+    job = await update()
+    assert job.targets[0].status in ("updated", "already-current"), job.targets[0].message
+    assert "battery" not in job.targets[0].message
 
 
 # ---------------------------------------------------------------- water, alerts
