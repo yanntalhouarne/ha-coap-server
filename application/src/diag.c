@@ -165,7 +165,7 @@ void diag_link_read(otInstance *instance, struct diag_link *link)
 }
 
 size_t diag_format(char *payload, size_t size, const struct diag_link *link, const char *srp, int32_t soil_mv,
-		   const char *power, uint32_t button_s, uint32_t pump_ms)
+		   const char *power, uint32_t button_s, uint32_t pump_ms, uint8_t pump_s)
 {
 	size_t length = 0U;
 	int written;
@@ -203,6 +203,7 @@ size_t diag_format(char *payload, size_t size, const struct diag_link *link, con
 	APPEND(",power=%s", power);
 	APPEND(",button_s=%u", (unsigned int)button_s);
 	APPEND(",pump_ms=%u", (unsigned int)pump_ms);
+	APPEND(",pump_s=%u", (unsigned int)pump_s);
 #ifdef CONFIG_HACOAP_PUSH
 	/* How many can observe 'hist' at once: Home Assistant only registers beside the fleet manager
 	 * when there's room for both (firmware without this field keeps one) */

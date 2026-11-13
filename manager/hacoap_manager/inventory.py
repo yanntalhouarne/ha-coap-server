@@ -74,6 +74,7 @@ class Inventory:
         self.on_restart = None  # called with (device, cause, fault) after a restart that's a problem
         self.on_pushed = None   # called with the device after it pushed new samples
         self.observer = None    # observes the boards' 'hist' (coap.Observer), from the first refresh
+        self._push_tasks = set()  # reads after a push without samples (a setting changed)
 
     def _changed(self, device):
         self.events.publish("device", device=self.describe(device))
@@ -238,6 +239,11 @@ class Inventory:
             return
         newest = self._store_samples(device["device_id"], history, time.time())
         if newest is None:
+            if not history.samples:
+                # A push without samples: its settings changed (its pump's run time, set in Home Assistant)
+                task = asyncio.get_running_loop().create_task(self._pump_s_changed(device["device_id"], host))
+                self._push_tasks.add(task)
+                task.add_done_callback(self._push_tasks.discard)
             return
         fields = dict(soil_moisture=newest.soil_moisture, battery=newest.battery, air_humidity=newest.air_humidity,
                       temperature=newest.temperature, last_seen=time.time(), last_error="")
@@ -248,6 +254,15 @@ class Inventory:
         device = self._changed(self.db.upsert_device(device["device_id"], **fields))
         if self.on_pushed is not None:
             self.on_pushed(device)
+
+    async def _pump_s_changed(self, device_id, host):
+        try:
+            seconds = await coap.get_pump_duration(host, **self._coap_options())
+        except (coap.CoapError, TimeoutError, OSError):
+            return  # seen at the next refresh ('diag')
+        device = self.db.device(device_id)
+        if device is not None and device["pump_s"] != seconds:
+            self._changed(self.db.upsert_device(device_id, pump_s=seconds, last_seen=time.time()))
 
     async def refresh(self, device_id, rediscover=True):
         """Reads 'info', 'data' and (newer firmware) 'diag' and 'hist' over CoAP. A board that
@@ -331,6 +346,8 @@ class Inventory:
             if device["button_s"] is not None and ran > 0:
                 self.db.add_activity(device["device_id"], "pump", f"Pump run with its button ({ran} s)", actor=BUTTON)
             fields["button_s"] = diag.button_s
+        if diag.pump_s is not None:
+            fields["pump_s"] = diag.pump_s
         return fields
 
     async def refresh_all(self, concurrency=4):

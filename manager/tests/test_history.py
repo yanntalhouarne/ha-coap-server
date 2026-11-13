@@ -117,6 +117,19 @@ async def test_a_sample_that_changed_is_pushed(client, services, start_sim):
     assert services.db.recent_activity("1a2b3c4d", "power", 1)[0]["message"] == "Plugged in: charging"
 
 
+async def test_a_pump_run_time_set_elsewhere_shows_at_once(client, services, start_sim):
+    server = await start_sim(dynamic=False)
+    await add_board(client, services, server)         # registered: it observes 'hist'
+    assert services.db.device("1a2b3c4d")["pump_s"] == 1
+    # Set in Home Assistant: the board pushes without a sample, the app reads it again
+    await coap.set_pump_duration("127.0.0.1", 6, **services.inventory._coap_options())
+    await until(lambda: services.db.device("1a2b3c4d")["pump_s"] == 6)
+    # And at each refresh: its 'diag' tells it
+    server.device.settings["pump_s"] = 8
+    await refresh(client)
+    assert services.db.device("1a2b3c4d")["pump_s"] == 8
+
+
 async def test_after_a_restart_its_samples_start_again(client, services, start_sim):
     server = await start_sim(dynamic=False)
     await add_board(client, services, server)

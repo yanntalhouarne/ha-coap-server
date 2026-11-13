@@ -61,6 +61,7 @@ static struct
 	uint32_t diag_button_s;
 	uint32_t pump_ms;
 	uint32_t diag_pump_ms;
+	uint8_t diag_pump_s;
 	bool observed;        // someone observes 'hist' (observer 0)...
 	uint32_t observed_next; // ...and has every sample before this one
 	int notifies;
@@ -286,7 +287,8 @@ int device_settings_init(device_settings_changed_cb changed)
 	return 0;
 }
 
-/* Like the real one for the pump run time: checks the range, then applies it */
+/* Like the real one for the pump run time: checks the range, then applies it (a value that
+ * doesn't change isn't applied again) */
 int device_settings_set(const enum device_setting *ids, const int32_t *values, size_t count)
 {
 	for (size_t i = 0U; i < count; i++)
@@ -298,7 +300,10 @@ int device_settings_set(const enum device_setting *ids, const int32_t *values, s
 	}
 	for (size_t i = 0U; i < count; i++)
 	{
-		on_setting_changed(ids[i], values[i]);
+		if ((ids[i] != SETTING_PUMP_S) || (values[i] != fake_mod.pump_duration))
+		{
+			on_setting_changed(ids[i], values[i]);
+		}
 	}
 	return 0;
 }
@@ -315,10 +320,11 @@ void diag_link_read(otInstance *instance, struct diag_link *link)
 }
 
 size_t diag_format(char *payload, size_t size, const struct diag_link *link, const char *srp, int32_t soil_mv,
-		   const char *power, uint32_t button_s, uint32_t pump_ms)
+		   const char *power, uint32_t button_s, uint32_t pump_ms, uint8_t pump_s)
 {
 	fake_mod.diag_button_s = button_s;
 	fake_mod.diag_pump_ms = pump_ms;
+	fake_mod.diag_pump_s = pump_s;
 	return (size_t)snprintf(payload, size, "srp=%s,rloc=%04x,soil_mv=%d,power=%s", srp, link->rloc16, (int)soil_mv, power);
 }
 
@@ -511,6 +517,43 @@ static void test_diag_reports_the_link_and_the_soil_voltage(void)
 	(void)on_diag_get(payload, sizeof(payload));
 	CHECK_EQ(fake_mod.diag_button_s, 6);
 	CHECK_EQ(fake_mod.diag_pump_ms, 14020);
+	CHECK_EQ(fake_mod.diag_pump_s, CONFIG_HACOAP_PUMP_DEFAULT_DURATION); // its run time setting
+	fake_mod.pump_duration = 7;
+	(void)on_diag_get(payload, sizeof(payload));
+	CHECK_EQ(fake_mod.diag_pump_s, 7);
+}
+
+static void sampled(uint8_t soil);
+
+static void test_a_new_pump_run_time_is_pushed(void)
+{
+	reset_module();
+	settings_push_work.pending = false;
+	coap_ready = false;
+	/* At boot, the setting is only loaded: no one to tell */
+	on_setting_changed(SETTING_PUMP_S, 4);
+	CHECK(!settings_push_work.pending);
+
+	CHECK_EQ(firmware_main(), 0);
+	sampled(40);
+	fake_mod.observed = true;                  // the fleet manager, which has every sample
+	fake_mod.observed_next = history_next();
+	fake_mod.observed2 = true;                 // and Home Assistant
+	fake_mod.observed2_next = history_next();
+	CHECK_EQ(on_pumpdc_put('6'), 6);           // set from either of them
+	CHECK(settings_push_work.pending);         // from the work queue, not the CoAP handler
+	CHECK_EQ(fake_mod.notifies, 0);
+	fake_work_run(&settings_push_work);
+	CHECK_EQ(fake_mod.notifies, 1);            // each one is told, without a new sample
+	CHECK_EQ(fake_mod.notifies2, 1);
+	CHECK_EQ(fake_ot_api_lock_depth, 0);
+
+	/* The same run time again: nothing changed, nothing sent */
+	CHECK_EQ(on_pumpdc_put('6'), 6);
+	CHECK(!settings_push_work.pending);
+	/* Other settings aren't pushed */
+	fake_mod.settings_changed(SETTING_POLL_MS, 5000);
+	CHECK(!settings_push_work.pending);
 }
 
 /* A sample of this soil moisture, taken now */
@@ -708,6 +751,7 @@ int main(void)
 	RUN_TEST(test_diag_reports_the_link_and_the_soil_voltage);
 	RUN_TEST(test_samples_are_kept_for_hist);
 	RUN_TEST(test_samples_that_changed_are_pushed);
+	RUN_TEST(test_a_new_pump_run_time_is_pushed);
 	RUN_TEST(test_a_power_change_takes_a_sample);
 	RUN_TEST(test_usb_power_polls_faster);
 	RUN_TEST(test_pump_put_only_acts_on_a_change);

@@ -24,8 +24,8 @@
 /* Maximum size of the 'info' payload ("<fw>,<hw>,<device id>" plus NUL terminator) */
 #define INFO_PAYLOAD_MAX_SIZE 64
 
-/* Maximum size of the 'diag' payload (see diag.h) */
-#define DIAG_PAYLOAD_MAX_SIZE 192
+/* Maximum size of the 'diag' payload (see diag.h): room for every field with large counters */
+#define DIAG_PAYLOAD_MAX_SIZE 256
 
 /* Maximum size of the 'log' payload (see log_buffer.h): about the most that fits in one
  * IPv6 packet of a few 6LoWPAN fragments */

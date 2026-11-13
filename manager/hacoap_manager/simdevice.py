@@ -321,7 +321,7 @@ class SimulatedDevice:
                  f"rssi=-62,last_rssi=-60,lq=3")
         text += f",soil_mv={self.soil_mv()},power={self.power}"
         if self.history:
-            text += f",button_s={self.button_s},pump_ms={self.pump_ms}"  # with 'hist': the same firmware
+            text += f",button_s={self.button_s},pump_ms={self.pump_ms},pump_s={self.pump_duration}"  # with 'hist': the same firmware
         return text.encode()
 
     def _settings_response(self):
@@ -340,7 +340,10 @@ class SimulatedDevice:
         for name, value in change.items():
             if self.settings[name] != value:
                 self.log(f"Setting {name} = {value}")
+        pump_changed = new["pump_s"] != self.settings["pump_s"]
         self.settings = new
+        if pump_changed and self.history:
+            self.notify()  # its observer is told (a push without new samples)
         return self._settings_response()
 
     def _sample_now(self):
@@ -608,8 +611,10 @@ class SimulatedDevice:
             return reply(coap.CONTENT, bytes([1 if self.pump_running else 0]))
         if message.path == "pumpdc":
             if message.code == coap.PUT and message.type == coap.TYPE_CON:
-                if message.payload[:1].isdigit() and 1 <= int(message.payload[:1]) <= 9:
+                if message.payload[:1].isdigit() and 1 <= int(message.payload[:1]) <= 9 and                         int(message.payload[:1]) != self.settings["pump_s"]:
                     self.settings["pump_s"] = int(message.payload[:1])
+                    if self.history:
+                        asyncio.get_running_loop().call_soon(self.notify)  # after the answer, as the firmware's work queue
             elif message.code != coap.GET:
                 return None  # the firmware ignores a NON PUT
             return reply(coap.CONTENT, bytes([self.pump_duration]))

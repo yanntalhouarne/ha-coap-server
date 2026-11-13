@@ -254,7 +254,7 @@ static void handle_ping(otMessage *request, const otMessageInfo *response_info, 
 /* 'diag' GET: restarts, crashes and the link to the parent, as "key=value,..." (see diag.h) */
 static void handle_diag(otMessage *request, const otMessageInfo *response_info, otCoapCode code)
 {
-	char payload[DIAG_PAYLOAD_MAX_SIZE];
+	static char payload[DIAG_PAYLOAD_MAX_SIZE]; // only used from the OpenThread thread
 	size_t length;
 
 	ARG_UNUSED(code);

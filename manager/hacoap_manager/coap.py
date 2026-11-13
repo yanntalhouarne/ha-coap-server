@@ -539,6 +539,7 @@ class Diagnostics:
     power: str = ""        # battery, usb, charging or charged ("" before this field)
     button_s: int | None = None  # the pump's run time started with its button since boot (s; None before this field)
     pump_ms: int | None = None   # how long its pump ran since boot, whatever started it (ms; None before this field)
+    pump_s: int | None = None    # its pump's run time setting (s; None before this field)
 
 
 def parse_diag(payload):
@@ -560,10 +561,11 @@ def parse_diag(payload):
         return f"0x{fields[key]}" if fields.get(key) else ""
 
     soil_mv = number("soil_mv")
+    pump_s = number("pump_s")
     return Diagnostics(number("boots") or 0, number("up") or 0, fields["reset"], fields.get("fault", ""),
                        fields.get("role", ""), fields.get("srp", ""), hex16("rloc"), hex16("parent"), number("rssi"), number("last_rssi"),
                        number("lq"), soil_mv if soil_mv is not None and soil_mv >= 0 else None, fields.get("power", ""),
-                       number("button_s"), number("pump_ms"))
+                       number("button_s"), number("pump_ms"), pump_s if pump_s is not None and 1 <= pump_s <= 9 else None)
 
 
 async def get_diag(host, **kwargs):

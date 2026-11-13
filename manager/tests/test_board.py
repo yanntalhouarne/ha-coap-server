@@ -293,7 +293,7 @@ async def test_removing_the_simulated_boards(client, services):
 async def test_the_pump_run_time_is_remembered(client, services, start_sim):
     server = await start_sim(dynamic=False)
     device = await add_board(client, services, server)
-    assert device["pump_s"] is None  # not read yet
+    assert device["pump_s"] == 1  # its 'diag' tells it
     state = (await client.post("/api/devices/1a2b3c4d/pump", json={"seconds": 5}, headers=CHANGE)).json()
     assert state["duration"] == 5 and server.device.pump_duration == 5
     assert (await client.get("/api/devices/1a2b3c4d/details")).json()["device"]["pump_s"] == 5
