@@ -232,10 +232,11 @@ def _link_allows(method, path):
 
 
 # What a link for the HA CoAP integration opens: the boards' firmware, and updating one of them
-# to the release image (never another image); the plants' water tanks, battery forecasts and care
-# tasks, with a tank refilled and a care task done (adding or removing them: the full app)
+# to the release image (never another image); the plants' water tanks, battery forecasts, care
+# tasks and photos, with a tank refilled and a care task done (adding or removing them: the full app)
 HA_LINK_ALLOWED = [
     (("GET", "HEAD"), re.compile(r"^/api/ha/(firmware|plants)$")),
+    (("GET", "HEAD"), re.compile(r"^/api/devices/[^/]+/photo$")),
     (("POST",), re.compile(r"^/api/ha/update$")),
     (("POST",), re.compile(r"^/api/devices/[^/]+/tank/refilled$")),
     (("POST",), re.compile(r"^/api/care/\d+/done$")),
@@ -1113,13 +1114,14 @@ def create_app(services, background_tasks=True, on_quit=None, port=None):
                 | {"days_left": round(tank["days_left"], 1) if tank["days_left"] is not None else None} if tank else None,
                 "care": [{key: task[key] for key in ("id", "what", "every_days", "due", "last_done")}
                          for task in s.db.care_tasks(device["device_id"])],
+                "photo": device["photo"],  # when its newest photo was added (/api/devices/<id>/photo), or None
             })
         return {"devices": result}
 
     @app.get("/api/ha/plants")
     async def ha_plants():
         """Each plant's water tank (None: not tracked), its battery's days left (None: on USB, or
-        no clear trend yet), and its care tasks."""
+        no clear trend yet), its care tasks, and when its photo was added (None: none)."""
         return await asyncio.to_thread(_ha_plants)
 
     @app.post("/api/ha/update")
