@@ -18,8 +18,9 @@ from .otbr import ROUTER_ROLES, BorderRouterError, Topology, _hex16, _mode_kind
 
 CONTAINER_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
 ALL_ROUTERS = "ff03::2"
-DIAG_TLVS = ("0", "1", "2", "5", "8", "16")  # ext address, RLOC16, mode, route, IPv6 addresses, child table
-MAC_TLVS = ("0", "1", "9")  # ext address, RLOC16, MAC counters: asked of the routers only (mains-powered)
+# Asked of every router at once (mains-powered: never a sleepy board): ext address, RLOC16, mode,
+# route, IPv6 addresses, MAC counters (for the radio's health), child table
+DIAG_TLVS = ("0", "1", "2", "5", "8", "9", "16")
 # The MAC Counters TLV (9): nine 32-bit counters, in this order
 MAC_COUNTERS = ("in_unknown_protos", "in_errors", "out_errors", "in_ucast", "in_broadcast", "in_discards",
                 "out_ucast", "out_broadcast", "out_discards")
@@ -228,20 +229,10 @@ class CliBorderRouter:
         return topology
 
     def _add_radio_health(self, topology, me):
-        """How well the radios do, from mains-powered devices only (nothing is asked of a sleepy
-        board): the routers' MAC counters (network diagnostics to all routers), and the border
-        router's own (channel busy, messages its sleepy children never collected). Each one
-        optional: a border router that doesn't answer one still gives the map. (No noise reading
-        on the network's own channel: it mostly hears the network's own messages.)"""
-        try:
-            for line in self.run("networkdiagnostic", "get", ALL_ROUTERS, *MAC_TLVS):
-                match = DIAG_ANSWER.match(line)
-                diag = parse_diag_tlvs(match.group(2)) if match else {}
-                node = topology.node(diag.get("rloc16"), diag.get("ext_address")) if diag.get("mac") else None
-                if node is not None:
-                    node["mac"] = diag["mac"]
-        except BorderRouterError:
-            pass
+        """How well the border router's radio does (the routers' come with their diagnostics):
+        channel busy, messages its sleepy children never collected. Optional: a border router
+        that doesn't answer still gives the map. (No noise reading on the network's own channel:
+        it mostly hears the network's own messages.)"""
         try:
             counters = {}
             for line in self.run("counters", "mac"):
@@ -258,6 +249,8 @@ class CliBorderRouter:
         rloc16 = diag["rloc16"]
         router = topology.add_node(rloc16, diag.get("ext_address"), kind="router",
                                    ipv6=[a for a in diag.get("ipv6", []) if not a.startswith("fe80")])
+        if diag.get("mac"):
+            router["mac"] = diag["mac"]  # its radio's counters, for its health
         for route in diag.get("routes", []):
             neighbor = route["router_id"] << 10
             if neighbor == rloc16 or not route["lq_in"] or not route["lq_out"]:

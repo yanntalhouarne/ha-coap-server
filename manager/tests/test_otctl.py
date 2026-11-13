@@ -88,7 +88,7 @@ OUTPUTS = {
     ("neighbor", "table"): NEIGHBOR_TABLE,
     ("child", "table"): CHILD_TABLE,
     ("childip",): CHILD_IP,
-    ("networkdiagnostic", "get", "ff03::2", "0", "1", "2", "5", "8", "16"): DIAG_GET,
+    ("networkdiagnostic", "get", "ff03::2", "0", "1", "2", "5", "8", "9", "16"): DIAG_GET,
     ("scan", "energy", "100"): SCAN,
 }
 
@@ -155,14 +155,14 @@ def test_topology():
     assert (mesh["average_rssi"], mesh["link_quality_in"], mesh["link_quality_out"]) == (-51, 3, 3)
     assert len([l for l in topology["links"] if l["kind"] == "mesh"]) == 1
     assert not topology["warnings"]
-    # One diagnostic query to every router for the map, one for their radio counters (not one per router)
+    # One diagnostic query to every router at once (their radio counters in it), not one per router
     queries = [c for c in run.calls if c[0] == "networkdiagnostic"]
-    assert len(queries) == 2 and all(c[2] == "ff03::2" for c in queries)
+    assert len(queries) == 1 and queries[0][2] == "ff03::2" and "9" in queries[0]
 
 
 def test_a_router_that_does_not_answer():
     outputs = dict(OUTPUTS)
-    outputs[("networkdiagnostic", "get", "ff03::2", "0", "1", "2", "5", "8", "16")] = \
+    outputs[("networkdiagnostic", "get", "ff03::2", "0", "1", "2", "5", "8", "9", "16")] = \
         DIAG_GET.split("DIAG_GET.rsp/ans from fd84:b787:982b:adb3:0:ff:fe00:f800")[0] + "Done\n"
     topology = CliBorderRouter("otbr", run=fake_ot_ctl(outputs)).topology().as_dict()
     assert topology["warnings"] == ["No diagnostics from router 0xf800"]
@@ -205,11 +205,6 @@ async def test_the_container_setting_wins(tmp_path, monkeypatch):
     services.db.close()
 
 
-def mac_answer(rloc16, ext, counters):
-    """A diagnostic answer with the MAC Counters TLV (9)."""
-    return "0008" + ext + "0102" + f"{rloc16:04x}" + "0924" + "".join(f"{c:08x}" for c in counters)
-
-
 COUNTERS_MAC = """\
 TxTotal: {tx}
     TxUnicast: 30
@@ -226,9 +221,11 @@ RxTotal: {rx}
 Done
 """
 def radio_outputs(leader_counters, tx, retry, cca, rx, fcs):
+    """The map's diagnostics with the leader's MAC counters in its answer, and the border router's own."""
+    counters = "0924" + "".join(f"{c:08x}" for c in leader_counters)
     return {**OUTPUTS,
-            ("networkdiagnostic", "get", "ff03::2", "0", "1", "9"):
-                f"DIAG_GET.rsp/ans from fd84:b787:982b:adb3:0:ff:fe00:f800: {mac_answer(0xF800, '1ad1ce7bd899afa6', leader_counters)}\nDone\n",
+            ("networkdiagnostic", "get", "ff03::2", "0", "1", "2", "5", "8", "9", "16"):
+                DIAG_GET.replace(LEADER_DIAG, LEADER_DIAG + counters),
             ("counters", "mac"): COUNTERS_MAC.format(tx=tx, retry=retry, cca=cca, rx=rx, fcs=fcs)}
 
 
@@ -250,9 +247,9 @@ def test_radio_health_from_mains_powered_devices_only():
     # 200 sent: the channel busy 2 + 2 times, 20 failed after retries; 20 never collected by sleepy children
     assert own["channel_busy_pct"] == 2.0 and own["send_failed_pct"] == 10.0 and own["receive_errors_pct"] == 2.0
     assert own["undelivered_to_sleepy"] == 20
-    # Only the routers are asked (all at once), and no child
+    # Only the routers are asked (all at once, with the map's diagnostics), and no child
     asked = [c for c in later_run.calls if c[0] == "networkdiagnostic"]
-    assert all(c[2] == "ff03::2" for c in asked)
+    assert len(asked) == 1 and asked[0][2] == "ff03::2"
     # A restart (the counters went back): no rate rather than a wrong one
     restarted = CliBorderRouter("otbr", run=fake_ot_ctl(radio_outputs([0] * 9, 1, 0, 0, 1, 0))).topology().as_dict()
     radio_rates(later, restarted)
