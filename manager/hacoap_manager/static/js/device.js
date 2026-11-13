@@ -156,7 +156,8 @@ export function renderDeviceControls(device) {
   const known = device.pump_s !== null && device.pump_s !== undefined;
   const show = (state) => { result.textContent = `Pump ${state.running ? 'running' : 'off'} · run time ${state.duration} s`; };
   // The run time the board last reported (it keeps it), or a blank until it's known
-  const seconds = h('select', { class: 'form-select form-select-sm w-auto', 'aria-label': 'Pump run time' },
+  const seconds = h('select', { class: 'form-select form-select-sm w-auto', 'aria-label': 'Pump run time',
+    onchange: (e) => { e.target.dataset.chosen = '1'; } },  // chosen here: a run time set elsewhere doesn't replace it
     known ? null : h('option', { value: '', selected: true, disabled: true }, '? s'),
     [1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) => h('option', { value: n, selected: known && n === device.pump_s }, `${n} s`)));
   if (!known) result.textContent = 'The run time isn\'t known yet: set it, or run the pump, to read it from the board.';
@@ -177,11 +178,22 @@ export function renderDeviceControls(device) {
       h('span', { class: 'small text-body-secondary ms-2' }, 'run time'), seconds,
       h('button', { class: 'btn btn-sm btn-outline-secondary', onclick: (e) => {
         if (!seconds.value) return notify('Choose a run time', 'warning');
+        delete seconds.dataset.chosen;
         call({ seconds: Number(seconds.value) })(e);
       } }, 'Set'),
       h('button', { class: 'btn btn-sm btn-outline-secondary ms-auto', onclick: (e) => pingDevice(device, e.currentTarget) }, 'Beep')),
     result,
     h('div', { class: 'form-text' }, 'Commands reach a sleeping board at its next poll: up to 3 s.'));
+}
+
+// A run time set elsewhere (Home Assistant, the board's settings), told by the board's push: the
+// Controls card follows it, unless another one was just chosen there and not set yet
+export function updateDeviceControls(device) {
+  if (device.device_id !== devicePage.id) return;
+  const select = document.querySelector('#device-controls select');
+  if (!select || select.dataset.chosen || device.pump_s === null || device.pump_s === undefined
+      || select.value === String(device.pump_s)) return;
+  renderDeviceControls(device);
 }
 
 export function renderDeviceForm(device) {

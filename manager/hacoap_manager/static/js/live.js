@@ -10,7 +10,7 @@ import { loadNetwork, net, pulseBoard, showNodeDetails } from './network.js';
 import { loadWallSoon } from './pages.js';
 import { onBuild, onBuildLog, onSetup, onSetupLog } from './builds.js';
 import { onConsoleLine, onConsoleState } from './console.js';
-import { renderDevicePhoto, renderDeviceStatus } from './device.js';
+import { renderDevicePhoto, renderDeviceStatus, updateDeviceControls } from './device.js';
 import { refreshSimple } from './simple.js';
 import { borderRouterChanged } from './borderrouter.js';
 
@@ -44,6 +44,7 @@ export function connectEvents(delay = 1000) {
       if (currentRoute() === `device/${encodeURIComponent(event.device.device_id)}`) {
         renderDeviceStatus(event.device);
         renderDevicePhoto(event.device);
+        updateDeviceControls(event.device);
       }
       if (net.selectedNode && net.selectedNode.device_id === event.device.device_id) showNodeDetails(net.selectedNode);
       if (answered) pulse(event.device.device_id); // its card, row and page, once drawn again
