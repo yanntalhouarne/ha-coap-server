@@ -1,5 +1,20 @@
 # Fleet manager changes
 
+## Since 0.1.0 (to 2026-11-13, not released yet)
+
+Running for real: on a server, with the boards and the border router.
+
+- **On a server:** `scripts/install-server.sh` sets a Debian machine up (the app as a service, the border router in Docker, the routes); `scripts/connect-to-server` opens it from any PC over SSH, and in VS Code.
+- **Border router tab:** its state, Restart, **Update to the newest build** (pinned by its digest, put back if the new one doesn't come up; it says when a newer build is out), its log, the network's settings (kept in the backups), **adding boards over the air** (the border router as commissioner, the PSKd never stored) and **moving the network to another channel**. The map is read through its command line when its REST diagnostics don't answer. Alerts when the border router is down, or when no board answers.
+- **The boards' kept samples and pushes:** each refresh reads the samples a board kept since the last one (`hist`, newer firmware), so a gap fills itself, and the app takes the boards' pushes: a plant that needs water, a board plugged in, its pump's run time set elsewhere, the end of a pump run show within seconds. Up to 3 observers, so Home Assistant can take them too. Pump runs started elsewhere (Home Assistant...) are counted in the plant's water tank, from the time its pump ran (`diag` pump_ms). An alert when a board answers but stopped sampling. A board that stops answering is looked for again on the network, and asked at its new address.
+- **A simple view, made for a phone, by default:** the plants as cards, a **Today** list (what to do, the most urgent first), or **Rooms**; **Water now** asks how long, then confirms. A plant is called by the name given to it everywhere.
+- **Water tanks:** a tank's size and the pump's flow; how full it is, how long it lasts, **Refilled**, and an alert under 20 %. An alert when two waterings in a row didn't raise the soil (an empty tank, the tube out of the pot).
+- **Automatic watering:** a rule per plant (under its target, so many times a day, between two hours, a wait between waterings), paused when its waterings stop working or its tank is empty.
+- **Care tasks** per plant (fertilize, repot...), coming back after they're done; **Going away**, a check of what won't last until you're back; **Does watering work?**, a report per plant; more in the weekly summary; alerts for weak links and boards that keep switching parents.
+- **Dashboard links,** to show the plants inside Home Assistant (or anywhere): view-only ones, the network map and charts, alerts dismissed from there, the full app opened outside the dashboard. A **link for the HA CoAP integration**: the boards' firmware updates, and each plant's tank, battery forecast and care tasks. The activity says who did what (this computer, a signed-in device, a link, automatic watering, a board's button).
+- **Builds and updates:** choose the key a build is signed with, chosen for you from what the boards run; an update with a key the boards' bootloader would refuse asks first; **Cancel the rest** works during an upload; the Updates tab's list shows each board on USB power, and a board on USB isn't skipped for a low battery.
+- **Smaller:** Home Assistant history from the integration's version 2 too; a CSV on Charts; backups copied to another folder; the CoAP tab shows each board's plant and how many bytes came back; the heatmap uses the boards' own signal; the wall display shows each battery as a ring; the health view shows each board's plant and location; the map shows an address for every board; no drying rate from a soil reading that doesn't move.
+
 ## 0.1.0
 
 First version: the plan's phases 0, 1, 2, 5 and 6. Tested against a simulated device; not yet used with real boards.

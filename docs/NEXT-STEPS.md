@@ -1,177 +1,45 @@
-# Next steps (paused 2026-10-26)
+# Next steps (updated 2026-11-13)
 
 Start here when you come back. To pick up with Claude, say: *"Resume from docs/NEXT-STEPS.md"*.
 
 ## Where things stand
 
-| Branch | What's on it | State |
-|---|---|---|
-| `main` | The firmware as it was before this work | Unchanged |
-| `claude` | Firmware fixes and refactor, the power changes from step 4, reproducible builds, private signing key and PSKd, cross-platform update scripts, working web updater, firmware unit tests, reviews in `docs/` | [PR #6](https://github.com/yanntalhouarne/ha-coap-server/pull/6), **not merged: no board has run it yet**. CI passes on Linux, macOS and Windows |
-| `fleet-manager` | `claude` plus the fleet manager app (`manager/`): inventory, updates, firmware builds, backups and release downloads (plan phases 0–2, 5 and 6; version 0.1.0), and many additions (see step 6) | Tested against simulated devices and a simulated border router on all three OSes, CI passes, **not on a board or your border router yet**. No release published yet (no `manager-v*` tag pushed) |
-
-The order to go in:
-1. Test PR #6 on the boards (steps 1–3 below), then merge it.
-2. Answer the decisions still open (step 4).
-3. Try the fleet manager on the boards (step 6), then go on with its next phases.
-
-## 1. Before you start
-- `git checkout claude && git pull`
-- Check that `application/keys/mcuboot-signing-key.pem` and `application/local.conf` are on this PC. If not, restore them from your backup (they aren't in git).
-- Build: `powershell -ExecutionPolicy Bypass -File scripts\build.ps1`. The output should show your signing key and no PSKd warning.
-- Optional, no board needed: `python application/tests/unit/run.py` runs the firmware's unit tests (README → Unit tests). The first time, `python -m pip install ziglang` gives it a C compiler.
-
-## 2. Flash a board
-Build first (step 1). The images are in `application/build/zephyr/`.
-
-**Over SWD** (J-Link on the Tag-Connect pads, with SEGGER J-Link Software and Nordic's nRF Command Line Tools installed), from the repository root in PowerShell:
-```
-& "$env:LOCALAPPDATA\Programs\nrfutil\nrfutil.exe" toolchain-manager launch --ncs-version v2.4.3 --chdir . -- west flash -d application/build
-```
-This writes MCUboot and the application, and keeps the board on your network. Add `--erase` at the end for a new board or a full reset; the board then has to join the network again (README → Joining a Thread network).
-
-The fleet manager (step 6) can do the same from its **Builds** tab (**Flash a board over SWD**), through `nrfutil device` instead of the nRF Command Line Tools. It's untried with a real J-Link, so the command above stays the reference until it has flashed a board.
-
-**Over USB** (board already flashed over SWD with your key; `mcumgr` installed). Replace `COM7` with the board's port:
-```
-mcumgr conn add serial type="serial" connstring="COM7,baud=115200,mtu=512"
-mcumgr -c serial image upload application/build/zephyr/app_update.bin
-mcumgr -c serial image list                # copy the hash of the new image (slot 1)
-mcumgr -c serial image test <hash>
-mcumgr -c serial reset
-mcumgr -c serial image confirm             # once the board is back and working
-```
-**Over the air:** the same commands with a UDP connection instead, `mcumgr conn add udp type="udp" connstring="[<device IPv6>]:1337"`, and `-c udp`. Find the address with `avahi-browse -r _ot._udp`, or use `scripts/mcumgr-update-all.sh`.
-
-**With the scripts instead** (Linux, macOS, or Git Bash on Windows; they use `application/build`):
-- `scripts/mcumgr-dfu.sh`: guided update of one device, over USB or the air.
-- `scripts/mcumgr-update-all.sh`: the same for several devices at once, with upload retries.
-
-They need `mcumgr` and Python 3.7+. To find devices on the network automatically, they also need `zeroconf` (Windows: `py -m pip install zeroconf`; macOS: `python3 -m pip install --user zeroconf`) or, on Linux, `avahi-utils`. Without it, they ask for the device addresses. See README → Firmware updates → Scripts.
-
-**With the web updater instead** (over the air, from a browser; Linux, macOS or Windows): see `firmware-updater/README.md`. Set it up once with `python -m venv .venv` and `pip install -r requirements.txt`, run `python app.py`, open http://127.0.0.1:5000, and check the Dashboard first.
-
-After a `test` update, check the device, then make it permanent with `mcumgr -c <connection> image confirm` (or update with `HACOAP_UPDATE_MODE=confirm` to skip the trial boot).
-
-If an update uploads but the board keeps its old firmware, the image was signed with a different key. Build on a PC that has your key.
-
-## 3. Test on the boards
-- [ ] Each board boots and rejoins the network on its own after the SWD reflash
-- [ ] Charging: with USB plugged in and a partly discharged battery, the orange LED is on
-- [ ] No random resets over a day (no three-beep jingle out of nowhere)
-- [ ] One over-the-air update: upload, `image test`, reset, `image confirm` (README → Firmware updates)
-- [ ] Home Assistant shows data, and the pump and ping work
-
-Then the power changes from step 4:
-- [ ] The RGB LED flashes (every 5 s) instead of staying on, and stops flashing 5 minutes after the last state change. A board that can't reach the network shows red + green flashes.
-- [ ] A pump command from Home Assistant still works. It can take up to 3 s now.
-- [ ] Pressing S1 still starts the pump (its interrupt changed).
-- [ ] A second over-the-air update, from a board already running this firmware, is about as fast as before. The first update, from older firmware, is slower: the old image doesn't speed up its polling.
-- [ ] No resets or odd behavior over a day (the C library changed to save RAM power).
-- [ ] Below 0 °C, Home Assistant shows a negative temperature, once [ha-coap-integration PR #10](https://github.com/yanntalhouarne/ha-coap-integration/pull/10) is merged and HA reloaded.
-
-If a board doesn't boot, try a build with DC/DC disabled (README → Board notes).
-
-## 4. Decisions
-Decided on 2026-10-25, and done on `claude` (not on a board yet):
-- **Status LEDs:** a 20 ms flash every 5 s instead of solid colors, stopping 5 minutes after the last change (`CONFIG_HACOAP_STATUS_LED_TIMEOUT_S`).
-- **Thread poll period:** 3 s (was 1 s). The device now polls every 100 ms while mcumgr is in use, so over-the-air updates aren't three times slower.
-- **Sensor sampling:** every 15 min (was 5 min), matching how often Home Assistant asks.
-- **Button interrupt and RAM power-down:** both done. RAM power-down needs the full C library, which adds 13 KB of flash (now 82% full).
-- **Integration:** negative temperatures fixed in [ha-coap-integration PR #10](https://github.com/yanntalhouarne/ha-coap-integration/pull/10). Merge it when you're ready.
-
-Still to decide:
-- **Rev 2.1 hardware:** remove the power LED and rework SW2/R36, about 1.3 mA together? These loads are about 100 times what the firmware draws, so they decide the battery life.
-- **Current measurement:** do you have a PPK2 or a µA meter? It would confirm the power review's estimates.
-
-Details: `docs/firmware/ha-coap-node-power-review.pdf`.
-
-## 5. Finish PR #6
-Share the test results and decisions with Claude. It updates the status tables in the code and power reviews and PR #6, then you merge PR #6 into `main`.
-
-## 6. Then: the fleet manager
-
-**What's built** (on the `fleet-manager` branch, in `manager/`): the plan's phases 0–2, 5 and 6, as version 0.1.0. It's a local web app for Windows, macOS and Linux that:
-- finds devices (or adds them by address) and shows their firmware, battery, readings and when they were last seen
-- builds firmware from named profiles (variant plus the settings you change, in a form made from `application/Kconfig`), with a live log, checking your signing key first
-- keeps a library of firmware images, from files or from those builds, and shows who signed each one (your key, the development key, another key, unsigned)
-- backs up its data (daily, and on demand) and restores it, and exports or imports the device list as CSV
-- draws the Thread mesh (the **Network** page): routers, children, your boards, and link strength as line colour and length, from the border router's REST API
-- updates devices over the air or over USB: upload, trial boot, check the device comes back running it, confirm. One device at a time, stopping at the first failure, with a history. It asks before using an image your boards would refuse, and skips devices under 20 % battery over the air
-
-Added since (2026-10-25 and 26), all described in `manager/README.md`:
-- a **dashboard**, and a **page per device** with charts, pump and buzzer controls, and a **photo of its plant**
-- **watering targets** and a **needs water** list, **alerts** (offline, low battery, needs water, failed update), also as browser notifications
-- **groups** (location and tags), a **release** image, **staged updates**, **what's new** between two images, actions for **all ticked devices**
-- on the Network page: **click a board** for its plant photo and readings, a **floor plan** of your home, a **signal heatmap** (floor plan and mesh), **network history** with a slider, zoom and pan, and a **channel scan**
-- **Flash a board over SWD** with a J-Link (Builds tab), keeping its network or erasing everything, with an optional one-click install of the SWD tools (`nrfutil device`; SEGGER's J-Link software is still installed by hand)
-- a **serial console**, **Set up this computer** buttons (toolchain, signing key, PSKd), **Ctrl+K search**, a **readings CSV**, a **problem report**, an optional **app update check** (off by default), and a **phone layout**
-- **Check my connection** (Devices tab): each step from this PC to the boards, with what usually fixes a failed one
-- **battery drain per firmware** (dashboard and device pages): shows whether the power changes worked
-- **running in the background**, started with the computer, so history and alerts build up
-- **Home Assistant history import** (Settings), chart markers (updates, pump runs, parent changes), plant presets for watering targets, printable labels, and limits on how much data is kept
-- **watering forecasts** ("needs water in about 2 days") and what a pump run does, a **photo timeline** per plant, a **wall display**, a printable **weekly summary**, a **Getting started** list, and pulses on the map when boards answer
-- a **demo** (Settings → Try the demo): a second app with simulated boards and two weeks of history, in a throwaway data folder, to show the project or try it without boards
-- a **simulated fleet**: `python -m hacoap_manager.simdevice --count 9 --border-router api` runs 9 devices and a border router on this PC, to try everything without boards
-
-It talks to the devices directly (no `mcumgr` tool needed). Details and instructions: `manager/README.md`. Every change: `manager/CHANGELOG.md`. The plan, with what's next: `docs/FLEET-MANAGER-PLAN.md`.
-
-**Where it was left (2026-10-26):** the last commits are pushed to `fleet-manager` and CI passed. To run your copy from the source again after pulling, re-run `.venv\Scripts\pip install -r requirements.txt` in `manager/` first: it now also needs `cryptography`, for the signature check. Then start it, and the simulator too if you want the 9 simulated devices back (they don't keep running between sessions). The app's data (devices, photos, floor plan, history) stays between runs, in `%LOCALAPPDATA%\hacoap-manager` unless you started it with `--data-dir`. If you tried things against the simulator, the simulated devices are in that list: remove them (**With selected → Remove from the list**) before using it with your boards.
-
-**Decided:**
-- A local web app, one download per OS, run on your PC when you need it.
-- Only that PC can open it (no remote access for now; Remote Desktop works if needed).
-- Settings both at build time and at runtime (runtime needs firmware changes, phase 3).
-- Your border router is a standalone OTBR (ot-br-posix).
-
-### Try it on the boards
-After PR #6's board tests (the fast polling during updates is in that firmware):
-1. Get it, either way:
-   - `git checkout fleet-manager && git pull`, then from `manager/`: `py -m venv .venv` (once), `.venv\Scripts\pip install -r requirements.txt`, `.venv\Scripts\python -m hacoap_manager`
-   - or the packaged `hacoap-manager.exe` from the latest CI run on `fleet-manager` (GitHub → Actions → Artifacts). There's no release yet: making one is a tag away (`manager/README.md` → Making a release), best done once it has updated real boards.
-2. In the browser page it opens:
-   - [ ] **Devices → Check my connection** first: every step should be green. If one isn't, it says what to fix (often the route from this PC to the Thread network, or mDNS). Note the update upload estimate it gives.
-   - [ ] **Find devices** lists every board, and their status fills in (battery, readings)
-   - [ ] **Actions → Firmware slots** answers for a board
-   - [ ] **Builds → Build with this profile** (Production) makes an image signed with your key (already checked on this PC), or **Images → Builds on this computer → Add** your latest build. Its **Signed** column says *your key*
-   - [ ] **Update** one board over the air: it goes through uploading, rebooting, waiting, confirming, and ends as *updated*. Note how long the upload takes.
-   - [ ] **Update** one board on USB (choose its serial port). This path has no simulated test, so it's the most likely to need a fix.
-   - [ ] **Network:** set the border router's address (behind the gear, or **Find it on the network**), then **Read the network**. It works without the boards too. Note what the page says it got: "with signal strength" (a 2025+ border router) or "link quality only" (an older one, where boards can't be named on the map). Then click one of your boards on the map: its card should show its readings.
-   - [ ] **Run the pump** and **Beep** from a device's page reach the board (within 3 s)
-   - [ ] **Health:** after updating a board to this firmware, its page's **Health** card shows its boots, "a software reset" as the last restart, its parent and RSSI; the restart is in its **Restarts** list and the activity feed. Pull its battery: the next refresh shows "power on". (A crash can't be made on purpose without a debugger; the unit tests cover the record.)
-   - [ ] **Settings on the board:** **Read from the board**, change the sampling period, **Save on the board**, then refresh after a reset: it kept the value. Calibrate one soil sensor (dry soil, then water) and check the readings follow. Change the pump run time from Home Assistant (`pumpdc`), reset the board: it kept that too.
-   - [ ] **Joining, in any order:** power on a board that has no network (or make one forget it: S1 held at boot until two long low beeps), wait a minute, then open the commissioner for 300 s (`joiner add * <PSKd> 300`): it joins within 2 minutes, without a reset. Then **Forget its network…** from its page, and commission it again the same way.
-   - [ ] **Names (SRP):** after an update to this firmware, the board's Health card says **Its name: registered**; **Find devices** fills in its firmware. Make it forget its network, then commission it again: it comes back under the same name (`ha-coap-<ID>`), and Home Assistant still finds it. On the border router, `ot-ctl srp server host` lists it.
-   - [ ] **Network page with an older border router** (if yours is one): boards are named, from the short address they report.
-   - [ ] **Console, over the air:** build a profile with **Log over the air**, update one board with it, then click **Log** on its page. Its log since boot should show, and new lines (a reading every 15 minutes, the pump, a beep) within a second or two. **Update** it once while the console is open: the console should say the board restarted and show the new boot. Afterwards, check that its battery drain isn't higher than the other boards'.
-   - [ ] **Settings → Home Assistant history:** with a long-lived token, **Check** finds your boards, and **Import history** fills the charts. Then the dashboard's **Battery drain by firmware** compares the old firmware with PR #6's (once a board has run each for a few days).
-   - [ ] **Charging:** on a board with this firmware, plug in USB: within about 10 s and a refresh, its battery shows the charging icon ("charging" on its page, and in its timeline), and Beep answers at once (it polls every 500 ms on USB). When the orange charge LED goes out, it says "charged"; unplug it: "on its battery" again. Before that, check on the schematic that CHRG (P1.10) can't rise above the nRF's 3.0 V when the charger lets go of it (the orange LED's supply).
-   - [ ] Optional: **Start with this computer** (Settings), so it keeps collecting
-   - [ ] **Builds → Flash a board over SWD** (needs the J-Link software, then **Install the SWD flashing tools**): **Find** lists your J-Link, and flashing with **Keep its network** brings the board back on the network. Try **Erase everything** only on a board you're ready to rejoin. This path has no real test yet either.
-3. Tell Claude what happened. Once it works, `fleet-manager` can become a pull request, and the web updater can go.
-
-### Which machine runs it
-The app runs on the PC you start it on. That PC hosts the page for itself: the app starts a small web server listening only on that computer (`http://127.0.0.1:8710`) and opens it in your browser. Close the app and everything stops; nothing runs on the internet, on the border router or in Home Assistant.
-
-That PC does all the talking:
-
-| Talks to | How |
+| What | State |
 |---|---|
-| Boards on USB | its USB serial ports |
-| Boards over the air | UDP to their IPv6 addresses, through the border router |
-| Device discovery | mDNS on your LAN (the border router answers for the Thread devices) |
-| Commissioning (later) | the border router's REST API (port 8081) |
-| Builds | the nRF Connect toolchain installed on that PC (`scripts/setup`) |
+| Boards | Five in use (ha-coap-3, -7, -9, -10, -11) on the `fleet-manager` firmware (66a5646, image 3774d590, Production profile). Boards 4 and 5 are off. Their bootloaders still have **MCUboot's development key**: updates must be signed with it (the Builds tab chooses it) |
+| Server | The VM `hacoap` (LAN 192.168.50.178, ZeroTier 10.243.120.130) runs the fleet manager (always on, deployed from `fleet-manager`) and the Thread border router (Docker container `otbr`, its radio dongle passed through from the Proxmox host). See `manager/README.md` → Running it on a server, and Reaching the server |
+| Home Assistant | The [HA CoAP integration](https://github.com/yanntalhouarne/ha-coap-integration) v2.3.0: the boards, their pushes, the fleet manager's firmware updates, tanks, battery forecasts, care tasks, and the plant card |
+| `main` | Still the firmware from before this work |
+| `fleet-manager` | Everything: the firmware, the fleet manager, the docs. Merges cleanly into `main`, and contains all of `claude` |
 
-So it needs to be on the same network as the border router, like the scripts.
+## Next, in order
 
-### Next phases
-- **3. Runtime settings, 4. Commissioning** need firmware changes (a settings store and a custom mcumgr group), so each needs a board test. Merge PR #6 first, so they build on tested firmware.
-- **Before phase 4, check the border router's API.** Commissioning from the app needs the commissioner endpoints of the OTBR REST API, which are recent additions. On the border router:
-  ```
-  curl http://<border-router>:8081/node
-  curl http://<border-router>:8081/node/commissioner/state
-  sudo ot-ctl version
-  ```
-  If `curl` from another computer fails but works on the border router itself, its REST API only listens locally (`otbr-agent` option `--rest-listen-address`). If the commissioner endpoints are missing, update ot-br-posix; otherwise the app falls back to showing the `ot-ctl` commands.
-- Phases 5 (builds) and 6 (backups, export/import, release downloads) are done.
+1. **Update the boards to the newest firmware** (46cb4b3 or later: the push at the end of each pump run). Builds tab → Production, **sign with: the development key** (preselected) → Build, then Updates.
+2. **Merge `fleet-manager` into `main`**: open the pull request (GitHub → Compare `main...fleet-manager`), merge it, then close [PR #6](https://github.com/yanntalhouarne/ha-coap-server/pull/6), which it replaces. In the integration's repository, close [PR #10](https://github.com/yanntalhouarne/ha-coap-integration/pull/10): version 2 reads negative temperatures already.
+3. **Set the plants up**: each plant's tank size (its page → Watering) and care tasks, so they show in the fleet manager and in Home Assistant.
+4. **At a board visit, with a J-Link**: flash each board's bootloader made with your own key (Builds tab → Flash a board over SWD, a build signed with your key). From then on, its updates are signed with your key, and anyone with MCUboot's public development key can no longer update it.
+
+## Not tried on the real hardware yet
+
+- Flashing over SWD with a J-Link (no J-Link has been attached).
+- Adding boards over the air, and moving the network to another channel (Border router tab): tested only against a simulated border router.
+- An update over USB.
+- The console over the air (a **Log over the air** build).
+
+## Still to decide
+
+- **PSKd:** left as it is for now (your call, 2026-11-11).
+- **Rev 2.1 hardware:** remove the power LED and rework SW2/R36 (about 1.3 mA together, about 100 times what the firmware draws: they decide the battery life).
+- **Current measurement:** a PPK2 or a µA meter would confirm the power review's estimates (`docs/firmware/ha-coap-node-power-review.pdf`). The dashboard's **Battery drain by firmware** gives the real drain meanwhile.
+
+## Housekeeping left
+
+- Old branches, all merged into `fleet-manager` (or abandoned): `build-issue`, `mcu-boot-usb-dual-slots`, `mcu-mgr-udp-ota`, `pwm_integration`, `claude` (after the merge), `updatehub` and `updatehub-2` (never merged). In the integration's repository: `branch`, `hacs-repo`, `main`, `new-setup`, `signed-temperature`, `v2`, `v2.1`, `zeroconf_discovery`.
+- The integration's tag `v2.1.2` was pushed by mistake (it's v2.1.1's commit): never publish it; delete it on GitHub (Tags).
+- `firmware-updater/` (the old web updater): the fleet manager replaced it, so it can go once you no longer want it.
+
+## Where the details are
+
+- The firmware: `README.md` (building, flashing, joining, the CoAP API, pushes, settings, updates).
+- The fleet manager: `manager/README.md`, its changes in `manager/CHANGELOG.md`, and how it was planned in `docs/FLEET-MANAGER-PLAN.md`.
+- The reviews: `docs/hardware/` and `docs/firmware/` (PDF).

@@ -12,7 +12,8 @@ The firmware runs on the [ha-coap-pcb](https://github.com/yanntalhouarne/ha-coap
 
 - It joins a Thread network as a **sleepy end device** (battery operation).
 - It registers itself with the border router's **SRP** server as `ha-coap-<device id>._ot._udp`, so Home Assistant discovers it.
-- It serves a small **CoAP API** on port 5683: sensor data, device info, pump control and a ping, and (optionally) its log.
+- It serves a small **CoAP API** on port 5683: sensor data, device info, pump control and a ping, its health (`diag`), its latest samples (`hist`, pushed to the fleet manager and Home Assistant when they change), and (optionally) its log.
+- The [fleet manager](manager/README.md) (`manager/`) looks after the whole fleet: updates, builds, the network map, the plants, alerts.
 - It can be updated over **USB** or **over the air** (mcumgr over Thread), through the MCUboot bootloader.
 
 Contents:
@@ -186,7 +187,7 @@ As a sleepy end device, the board picks up messages from its parent once per pol
 
 The board keeps its latest samples in RAM (`CONFIG_HACOAP_HISTORY_SIZE`, 192: 48 hours at the 15-minute sampling, 2.3 KB), each with its number since boot. The fleet manager reads the ones it doesn't have at each refresh (`hist?from=<the first it doesn't have>`), so a border router or network that was down leaves no gap in its charts, if it's back within those 48 hours. A restart starts the numbers again (the boot count in each answer tells), and loses the samples kept.
 
-The same request registers the fleet manager as an observer of `hist` (CoAP Observe, RFC 7641), until `CONFIG_HACOAP_PUSH_LEASE_S` (2 hours) after it; each refresh registers again. Up to `CONFIG_HACOAP_PUSH_OBSERVERS` (3) observe at once, such as the fleet manager and Home Assistant: one that registers again keeps its place, and when all are taken a new one replaces the one that registered longest ago. Each one is sent what it lacks. After a sample, if its soil or battery moved by `CONFIG_HACOAP_PUSH_SOIL_DELTA` or `CONFIG_HACOAP_PUSH_BATTERY_DELTA` (5 %) or more since the last sample the fleet manager was given, or its power source changed (the board takes a sample when it does), the board sends it the samples it doesn't have in one non-confirmable message: a plant that needs water, a board plugged in or unplugged show within seconds, not at the next refresh. Nothing is sent when nothing changed, so it costs about one message a day on a plant that dries slowly. When the pump's run time changes (`pumpdc` PUT, or the `pump_s` setting over mcumgr), each observer is sent what it lacks right away, most often no sample at all: a push without new samples means "something changed", and the fleet manager and Home Assistant read `diag` again (or `pumpdc`), so a change made in one shows in the other within seconds. The same push goes out when a pump run ends, whatever started it (Home Assistant, the fleet manager, S1): the water it gave (`diag` pump_ms) shows at once, and the fleet manager counts a run it didn't start in the plant's water tank. `CONFIG_HACOAP_PUSH=n` turns it off (`hist` still answers). The code: `src/history.c` (the samples, and when to push), `handle_hist()` and `coap_resources_notify()` in `src/coap_resources.c`, `on_sampled()` and `push_changes()` in `src/main.c`. It adds about 3.8 KB of flash (the battery variant: 83.7 % of the slot; `usb-logging` with the log over the air: 98.9 %) and 3 KB of RAM.
+The same request registers the fleet manager as an observer of `hist` (CoAP Observe, RFC 7641), until `CONFIG_HACOAP_PUSH_LEASE_S` (2 hours) after it; each refresh registers again. Up to `CONFIG_HACOAP_PUSH_OBSERVERS` (3) observe at once, such as the fleet manager and Home Assistant: one that registers again keeps its place, and when all are taken a new one replaces the one that registered longest ago. Each one is sent what it lacks. After a sample, if its soil or battery moved by `CONFIG_HACOAP_PUSH_SOIL_DELTA` or `CONFIG_HACOAP_PUSH_BATTERY_DELTA` (5 %) or more since the last sample the fleet manager was given, or its power source changed (the board takes a sample when it does), the board sends it the samples it doesn't have in one non-confirmable message: a plant that needs water, a board plugged in or unplugged show within seconds, not at the next refresh. Nothing is sent when nothing changed, so it costs about one message a day on a plant that dries slowly. When the pump's run time changes (`pumpdc` PUT, or the `pump_s` setting over mcumgr), each observer is sent what it lacks right away, most often no sample at all: a push without new samples means "something changed", and the fleet manager and Home Assistant read `diag` again (or `pumpdc`), so a change made in one shows in the other within seconds. The same push goes out when a pump run ends, whatever started it (Home Assistant, the fleet manager, S1): the water it gave (`diag` pump_ms) shows at once, and the fleet manager counts a run it didn't start in the plant's water tank. `CONFIG_HACOAP_PUSH=n` turns it off (`hist` still answers). The code: `src/history.c` (the samples, and when to push), `handle_hist()` and `coap_resources_notify()` in `src/coap_resources.c`, `on_sampled()` and `push_changes()` in `src/main.c`. It adds about 3.8 KB of flash (the battery variant: 83.9 % of the slot with everything since; `usb-logging` with the log over the air: 98.9 %) and 3 KB of RAM.
 
 ### SRP registration
 How Home Assistant and the fleet manager find a board. A Thread board doesn't answer mDNS itself (multicast is costly on the mesh, and a sleepy board would miss most queries). Instead, once attached, it **registers** its name and service with the SRP server on the border router (Service Registration Protocol), in one unicast message, and the border router answers mDNS on the LAN for it.
@@ -284,6 +285,8 @@ Values that aren't meant to change between builds, like the buzzer tones or whic
 
 Updates go through MCUboot with [mcumgr](https://github.com/apache/mynewt-mcumgr-cli), over USB or over Thread. A board only installs images signed with the same key as its bootloader: build updates on a PC that has your [signing key](#private-settings-signing-key-and-pskd). Install the mcumgr CLI with Go (`go install github.com/apache/mynewt-mcumgr-cli/mcumgr@latest`, then add Go's `bin` directory to your PATH), or with `scripts/install-dependencies.sh` on Debian or Ubuntu.
 
+The [fleet manager](manager/README.md)'s **Updates** tab does all of this, for one board or many, and checks the image's key against the boards first. The commands below are the manual way.
+
 ### Connections
 - **USB**: the board's first USB serial port (the `usb-logging` variant adds a second one for the console).
   ```bash
@@ -312,7 +315,7 @@ The update scripts run on Linux, macOS and Windows (in Git Bash), from any folde
 
 - `scripts/mcumgr-dfu.sh`: guided update of one device, over USB or over the air.
 - `scripts/mcumgr-update-all.sh`: updates several devices at once, with upload retries and stall detection. It also runs non-interactively from environment variables (`HACOAP_NON_INTERACTIVE`, `HACOAP_DEVICES`, `HACOAP_UPDATE_MODE`, …; see the top of the script).
-- `firmware-updater/`: a web interface that drives `mcumgr-update-all.sh`. See [firmware-updater/README.md](firmware-updater/README.md).
+- `firmware-updater/`: a web interface that drives `mcumgr-update-all.sh` (older: the [fleet manager](manager/README.md) replaces it). See [firmware-updater/README.md](firmware-updater/README.md).
 
 What they need:
 
@@ -363,7 +366,7 @@ Older versions of this repository had a Thread network key and network name in `
 | `application/keys/` | Your signing key, created by `scripts/keygen` (not in git) |
 | `application/tests/unit/` | Unit tests of the firmware's logic, run on a PC |
 | `scripts/` | Setup, key generation, build and firmware update scripts |
-| `firmware-updater/` | Web interface for batch updates |
+| `firmware-updater/` | Web interface for batch updates (older: the fleet manager replaces it) |
 | `manager/` | The fleet manager app (inventory, updates, builds, network map, plants; see its README) |
 | `docs/` | Schematic, code and power reviews (PDF), the fleet manager plan, and where things stand (`NEXT-STEPS.md`) |
 | `external/` | The SDK, fetched by the setup script (not in git) |
@@ -451,7 +454,7 @@ The SDK comes from forks of `sdk-nrf` and `sdk-zephyr`, pinned to exact commits 
 | Warning: `No private signing key` | This build is signed with the public development key. Create your key with `scripts/keygen`, or copy it into `application/keys/` from your backup. |
 | `region 'FLASH' overflowed` | The image doesn't fit the 483 KB application slot. `-Og` (`overlay-debug.conf`) and logging don't fit together. |
 | The device doesn't join (red + green flashes) | Start the commissioner on the border router with the PSKd the firmware was built with, for 300 s; the board tries again within 2 minutes. Still no join: the PSKd differs, or the board already has another network (make it forget it, see [Joining a Thread network](#-joining-a-thread-network)) |
-| An update uploads fine, but the board keeps running the old firmware | The image is signed with a different key than the board's bootloader (for example, built on a PC without your key, or taken from CI). Rebuild with your key. |
+| An update uploads fine, but the board keeps running the old firmware | The image is signed with a different key than the board's bootloader (for example, built on a PC without your key, or taken from CI). Rebuild with your key. A board whose bootloader still has MCUboot's development key takes only development-key images: build with **sign with: the development key** (the fleet manager's Builds tab chooses it when the boards run such images). |
 | Blue flashes, and no three beeps | SRP registration isn't succeeding (the fleet manager shows `failed` under Health, **Its name**): check that the border router is running, and look for a duplicate host name. After a full chip erase, the board has a new SRP key and the border router keeps its name for the old one for up to 14 days (see [SRP registration](#srp-registration)) |
 | A new board doesn't boot after the first flash | Try with DC/DC disabled (see [Board notes](#board-notes)) |
 | mcumgr over UDP times out | Check the route to the Thread network from the PC (`ping -6 <device address>`), and that the device is attached |
@@ -460,7 +463,7 @@ The SDK comes from forks of `sdk-nrf` and `sdk-zephyr`, pinned to exact commits 
 
 - [ ] Implement dynamic SRP client hostname reassignment when duplicates are detected
 - [x] Refactor SRP functionality out of `coap_server.c` (now `src/srp.c`)
-- [ ] Fleet manager: one app for Windows, macOS and Linux to find, commission, configure, build and update the whole fleet. Inventory, updates, firmware builds, backups, release downloads, a network map, plant tracking, alerts and flashing over SWD are done (`manager/`, see [its README](manager/README.md)), not yet tried on boards; runtime settings and commissioning are next, after the board tests. Plan: `docs/FLEET-MANAGER-PLAN.md`
+- [x] Fleet manager (`manager/`, see [its README](manager/README.md)): one app to find, add, configure, build and update the whole fleet. Since November 2026 it runs on a server with the boards and the border router: inventory, updates, builds, settings on the boards, the network map, plants, alerts, and a link for Home Assistant. Not tried on the real hardware yet: SWD flashing with a J-Link, adding boards over the air, moving the network to another channel
 
 ## 📚 References
 

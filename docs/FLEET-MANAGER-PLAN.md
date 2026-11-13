@@ -2,7 +2,7 @@
 
 A cross-platform application (Windows, Linux, macOS) to manage, maintain and update the firmware on a fleet of ha-coap devices: find them, commission new ones, configure them, build firmware and update it over USB or over the air.
 
-Status (2026-10-26): **phases 0–2, 5 and 6 are built** in `manager/` (version 0.1.0) (see `manager/README.md`), with many additions (below), tested against simulated devices and a simulated border router on Windows, macOS and Linux, **not yet with boards**. Phases 3 and 4 wait for PR #6 to be tested on boards and merged. Where things stand overall, and what to do first: `docs/NEXT-STEPS.md`. Decisions so far:
+Status (2026-11-13): **every phase is built** in `manager/` (see `manager/README.md`, and `manager/CHANGELOG.md` for everything added along the way). Since November 2026 it runs on a server with the real boards and the border router, and Home Assistant's integration uses it. Where things stand overall, and what to do next: `docs/NEXT-STEPS.md`. This plan is kept as it was written; the decisions below were the first ones (it runs on a server now, with sign-in for other devices and links for dashboards). Decisions so far:
 - **Form:** a local web app (Python backend, browser UI), packaged as one download per OS.
 - **Where it runs:** on your PC when you need it, listening only on that computer (no login needed). Remote access: not for now (decided 2026-10-25), maybe later.
 - **Settings:** build-time (Kconfig) and runtime (changed on a running device, no reflash).
@@ -80,9 +80,9 @@ Each phase ends with a working, tested app. Tests run in CI on Linux, macOS and 
 |---|---|---|
 | **0. Foundations** | New `manager/` app skeleton, simulated device, CI packaging into executables for the 3 OSes, firmware version numbers | Done. Firmware version numbers: in the image header from `application/VERSION` (build only); in `info`, a firmware change, still to do |
 | **1. Inventory** | Discovery, inventory, live status (version, battery, sensors, online), device pages | Done |
-| **2. Updates** | USB and over-the-air updates through smpclient, an image library, test, verify, confirm, staged rollout, history. Replaces `firmware-updater/` | Done; replaces the web updater once it has updated real boards |
-| **3. Runtime settings** | Firmware settings and the `hacoap` mcumgr group. Settings pages for one device or the fleet | Done (2026-10-29): sampling period, pump run time, poll period and soil calibration, in the group's commands 0 (settings) and 1 (sample now); a device's page, and several boards at once. Not yet tried on a board. The group's device info, PSKd and credentials commands come with phase 4 |
-| **4. Commissioning** | Border router integration, a USB provisioning wizard with a PSKd per device, optional first SWD flash, credential reset | The SWD flash is built ahead (Builds tab, through `nrfutil device`), not yet tried with a J-Link; the wizard will use it |
+| **2. Updates** | USB and over-the-air updates through smpclient, an image library, test, verify, confirm, staged rollout, history. Replaces `firmware-updater/` | Done, and updating the real boards over the air since November 2026 (USB not tried yet) |
+| **3. Runtime settings** | Firmware settings and the `hacoap` mcumgr group. Settings pages for one device or the fleet | Done (2026-10-29): sampling period, pump run time, poll period and soil calibration, in the group's commands 0 (settings) and 1 (sample now); a device's page, and several boards at once. Used on the real boards |
+| **4. Commissioning** | Border router integration, a USB provisioning wizard with a PSKd per device, optional first SWD flash, credential reset | Done differently (2026-11-09): the Border router tab adds boards over the air (the border router as commissioner, through its command line), and a board can forget its network. Not tried on the real network yet. The SWD flash is built (Builds tab), not tried with a J-Link. A PSKd per device: not done |
 | **5. Builds** | Kconfig editor, profiles, build runner, image library integration, signing-key checks | Done (build-time settings: the `HACOAP_*` options and the poll period) |
 | **6. Polish** | Export/import, backups, docs, release downloads | Done: backups (daily, and before a restore), restore, device list CSV, per-device history, release workflow (`manager-v*` tags) |
 
@@ -117,7 +117,7 @@ Also added (2026-10-25 and 26):
 
 ## Open questions
 
-- **Border router API.** Commissioning needs the REST API's commissioner endpoints (`/node/commissioner/state`, `/node/commissioner/joiner`), which are recent additions to ot-br-posix. On the border router, these show what it supports:
+- **Border router API.** *Answered (2026-11-10): the border router runs in Docker on the server, and its REST diagnostics don't work in OpenThread's current image, so the app reads the network and commissions through its command line (`ot-ctl`).* Commissioning needs the REST API's commissioner endpoints (`/node/commissioner/state`, `/node/commissioner/joiner`), which are recent additions to ot-br-posix. On the border router, these show what it supports:
   ```
   curl http://<border-router>:8081/node
   curl http://<border-router>:8081/node/commissioner/state
@@ -125,4 +125,4 @@ Also added (2026-10-25 and 26):
   ```
   If the REST API only listens on the border router itself, it needs `--rest-listen-address` (`otbr-agent` option) set to its LAN address. If the endpoints are missing, the fallbacks are updating ot-br-posix, or the app showing the `ot-ctl` commands to run.
 - **EUI-64 or wildcard joiner.** Adding each board's own EUI-64 to the border router, rather than `*`, means only that board can join with its PSKd. That needs the EUI-64 from the board over USB (firmware change 3), which is the plan.
-- **Hardware testing.** Every phase that changes firmware needs a board to confirm it. The current pull request (#6) should be tested and merged first, so the fleet manager starts from firmware known to work.
+- **Hardware testing.** *Since November 2026 the boards run this firmware.* Every phase that changes firmware needs a board to confirm it. The current pull request (#6) should be tested and merged first, so the fleet manager starts from firmware known to work.
